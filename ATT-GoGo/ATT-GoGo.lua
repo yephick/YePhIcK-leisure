@@ -1,0 +1,173 @@
+﻿local addonName, addonTable = ...
+title = GetAddOnMetadata(addonName, "Title") or "UNKNOWN"
+
+local frame = CreateFrame("Frame")
+frame:RegisterEvent("ADDON_LOADED")
+
+local function PrintStartup()
+    local version = GetAddOnMetadata(addonName, "Version") or "UNKNOWN"
+    local author = GetAddOnMetadata(addonName, "Author") or "UNKNOWN"
+    local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor") or "UNKNOWN"
+    print("|cff00ff00[" .. title .. "]|r " .. version .. " |cffffff00Vibed by:|r " .. author .. " & " .. coauthor)
+end
+
+local function OpenUncollectedForCurrentContext()
+--    DebugLogf("[Trace] OpenUncollectedForCurrentContext()")
+
+    local node, info = Util.ResolveContextNode(true)
+    if not node then return false end
+
+    -- Always open for instances.
+    if info and info.kind == "instance" then
+        ShowUncollectedPopup(node)
+        return true
+    end
+
+    -- For zones: only open when the Outdoor Zones container exists strictly for this map.
+    local mapID = info and info.uiMapID
+    local strictZone = ResolveContainerZoneNodeStrict(mapID)
+    if strictZone then
+        ShowUncollectedPopup(strictZone)
+        return true
+    end
+
+    -- No valid ATT zone for this map (e.g., DMF island) -> say nothing to show.
+    return false
+end
+
+-- Tooltip header helper
+local function AddTooltipHeader(tooltip)
+    tooltip:AddLine(title, 0, 1, 0)
+    tooltip:AddLine("Left-click: Toggle main window", 1, 1, 1)
+    tooltip:AddLine("Right-click: Open options", 1, 1, 1)
+    tooltip:AddLine("Shift-click: Uncollected for current instance/zone", 1, 1, 1)
+    tooltip:AddLine("Drag: Move icon", 1, 1, 1)
+end
+
+-- Entry point for tooltip
+local function ShowMinimapTooltip(tooltip)
+    RequestRaidInfo()
+    AddTooltipHeader(tooltip)
+    Tooltip.AddContextProgressTo(tooltip)
+end
+
+local function SetupMinimapIcon()
+    local ldb = LibStub:GetLibrary("LibDataBroker-1.1", true)
+    local icon = LibStub:GetLibrary("LibDBIcon-1.0", true)
+    if ldb and icon then
+        local dataObj = ldb:NewDataObject(addonName, {
+            type = "data source",
+            text = title,
+            icon = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga",
+            OnClick = function(self, button)
+                -- Shift-click opens the Uncollected popup for current instance/zone
+                if IsShiftKeyDown and IsShiftKeyDown() then
+                    if not OpenUncollectedForCurrentContext() then
+                        print("|cffff0000[" .. title .. "]|r Nothing to show for this location.")
+                    end
+                    return
+                end
+                if button == "RightButton" then
+                    ShowATTGoGoOptions()
+                else
+                    if ATTGoGoMainFrame:IsShown() then
+                        ATTGoGoMainFrame:Hide()
+                    else
+                        ShowATTGoGoMain()
+                    end
+                end
+            end,
+            OnTooltipShow = ShowMinimapTooltip, -- References Minimap.lua's version
+        })
+        icon:Register(addonName, dataObj, ATTGoGoDB.minimap)
+        if ATTGoGoDB and ATTGoGoDB.minimap and ATTGoGoDB.minimap.hide then
+            icon:Hide(addonName)
+        else
+            icon:Show(addonName)
+        end
+    else
+        print("|cffff0000[" .. title .. "]|r Minimap icon libraries not found! Minimap icon will be unavailable.")
+    end
+end
+
+local function EnsurePopupIdFilters()
+    ATTGoGoCharDB = ATTGoGoCharDB or {}
+    ATTGoGoCharDB.popupIdFilters = ATTGoGoCharDB.popupIdFilters or {}
+    for k, v in pairs(COLLECTIBLE_ID_FIELDS) do
+        if ATTGoGoCharDB.popupIdFilters[k] == nil then
+            ATTGoGoCharDB.popupIdFilters[k] = v
+        end
+    end
+end
+
+frame:SetScript("OnEvent", function(self, event, arg1)
+    if arg1 ~= addonName then return end
+
+    -- Ensure DB tables exist
+    ATTGoGoDB = ATTGoGoDB or {}
+    ATTGoGoCharDB = ATTGoGoCharDB or {}
+    ATTGoGoDB.minimap = ATTGoGoDB.minimap or {}
+
+    EnsurePopupIdFilters()
+
+    PrintStartup()
+
+    SetupMinimapIcon()
+
+    -- === Wait for ATT ("All The Things") ===
+    local __ATT_INIT_DONE = false
+    local function WaitForATT()
+        -- Hard dependency check, once.
+        if not IsAddOnLoaded("AllTheThings") then
+            print("|cffff0000[" .. title .. "]|r All The Things is |cffff2222not loaded|r.")
+            print("→ Please enable or install 'All The Things' for " .. title .. " to function.")
+            return
+        end
+
+        -- Bind once to ATT's lifecycle.
+        local ATT_API = _G.AllTheThings or _G.ATTC
+        if not (ATT_API and ATT_API.AddEventHandler) then
+            print("|cffff0000[" .. title .. "]|r Could not hook ATT events (missing AddEventHandler).")
+            return
+        end
+
+        ATT_API.AddEventHandler("OnReady", function()
+            if __ATT_INIT_DONE then return end
+            __ATT_INIT_DONE = true
+
+            ATT = _G.AllTheThings
+            print("|cff00ff00[" .. title .. "]|r is ready!")
+            SetupMainUI()
+            Debug_Init()
+
+            -- keep your progress cache coherent with ATT refreshes
+            local clear = function() Util.ClearProgressCache() end
+            pcall(ATT_API.AddEventHandler, "OnInit",         clear)
+            pcall(ATT_API.AddEventHandler, "OnRefresh",      clear)
+            pcall(ATT_API.AddEventHandler, "OnAfterRefresh", clear)
+        end)
+    end
+
+    WaitForATT()
+end)
+
+SLASH_ATTGOGO1 = "/attgogo"
+SlashCmdList["ATTGOGO"] = function(msg)
+    local cmd = msg:lower():trim()
+
+    if cmd == "" or cmd == "?" or cmd == "help" or cmd == "h" then
+        print("|cffffff00[" .. title .. " Commands]|r")
+        print("/attgogo help       - Show this help")
+        print("/attgogo options    - Open the options window")
+        print("/attgogo show       - Show the main window")
+        return
+    end
+
+    if cmd == "options"     then ShowATTGoGoOptions() return end
+    if cmd == "show"        then ShowATTGoGoMain() return end
+    if cmd == "debug clear" then Debug_Init() print("ATT-GoGo: debug log cleared") return end
+
+    print("|cffff0000[" .. title .. "]|r Unknown command. Type '/attgogo help' for options.")
+end
+
+-- writing a WoW addon for MoP Classic version and need a bit of help. In my main window the list of instances and zones is displayed as rectangular widgets with info. Here are all the relevant files for the project.
