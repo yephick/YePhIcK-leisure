@@ -1,7 +1,7 @@
 ﻿-- === ATT-GoGo Options UI ===
 
 local optionsFrame = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
-optionsFrame:SetSize(300, 380)
+optionsFrame:SetSize(300, 480)
 
 optionsFrame:SetMovable(true)
 optionsFrame:EnableMouse(true)
@@ -110,6 +110,28 @@ local groupVisualsCheckbox = AddCheckbox(
     end
 )
 
+-- Checkbox: 3D hover preview (account-wide)
+local hover3DCheckbox = AddCheckbox(
+    optionsFrame,
+    "3D hover preview (items & creatures)",
+    { "TOPLEFT", groupVisualsCheckbox, "BOTTOMLEFT", 0, -8 },
+    function() return GetSetting("showHover3DPreview", true) end,
+    function(v)
+        SetSetting("showHover3DPreview", v)
+        local dock = _G.ATTGoGoPreviewDock
+        if dock and not v then dock:Hide() end
+    end
+)
+
+-- Checkbox: try-on items on a naked model (account-wide, default ON)
+local nakedTryOnCheckbox = AddCheckbox(
+    optionsFrame,
+    "Try-on items on a naked model",
+    { "TOPLEFT", hover3DCheckbox, "BOTTOMLEFT", 0, -8 },
+    function() return GetSetting("dressUpNaked", true) end,
+    function(v) SetSetting("dressUpNaked", v) end
+)
+
 -- === Filter Options (Dynamic Checkboxes) ===
 local COLLECTIBLE_ID_ORDER = {
     "achievementID", "creatureID", "explorationID", "flightpathID", "gearSetID",
@@ -117,7 +139,7 @@ local COLLECTIBLE_ID_ORDER = {
 }
 
 local filterLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-filterLabel:SetPoint("TOPLEFT", groupVisualsCheckbox, "BOTTOMLEFT", 0, -15)
+filterLabel:SetPoint("TOPLEFT", nakedTryOnCheckbox, "BOTTOMLEFT", 0, -15)
 filterLabel:SetText("Show in info popup:")
 
 local filterCheckboxes = {}
@@ -150,7 +172,7 @@ for _, v in ipairs(COLLECTIBLE_ID_ORDER) do
     i = i + 1
 end
 
--- Optionally, add a function to update these checkboxes from DB (for re-opening the window)
+-- update these checkboxes from DB (for re-opening the window)
 local function UpdateFilterCheckboxes()
     local effective = Util.GetPopupIdFilters()
     for k, cb in pairs(filterCheckboxes) do
@@ -160,6 +182,45 @@ local function UpdateFilterCheckboxes()
     end
 end
 
+-- --- Reset window sizes/positions ---
+local resetBtn = CreateFrame("Button", nil, optionsFrame, "UIPanelButtonTemplate")
+resetBtn:SetSize(190, 22)
+resetBtn:SetPoint("BOTTOMLEFT", 12, 12)
+resetBtn:SetText("Reset window sizes/positions")
+if Util and Util.SetTooltip then
+    Util.SetTooltip(resetBtn, "ANCHOR_TOPLEFT",
+        "Reset window sizes/positions",
+        "Clear saved sizes/positions for the main, popup, and options windows and restore defaults.")
+end
+
+resetBtn:SetScript("OnClick", function()
+    -- wipe saved positions/sizes
+    ATTGoGoCharDB = ATTGoGoCharDB or {}
+    ATTGoGoCharDB.mainWindowPos   = nil
+    ATTGoGoCharDB.popupWindowPos  = nil
+    ATTGoGoCharDB.optionsWindowPos= nil
+
+    -- Main window: default size + default anchor
+    if _G.ATTGoGoMainFrame then
+        _G.ATTGoGoMainFrame:SetSize(724, 612)                       -- default size
+        Util.LoadFramePosition(_G.ATTGoGoMainFrame, "mainWindowPos", "TOP", -36, -48)  -- default anchor
+        if _G.ATTGoGoMainFrame:IsShown() and RefreshActiveTab then RefreshActiveTab() end
+    end
+
+    -- Popup window: ensure it exists before touching it
+    local popup = _G.ATTGoGoUncollectedPopup
+    if popup then
+        popup:SetSize(268, 592)                                      -- default size
+        Util.LoadFramePosition(popup, "popupWindowPos", "RIGHT", -200, 64) -- default anchor
+    end
+
+    -- Options window (this one)
+    optionsFrame:SetSize(300, 480)                                   -- default size
+    Util.LoadFramePosition(optionsFrame, "optionsWindowPos", "LEFT", 92, 80) -- default anchor
+
+    print("|cff00ff00[ATT-GoGo]|r Window sizes/positions reset to defaults.")
+end)
+
 optionsFrame:HookScript("OnShow", function()
     -- trigger each checkbox's OnShow to re-read current values
     local function Refresh(cb) if cb and cb.GetScript then local f = cb:GetScript("OnShow"); if f then f(cb) end end end
@@ -168,6 +229,7 @@ optionsFrame:HookScript("OnShow", function()
     Refresh(criteriaCheckbox)
     Refresh(removedCheckbox)
     Refresh(groupVisualsCheckbox)
+    Refresh(nakedTryOnCheckbox)
     UpdateFilterCheckboxes()
 end)
 

@@ -231,7 +231,7 @@ function Util.LoadFramePosition(frame, dbKey, defaultPoint, defaultX, defaultY)
     frame:ClearAllPoints()
     if pos then
         frame:SetPoint(pos.point or "CENTER", UIParent, pos.relativePoint or "CENTER", pos.xOfs or 0, pos.yOfs or 0)
-        if pos.width and pos.height then
+        if frame.IsResizable and frame:IsResizable() and pos.width and pos.height then
             frame:SetSize(pos.width, pos.height)
         end
     else

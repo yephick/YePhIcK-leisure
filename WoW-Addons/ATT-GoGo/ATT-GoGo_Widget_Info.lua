@@ -91,11 +91,78 @@ if not GameTooltip.__ATTGoGoHooked then
     GameTooltip.__ATTGoGoHooked = true
 end
 
+-- === Lightweight 3D preview dock for creatures ===
+local previewDock
+
+local function EnsurePreviewDock()
+    if previewDock then return previewDock end
+    previewDock = CreateFrame("Frame", "ATTGoGoPreviewDock", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    previewDock:SetSize(260, 360)
+    previewDock:SetFrameStrata("DIALOG")
+    previewDock:SetFrameLevel(210)
+    previewDock:SetClampedToScreen(true)
+    previewDock:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    previewDock:Hide()
+
+    -- Creature model (no player gear, no TryOn)
+    previewDock.model = CreateFrame("PlayerModel", nil, previewDock)
+    previewDock.model:SetPoint("TOPLEFT", 6, -6)
+    previewDock.model:SetPoint("BOTTOMRIGHT", -6, 6)
+
+    -- gentle autorotation
+    local rot = 0
+    previewDock:SetScript("OnUpdate", function(self, elapsed)
+        rot = (rot + elapsed * 0.6) % (2*math.pi)
+        if self.model and self.model.SetRotation then self.model:SetRotation(rot) end
+    end)
+
+    return previewDock
+end
+
+local function HidePreview()
+    if previewDock then previewDock:Hide() end
+end
+
+local function ShowPreviewForNode(node)
+    -- Only preview creatures on hover; items go to the Dressing Room via Ctrl+Click.
+    if not GetSetting("showHover3DPreview", true) then
+        HidePreview(); return
+    end
+    if not (uncollectedPopup and uncollectedPopup:IsShown()) then
+        return
+    end
+    if not (node and node.creatureID) then
+        HidePreview(); return
+    end
+
+    local dock = EnsurePreviewDock()
+    dock:ClearAllPoints()
+    dock:SetPoint("TOPRIGHT",    uncollectedPopup, "TOPLEFT",   -8, 0)
+    dock:SetPoint("BOTTOMRIGHT", uncollectedPopup, "BOTTOMLEFT", -8, 0)
+
+    local mdl = dock.model
+    if not mdl then return end
+    pcall(mdl.SetCreature, mdl, node.creatureID)
+    dock:Show()
+end
+
 local function SetupNodeTooltip(btn, boundNode)
     btn:SetScript("OnEnter", function(self)
         local node = self.node or boundNode
         if not node then return end
         currentTooltipNode = node
+
+        if node.creatureID then
+            ShowPreviewForNode(node)
+        else
+            HidePreview()
+        end
+
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:ClearLines()
         local matched = passKeysByNode[node]
@@ -168,6 +235,7 @@ local function SetupNodeTooltip(btn, boundNode)
     btn:SetScript("OnLeave", function()
         currentTooltipNode = nil
         GameTooltip:Hide()
+        HidePreview()
     end)
 end
 
@@ -557,12 +625,35 @@ local function AcquireRow(scrollContent, i)
     -- Click + tooltip
     btn:SetScript("OnClick", function(self, mouseButton)
         local node = self.node
+
+        -- Ctrl+click: open Dressing Room; undress first if option is ON
+        if IsModifiedClick("DRESSUP") and node and node.itemID then
+            local link = select(2, GetItemInfo(node.itemID)) or ("item:" .. tostring(node.itemID))
+
+            -- Bring up Blizzard's dressing room
+            if DressUpFrame then
+                if ShowUIPanel then pcall(ShowUIPanel, DressUpFrame) else DressUpFrame:Show() end
+            end
+
+            -- Model used by the dressing room across Classic/MoP UIs
+            local mdl = _G.DressUpModel or (DressUpFrame and (DressUpFrame.Model or DressUpFrame.DressUpModel))
+            if mdl and mdl.TryOn then
+                if mdl.SetUnit then pcall(mdl.SetUnit, mdl, "player") end
+                if GetSetting("dressUpNaked", true) and mdl.Undress then pcall(mdl.Undress, mdl) end
+                pcall(mdl.TryOn, mdl, link)
+            else
+                -- Fallback (may keep current gear)
+                if DressUpItemLink and link then DressUpItemLink(link) end
+            end
+            return
+        end
+
         if IsModifiedClick("CHATLINK") or mouseButton == "MiddleButton" then
             Util.InsertNodeChatLink(node)
             return
         end
         if mouseButton == "LeftButton" and node then
-            if node.achievementID and Util.OpenAchievementByID then Util.OpenAchievementByID(node.achievementID); return end
+            if node.achievementID then Util.OpenAchievementByID(node.achievementID); return end
             if node.mapID or node.explorationID or node.instanceID or node.flightpathID then
                 if Util.FocusMapForNode(node) then return end
             end
@@ -747,6 +838,7 @@ local function EnsurePopup()
     end)
 
     uncollectedPopup:SetScript("OnHide", function(self)
+        HidePreview()
         Util.SaveFramePosition(self, "popupWindowPos")
     end)
 
