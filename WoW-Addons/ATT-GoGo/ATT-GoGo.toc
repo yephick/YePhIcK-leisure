@@ -3,7 +3,7 @@
 ## Notes: Companion addon for 'All The Things' to show instance farming status in a grid.
 ## Author: YePhIcK
 ## X-CoAuthor: GenAI
-## Version: 0.4
+## Version: 0.5
 ## Dependencies: AllTheThings
 ## OptionalDeps: LibStub LibDataBroker-1.1 LibDBIcon-1.0
 Libs\LibStub\LibStub.lua
