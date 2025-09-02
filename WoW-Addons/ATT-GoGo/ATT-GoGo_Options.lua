@@ -1,7 +1,7 @@
 ﻿-- === ATT-GoGo Options UI ===
 
 local optionsFrame = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
-optionsFrame:SetSize(300, 480)
+optionsFrame:SetSize(300, 500)
 
 optionsFrame:SetMovable(true)
 optionsFrame:EnableMouse(true)
@@ -16,17 +16,27 @@ optionsFrame:Hide()
 -- Title
 optionsFrame.TitleText:SetText("ATT-GoGo Options")
  
--- Generic checkbox factory:
--- point: { "TOPLEFT", 20, -35 } or { "TOPLEFT", anchorFrame, "BOTTOMLEFT", 0, -8 }
--- getValue: function() -> boolean
--- setValue: function(boolean)
--- onChange: optional function(boolean)
-local function AddCheckbox(parent, label, point, getValue, setValue, onChange)
+-- Generic checkbox factory with optional tooltip:
+-- point:     { "TOPLEFT", 20, -35 } or { "TOPLEFT", anchorFrame, "BOTTOMLEFT", 0, -8 }
+-- getValue:  function() -> boolean
+-- setValue:  function(boolean)
+-- onChange:  optional function(boolean)
+-- ...:       optional strings (tooltip lines)
+local function AddCheckbox(parent, label, point, getValue, setValue, onChange, ...)
     local cb = CreateFrame("CheckButton", nil, parent, "ChatConfigCheckButtonTemplate")
     cb:SetPoint(unpack(point))
     cb.Text:SetText(label)
+
+    -- Tooltip lines (no title/header)
+    local lines = { ... }
+    if Util and Util.SetTooltip and #lines > 0 then
+        -- skip AddHeader, only add lines
+        Util.SetTooltip(cb, "ANCHOR_LEFT", "", unpack(lines))
+    end
+
     cb:SetScript("OnShow", function()
-        local ok, val = pcall(getValue); if ok then cb:SetChecked(val and true or false) end
+        local ok, val = pcall(getValue)
+        if ok then cb:SetChecked(val and true or false) end
     end)
     cb:SetScript("OnClick", function(self)
         local v = self:GetChecked() and true or false
@@ -52,7 +62,9 @@ local minimapCheckbox = AddCheckbox(
         if icon then
             if v then icon:Show("ATT-GoGo") else icon:Hide("ATT-GoGo") end
         end
-    end
+    end,
+    nil,
+    "Shows a movable launcher icon near the minimap."
 )
 
 -- Checkbox: show instance icon on widgets
@@ -62,7 +74,8 @@ local instIconCheckbox = AddCheckbox(
     { "TOPLEFT", minimapCheckbox, "BOTTOMLEFT", 0, -8 },
     function() return GetSetting("showInstanceIconOnWidgets", true) end,
     function(v) SetSetting("showInstanceIconOnWidgets", v) end,
-    function() if RefreshActiveTab then RefreshActiveTab() end end
+    function() if RefreshActiveTab then RefreshActiveTab() end end,
+    "Adds the instance’s icon to each tile."
 )
 
 -- Checkbox: list individual achievement criteria (per-character)
@@ -77,7 +90,10 @@ local criteriaCheckbox = AddCheckbox(
         if popup and popup:IsShown() and popup.currentData then
             ShowUncollectedPopup(popup.currentData)
         end
-    end
+    end,
+    "When ON, show every uncompleted criterion separately.",
+    "When OFF, only show the parent achievement for individual criteria."
+
 )
 
 -- Checkbox: include removed/retired content (account-wide)
@@ -92,7 +108,8 @@ local removedCheckbox = AddCheckbox(
         if popup and popup:IsShown() and popup.currentData then
             ShowUncollectedPopup(popup.currentData)
         end
-    end
+    end,
+    "Include removed/retired content in the uncollected popup list"
 )
 
 -- Checkbox: group items by appearance (visualID) — per-character (default ON)
@@ -107,20 +124,23 @@ local groupVisualsCheckbox = AddCheckbox(
         if popup and popup:IsShown() and popup.currentData then
             ShowUncollectedPopup(popup.currentData)
         end
-    end
+    end,
+    "Group items by appearance (visualID)"
 )
 
 -- Checkbox: 3D hover preview (account-wide)
 local hover3DCheckbox = AddCheckbox(
     optionsFrame,
-    "3D hover preview (items & creatures)",
+    "3D hover preview",
     { "TOPLEFT", groupVisualsCheckbox, "BOTTOMLEFT", 0, -8 },
     function() return GetSetting("showHover3DPreview", true) end,
     function(v)
         SetSetting("showHover3DPreview", v)
         local dock = _G.ATTGoGoPreviewDock
         if dock and not v then dock:Hide() end
-    end
+    end,
+    nil,
+    "Show 3D model when hovering mouse over uncollected creatures"
 )
 
 -- Checkbox: try-on items on a naked model (account-wide, default ON)
@@ -129,7 +149,36 @@ local nakedTryOnCheckbox = AddCheckbox(
     "Try-on items on a naked model",
     { "TOPLEFT", hover3DCheckbox, "BOTTOMLEFT", 0, -8 },
     function() return GetSetting("dressUpNaked", true) end,
-    function(v) SetSetting("dressUpNaked", v) end
+    function(v) SetSetting("dressUpNaked", v) end,
+    nil,
+    "When ON, undress the chracter when viewing the item in Dressing Room, so only that one item is presented",
+    "When OFF, only apply that one item to the model in Dressing Room"
+)
+
+-- Checkbox: auto-refresh Uncollected popup on zone/instance change (account-wide)
+local autoRefreshPopupCheckbox = AddCheckbox(
+    optionsFrame,
+    "Popup follows zone/instance change",
+    { "TOPLEFT", nakedTryOnCheckbox, "BOTTOMLEFT", 0, -12 },
+    function() return GetSetting("autoRefreshPopupOnZone", true) end,
+    function(v) SetSetting("autoRefreshPopupOnZone", v) end,
+    function(v)
+        -- If user just turned it ON and popup is open, refresh immediately to current context
+        if v then
+            C_Timer.After(0.05, function()
+                local popup = _G.ATTGoGoUncollectedPopup
+                if popup and popup:IsShown() then
+                    local node, info = Util.ResolveContextNode(true)
+                    if info and info.kind == "zone" then
+                        local strict = ResolveContainerZoneNodeStrict(info.uiMapID)
+                        if strict then ShowUncollectedPopup(strict) return end
+                    end
+                    if node then ShowUncollectedPopup(node) end
+                end
+            end)
+        end
+    end,
+    "If the Uncollected popup is open, update it automatically when you change zone or enter an instance."
 )
 
 -- === Filter Options (Dynamic Checkboxes) ===
@@ -139,7 +188,7 @@ local COLLECTIBLE_ID_ORDER = {
 }
 
 local filterLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-filterLabel:SetPoint("TOPLEFT", nakedTryOnCheckbox, "BOTTOMLEFT", 0, -15)
+filterLabel:SetPoint("TOPLEFT", autoRefreshPopupCheckbox, "BOTTOMLEFT", 0, -15)
 filterLabel:SetText("Show in info popup:")
 
 local filterCheckboxes = {}
@@ -168,6 +217,7 @@ for _, v in ipairs(COLLECTIBLE_ID_ORDER) do
             ShowUncollectedPopup(popup.currentData)
         end
     end)
+    Util.SetTooltip(cb, "ANCHOR_RIGHT", "", "Include " .. (COLLECTIBLE_ID_LABELS[v] or v) .. " entries in the popup.")
     filterCheckboxes[v] = cb   -- store by logical key only
     i = i + 1
 end
@@ -215,7 +265,7 @@ resetBtn:SetScript("OnClick", function()
     end
 
     -- Options window (this one)
-    optionsFrame:SetSize(300, 480)                                   -- default size
+    optionsFrame:SetSize(300, 500)                                   -- default size
     Util.LoadFramePosition(optionsFrame, "optionsWindowPos", "LEFT", 92, 80) -- default anchor
 
     print("|cff00ff00[ATT-GoGo]|r Window sizes/positions reset to defaults.")

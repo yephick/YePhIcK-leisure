@@ -33,6 +33,28 @@ local function OpenUncollectedForCurrentContext()
     return false
 end
 
+-- Refresh the Uncollected popup to the *current* context, if visible and allowed.
+local function RefreshUncollectedPopupForContextIfShown()
+    if not GetSetting("autoRefreshPopupOnZone", true) then return end
+
+    local popup = _G.ATTGoGoUncollectedPopup
+    if not (popup and popup:IsShown()) then return end
+
+    local node, info = Util.ResolveContextNode(true)
+    if not node then return end
+
+    if info and info.kind == "instance" then
+        ShowUncollectedPopup(node)
+        return
+    end
+
+    -- Zones: only refresh if there’s a proper Outdoor Zones container for this map
+    local strictZone = ResolveContainerZoneNodeStrict(info and info.uiMapID)
+    if strictZone then
+        ShowUncollectedPopup(strictZone)
+    end
+end
+
 -- Tooltip header helper
 local function AddTooltipHeader(tooltip)
     tooltip:AddLine(title, 0, 1, 0)
@@ -137,6 +159,22 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             print("|cff00ff00[" .. title .. "]|r is ready!")
             SetupMainUI()
             Debug_Init()
+
+            -- Auto-refresh Uncollected popup on zone/instance changes (if enabled)
+            local zoneWatcher = CreateFrame("Frame")
+            for _, ev in ipairs({
+                "PLAYER_ENTERING_WORLD",
+                "ZONE_CHANGED",
+                "ZONE_CHANGED_INDOORS",
+                "ZONE_CHANGED_NEW_AREA",
+                "UPDATE_INSTANCE_INFO",
+            }) do
+                zoneWatcher:RegisterEvent(ev)
+            end
+            zoneWatcher:SetScript("OnEvent", function()
+                -- slight delay so C_Map / GetInstanceInfo settle
+                C_Timer.After(0.15, RefreshUncollectedPopupForContextIfShown)
+            end)
 
             -- keep your progress cache coherent with ATT refreshes
             local clear = function() Util.ClearProgressCache() end
