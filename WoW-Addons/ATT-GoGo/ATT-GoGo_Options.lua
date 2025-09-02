@@ -1,7 +1,7 @@
 ﻿-- === ATT-GoGo Options UI ===
 
 local optionsFrame = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
-optionsFrame:SetSize(300, 500)
+optionsFrame:SetSize(300, 550)
 
 optionsFrame:SetMovable(true)
 optionsFrame:EnableMouse(true)
@@ -46,11 +46,16 @@ local function AddCheckbox(parent, label, point, getValue, setValue, onChange, .
     return cb
 end
 
+-- === Section: Account-wide ===
+local accountHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+accountHdr:SetPoint("TOPLEFT", 16, -30)
+accountHdr:SetText("Account-wide")
+
 -- Checkbox: minimap icon (special DB path + LibDBIcon show/hide)
 local minimapCheckbox = AddCheckbox(
     optionsFrame,
     "Show minimap icon",
-    { "TOPLEFT", 20, -35 },
+    { "TOPLEFT", accountHdr, "BOTTOMLEFT", 4, -10 },
     function()
         return not (ATTGoGoDB and ATTGoGoDB.minimap and ATTGoGoDB.minimap.hide)
     end,
@@ -78,29 +83,11 @@ local instIconCheckbox = AddCheckbox(
     "Adds the instance’s icon to each tile."
 )
 
--- Checkbox: list individual achievement criteria (per-character)
-local criteriaCheckbox = AddCheckbox(
-    optionsFrame,
-    "List individual achievement criteria",
-    { "TOPLEFT", instIconCheckbox, "BOTTOMLEFT", 0, -8 },
-    function() return GetCharSetting("expandAchievementCriteria", false) end,
-    function(v) SetCharSetting("expandAchievementCriteria", v) end,
-    function()
-        local popup = _G.ATTGoGoUncollectedPopup
-        if popup and popup:IsShown() and popup.currentData then
-            ShowUncollectedPopup(popup.currentData)
-        end
-    end,
-    "When ON, show every uncompleted criterion separately.",
-    "When OFF, only show the parent achievement for individual criteria."
-
-)
-
--- Checkbox: include removed/retired content (account-wide)
+-- Checkbox: include removed/retired content
 local removedCheckbox = AddCheckbox(
     optionsFrame,
     "Include removed/retired content",
-    { "TOPLEFT", criteriaCheckbox, "BOTTOMLEFT", 0, -8 },
+    { "TOPLEFT", instIconCheckbox, "BOTTOMLEFT", 0, -8 },
     function() return GetSetting("includeRemoved", false) end,
     function(v) SetSetting("includeRemoved", v) end,
     function()
@@ -112,27 +99,11 @@ local removedCheckbox = AddCheckbox(
     "Include removed/retired content in the uncollected popup list"
 )
 
--- Checkbox: group items by appearance (visualID) — per-character (default ON)
-local groupVisualsCheckbox = AddCheckbox(
-    optionsFrame,
-    "Group items by appearance (visualID)",
-    { "TOPLEFT", removedCheckbox, "BOTTOMLEFT", 0, -8 },
-    function() return GetCharSetting("groupByVisualID", true) end,
-    function(v) SetCharSetting("groupByVisualID", v) end,
-    function()
-        local popup = _G.ATTGoGoUncollectedPopup
-        if popup and popup:IsShown() and popup.currentData then
-            ShowUncollectedPopup(popup.currentData)
-        end
-    end,
-    "Group items by appearance (visualID)"
-)
-
--- Checkbox: 3D hover preview (account-wide)
+-- Checkbox: 3D hover preview
 local hover3DCheckbox = AddCheckbox(
     optionsFrame,
     "3D hover preview",
-    { "TOPLEFT", groupVisualsCheckbox, "BOTTOMLEFT", 0, -8 },
+    { "TOPLEFT", removedCheckbox, "BOTTOMLEFT", 0, -8 },
     function() return GetSetting("showHover3DPreview", true) end,
     function(v)
         SetSetting("showHover3DPreview", v)
@@ -143,7 +114,7 @@ local hover3DCheckbox = AddCheckbox(
     "Show 3D model when hovering mouse over uncollected creatures"
 )
 
--- Checkbox: try-on items on a naked model (account-wide, default ON)
+-- Checkbox: try-on items on a naked model
 local nakedTryOnCheckbox = AddCheckbox(
     optionsFrame,
     "Try-on items on a naked model",
@@ -151,15 +122,15 @@ local nakedTryOnCheckbox = AddCheckbox(
     function() return GetSetting("dressUpNaked", true) end,
     function(v) SetSetting("dressUpNaked", v) end,
     nil,
-    "When ON, undress the chracter when viewing the item in Dressing Room, so only that one item is presented",
+    "When ON, undress the character when viewing the item in Dressing Room, so only that one item is presented",
     "When OFF, only apply that one item to the model in Dressing Room"
 )
 
--- Checkbox: auto-refresh Uncollected popup on zone/instance change (account-wide)
+-- Checkbox: auto-refresh Uncollected popup on zone/instance change
 local autoRefreshPopupCheckbox = AddCheckbox(
     optionsFrame,
     "Popup follows zone/instance change",
-    { "TOPLEFT", nakedTryOnCheckbox, "BOTTOMLEFT", 0, -12 },
+    { "TOPLEFT", nakedTryOnCheckbox, "BOTTOMLEFT", 0, -8 },
     function() return GetSetting("autoRefreshPopupOnZone", true) end,
     function(v) SetSetting("autoRefreshPopupOnZone", v) end,
     function(v)
@@ -181,14 +152,52 @@ local autoRefreshPopupCheckbox = AddCheckbox(
     "If the Uncollected popup is open, update it automatically when you change zone or enter an instance."
 )
 
--- === Filter Options (Dynamic Checkboxes) ===
+-- === Section: Per-character ===
+local perCharHdr = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+perCharHdr:SetPoint("TOPLEFT", autoRefreshPopupCheckbox, "BOTTOMLEFT", 0, -16)
+perCharHdr:SetText("Per-character")
+
+-- Checkbox: list individual achievement criteria (per-character)
+local criteriaCheckbox = AddCheckbox(
+    optionsFrame,
+    "List individual achievement criteria",
+    { "TOPLEFT", perCharHdr, "BOTTOMLEFT", 4, -10 },
+    function() return GetCharSetting("expandAchievementCriteria", false) end,
+    function(v) SetCharSetting("expandAchievementCriteria", v) end,
+    function()
+        local popup = _G.ATTGoGoUncollectedPopup
+        if popup and popup:IsShown() and popup.currentData then
+            ShowUncollectedPopup(popup.currentData)
+        end
+    end,
+    "When ON, show every uncompleted criterion separately.",
+    "When OFF, only show the parent achievement for individual criteria."
+)
+
+-- Checkbox: group items by appearance (visualID) — per-character (default ON)
+local groupVisualsCheckbox = AddCheckbox(
+    optionsFrame,
+    "Group items by appearance (visualID)",
+    { "TOPLEFT", criteriaCheckbox, "BOTTOMLEFT", 0, -8 },
+    function() return GetCharSetting("groupByVisualID", true) end,
+    function(v) SetCharSetting("groupByVisualID", v) end,
+    function()
+        local popup = _G.ATTGoGoUncollectedPopup
+        if popup and popup:IsShown() and popup.currentData then
+            ShowUncollectedPopup(popup.currentData)
+        end
+    end,
+    "Group items by appearance (visualID)"
+)
+
+-- === Filter Options (Per-character) ===
 local COLLECTIBLE_ID_ORDER = {
     "achievementID", "creatureID", "explorationID", "flightpathID", "gearSetID",
     "instanceID", "itemID", "mapID", "questID", "titleID", "visualID"
 }
 
 local filterLabel = optionsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-filterLabel:SetPoint("TOPLEFT", autoRefreshPopupCheckbox, "BOTTOMLEFT", 0, -15)
+filterLabel:SetPoint("TOPLEFT", groupVisualsCheckbox, "BOTTOMLEFT", 0, -15)
 filterLabel:SetText("Show in info popup:")
 
 local filterCheckboxes = {}
@@ -265,7 +274,7 @@ resetBtn:SetScript("OnClick", function()
     end
 
     -- Options window (this one)
-    optionsFrame:SetSize(300, 500)                                   -- default size
+    optionsFrame:SetSize(300, 550)                                   -- default size
     Util.LoadFramePosition(optionsFrame, "optionsWindowPos", "LEFT", 92, 80) -- default anchor
 
     print("|cff00ff00[ATT-GoGo]|r Window sizes/positions reset to defaults.")
@@ -276,10 +285,10 @@ optionsFrame:HookScript("OnShow", function()
     local function Refresh(cb) if cb and cb.GetScript then local f = cb:GetScript("OnShow"); if f then f(cb) end end end
     Refresh(minimapCheckbox)
     Refresh(instIconCheckbox)
-    Refresh(criteriaCheckbox)
-    Refresh(removedCheckbox)
-    Refresh(groupVisualsCheckbox)
     Refresh(nakedTryOnCheckbox)
+    Refresh(removedCheckbox)
+    Refresh(criteriaCheckbox)
+    Refresh(groupVisualsCheckbox)
     UpdateFilterCheckboxes()
 end)
 
