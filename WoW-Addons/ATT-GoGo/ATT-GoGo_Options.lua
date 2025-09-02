@@ -1,7 +1,7 @@
 ﻿-- === ATT-GoGo Options UI ===
 
 local optionsFrame = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
-optionsFrame:SetSize(300, 560)
+optionsFrame:SetSize(300, 520)
 
 optionsFrame:SetMovable(true)
 optionsFrame:EnableMouse(true)
@@ -208,7 +208,7 @@ local filterCheckboxes = {}
 
 local COLLECTIBLE_ID_ORDER = {
     "achievementID", "creatureID", "explorationID", "flightpathID", "gearSetID",
-    "instanceID", "itemID", "mapID", "questID", "titleID", "visualID"
+    "itemID", "mapID", "questID", "titleID", "visualID"
 }
 
 local colWidth, rowHeight = 160, 24
@@ -277,7 +277,7 @@ resetBtn:SetScript("OnClick", function()
         popup:SetSize(268, 592)
         Util.LoadFramePosition(popup, "popupWindowPos", "RIGHT", -200, 64)
     end
-    optionsFrame:SetSize(300, 560)
+    optionsFrame:SetSize(300, 520)
     Util.LoadFramePosition(optionsFrame, "optionsWindowPos", "LEFT", 92, 80)
     print("|cff00ff00[ATT-GoGo]|r Window sizes/positions reset to defaults.")
 end)

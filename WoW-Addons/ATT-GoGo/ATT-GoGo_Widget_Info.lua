@@ -56,10 +56,31 @@ local function IsAllowedLeaf(node, activeKeys)
     return false, matched
 end
 
-
 local function SafeNodeName(n)
     if not n or type(n) ~= "table" then return "?" end
     return n.text or n.name or _G.UNKNOWN or "?"
+end
+
+-- Short display name for a collectible leaf
+local function NodeShortName(n)
+    if not n or type(n) ~= "table" then return "Collectible" end
+    if n.text and n.text ~= "" then return n.text end
+    if n.name and n.name ~= "" then return n.name end
+    if n.itemID and GetItemInfo then
+        local nm = GetItemInfo(n.itemID); if nm then return nm end
+        return "Item " .. tostring(n.itemID)
+    end
+    if n.achievementID then
+        local _, nm = GetAchievementInfo(n.achievementID); if nm and nm ~= "" then return nm end
+        return "Achievement " .. tostring(n.achievementID)
+    end
+    if n.spellID then
+        local nm = GetSpellInfo(n.spellID); if nm then return nm end
+        return "Spell " .. tostring(n.spellID)
+    end
+    if n.questID then return "Quest " .. tostring(n.questID) end
+    if n.titleID then return "Title " .. tostring(n.titleID) end
+    return "Collectible"
 end
 
 ------------------------------------------------------------
@@ -225,7 +246,29 @@ local function SetupNodeTooltip(btn, boundNode)
             end
             AddMatchedIDLines(node, matched)
             GameTooltip:Show()
+        elseif node.creatureID then
+            GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
 
+            -- List up to 7 uncollected collectibles obtainable from this creature
+            if type(node.g) == "table" and #node.g > 0 then
+                local shown, extra = 0, 0
+                for i = 1, #node.g do
+                    local ch = node.g[i]
+                    if type(ch) == "table" and ch.collectible and ch.collected ~= true then
+                        if shown < 7 then
+                            GameTooltip:AddLine("• " .. NodeShortName(ch), 1, 1, 1, true)
+                            shown = shown + 1
+                        else
+                            extra = extra + 1
+                        end
+                    end
+                end
+                if shown > 0 and extra > 0 then
+                    GameTooltip:AddLine(string.format("And %d more...", extra), 0.85, 0.85, 0.85, true)
+                end
+            end
+
+            AddMatchedIDLines(node, matched)
         else
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
             AddMatchedIDLines(node, matched)
