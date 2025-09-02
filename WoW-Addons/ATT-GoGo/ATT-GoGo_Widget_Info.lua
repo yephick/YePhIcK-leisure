@@ -652,8 +652,22 @@ local function AcquireRow(scrollContent, i)
             Util.InsertNodeChatLink(node)
             return
         end
+
         if mouseButton == "LeftButton" and node then
-            if node.achievementID then Util.OpenAchievementByID(node.achievementID); return end
+            -- 1) Direct achievement row
+            if node.achievementID then
+                Util.OpenAchievementByID(node.achievementID)
+                return
+            end
+            -- 2) Title rows → resolve to the awarding achievement and open it
+            if node.titleID then
+                local aid = Util.FindAchievementForTitleNode(node)
+                if aid then
+                    Util.OpenAchievementByID(aid)
+                    return
+                end
+            end
+            -- 3) Map-ish rows can focus the map
             if node.mapID or node.explorationID or node.instanceID or node.flightpathID then
                 if Util.FocusMapForNode(node) then return end
             end
