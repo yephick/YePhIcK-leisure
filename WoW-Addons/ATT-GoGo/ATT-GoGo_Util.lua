@@ -10,12 +10,11 @@ ATT = nil -- this is our reference to ATT addon on which we rely
 
 COLLECTIBLE_ID_FIELDS = {
     achievementID = true,
-    creatureID = false,
+    creatureID = true,
     explorationID = true,
     flightpathID = true,
     gearSetID = false,
-    instanceID = false,
-    itemID = false,
+    itemID = true,
     mapID = false,
     questID = false,
     titleID = true,
@@ -28,7 +27,6 @@ COLLECTIBLE_ID_LABELS = {
     explorationID = "exploration",
     flightpathID = "flight path",
     gearSetID = "gear set",
-    instanceID = "instance",
     itemID = "item",
     mapID = "map",
     questID = "quest",
@@ -231,7 +229,7 @@ function Util.LoadFramePosition(frame, dbKey, defaultPoint, defaultX, defaultY)
     frame:ClearAllPoints()
     if pos then
         frame:SetPoint(pos.point or "CENTER", UIParent, pos.relativePoint or "CENTER", pos.xOfs or 0, pos.yOfs or 0)
-        if pos.width and pos.height then
+        if frame.IsResizable and frame:IsResizable() and pos.width and pos.height then
             frame:SetSize(pos.width, pos.height)
         end
     else
@@ -328,6 +326,38 @@ function Util.GetBestAchievementID(node)
     return nil
   end
   return firstUncollectedLeafWithAch(node) or node.achievementID
+end
+
+-- Given a node (often a Title leaf), try to find the achievement that awards it.
+function Util.FindAchievementForTitleNode(node)
+  if type(node) ~= "table" then return nil end
+  -- If the node already carries an achievementID, use it.
+  if node.achievementID then return node.achievementID end
+
+  -- Walk up parents to see if it’s embedded under an achievement.
+  local function ascend_for_achievement(n)
+    local cur, hops = n, 0
+    while type(cur) == "table" and hops < 12 do
+      if cur.achievementID then return cur.achievementID end
+      cur = rawget(cur, "parent"); hops = hops + 1
+    end
+  end
+  local up = ascend_for_achievement(node)
+  if up then return up end
+
+  -- If we have a titleID, ask ATT for that leaf and walk *its* parents.
+  local tid = tonumber(node.titleID)
+  if tid and Util.ATTSearchOne then
+    local hit = Util.ATTSearchOne("titleID", tid)
+    if type(hit) == "table" then
+      local via = ascend_for_achievement(hit)
+      if via then return via end
+      if hit.achievementID then return hit.achievementID end
+    end
+  end
+
+  -- No luck.
+  return nil
 end
 
 -------------------------------------------------

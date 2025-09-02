@@ -21,11 +21,11 @@ local function OpenUncollectedForCurrentContext()
         return true
     end
 
-    -- For zones: only open when the Outdoor Zones container exists strictly for this map.
+    -- For zones: open for the best (top container) zone so we don't churn on sub-zones.
     local mapID = info and info.uiMapID
-    local strictZone = ResolveContainerZoneNodeStrict(mapID)
-    if strictZone then
-        ShowUncollectedPopup(strictZone)
+    local bestZone = ResolveBestZoneNode(mapID)
+    if bestZone then
+        ShowUncollectedPopup(bestZone)
         return true
     end
 
@@ -33,12 +33,39 @@ local function OpenUncollectedForCurrentContext()
     return false
 end
 
+-- Refresh the Uncollected popup to the *current* context, if visible and allowed.
+local function RefreshUncollectedPopupForContextIfShown()
+    if not GetSetting("autoRefreshPopupOnZone", true) then return end
+
+    local popup = _G.ATTGoGoUncollectedPopup
+    if not (popup and popup:IsShown()) then return end
+
+    local node, info = Util.ResolveContextNode(true)
+    if not node then return end
+
+    local popup = _G.ATTGoGoUncollectedPopup
+
+    if info and info.kind == "instance" then
+        -- Only refresh if the instance node actually changed
+        if popup.currentData ~= node then
+            ShowUncollectedPopup(node)
+        end
+        return
+    end
+
+    -- Zones: resolve to the top container zone and refresh only if it changed
+    local bestZone = ResolveBestZoneNode(info and info.uiMapID)
+    if bestZone and popup.currentData ~= bestZone then
+        ShowUncollectedPopup(bestZone)
+    end
+end
+
 -- Tooltip header helper
 local function AddTooltipHeader(tooltip)
     tooltip:AddLine(title, 0, 1, 0)
     tooltip:AddLine("Left-click: Toggle main window", 1, 1, 1)
-    tooltip:AddLine("Right-click: Open options", 1, 1, 1)
-    tooltip:AddLine("Shift-click: Uncollected for current instance/zone", 1, 1, 1)
+    tooltip:AddLine("Right-click: Uncollected for current instance/zone", 1, 1, 1)
+    tooltip:AddLine("Shift-click: Open options", 1, 1, 1)
     tooltip:AddLine("Drag: Move icon", 1, 1, 1)
 end
 
@@ -60,13 +87,13 @@ local function SetupMinimapIcon()
             OnClick = function(self, button)
                 -- Shift-click opens the Uncollected popup for current instance/zone
                 if IsShiftKeyDown and IsShiftKeyDown() then
-                    if not OpenUncollectedForCurrentContext() then
-                        print("|cffff0000[" .. title .. "]|r Nothing to show for this location.")
-                    end
+                    ShowATTGoGoOptions()
                     return
                 end
                 if button == "RightButton" then
-                    ShowATTGoGoOptions()
+                    if not OpenUncollectedForCurrentContext() then
+                        print("|cffff0000[" .. title .. "]|r Nothing to show for this location.")
+                    end
                 else
                     if ATTGoGoMainFrame:IsShown() then
                         ATTGoGoMainFrame:Hide()
@@ -137,6 +164,22 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             print("|cff00ff00[" .. title .. "]|r is ready!")
             SetupMainUI()
             Debug_Init()
+
+            -- Auto-refresh Uncollected popup on zone/instance changes (if enabled)
+            local zoneWatcher = CreateFrame("Frame")
+            for _, ev in ipairs({
+                "PLAYER_ENTERING_WORLD",
+                "ZONE_CHANGED",
+                "ZONE_CHANGED_INDOORS",
+                "ZONE_CHANGED_NEW_AREA",
+                "UPDATE_INSTANCE_INFO",
+            }) do
+                zoneWatcher:RegisterEvent(ev)
+            end
+            zoneWatcher:SetScript("OnEvent", function()
+                -- slight delay so C_Map / GetInstanceInfo settle
+                C_Timer.After(0.15, RefreshUncollectedPopupForContextIfShown)
+            end)
 
             -- keep your progress cache coherent with ATT refreshes
             local clear = function() Util.ClearProgressCache() end
