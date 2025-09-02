@@ -202,7 +202,7 @@ local groupVisualsCheckbox = AddCheckbox(
 ---- Filters ----
 local filterLabel = perCharGroup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 filterLabel:SetPoint("TOPLEFT", groupVisualsCheckbox, "BOTTOMLEFT", 0, -12)
-filterLabel:SetText("Show in info popup:")
+filterLabel:SetText("Include in uncollected popup:")
 
 local filterCheckboxes = {}
 
@@ -211,7 +211,7 @@ local COLLECTIBLE_ID_ORDER = {
     "itemID", "mapID", "questID", "titleID", "visualID"
 }
 
-local colWidth, rowHeight = 160, 24
+local colWidth, rowHeight = 120, 24
 local i = 1
 for _, v in ipairs(COLLECTIBLE_ID_ORDER) do
     local col = (i-1) % 2
