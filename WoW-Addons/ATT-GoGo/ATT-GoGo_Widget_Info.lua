@@ -172,83 +172,6 @@ local function SetupNodeTooltip(btn, boundNode)
 end
 
 ------------------------------------------------------------
--- Icon resolver (atlas / file path / file id)
-------------------------------------------------------------
-local function SetNodeIcon(btn, node)
-    local tex = Util.GetNodeIcon(node)   -- file path, file ID, atlas, or table
-    local icon = btn.icon or btn.Icon or btn.IconTexture or _G[btn:GetName() .. "IconTexture"]
-
-    local function apply_file(file_or_id, coords)
-        if icon then
-            icon:SetAtlas(nil)
-            icon:SetTexture(nil)
-            icon:SetTexCoord(0, 1, 0, 1)
-            icon:SetDesaturated(false)
-        end
-        SetItemButtonTexture(btn, file_or_id or 134400)
-        if icon and coords and #coords == 4 then
-            icon:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
-        end
-    end
-
-    local function apply_atlas(atlas, desat)
-        if icon then
-            icon:SetAtlas(nil)
-            icon:SetTexture(nil)
-            icon:SetTexCoord(0, 1, 0, 1)
-            icon:SetAtlas(atlas, false)
-            icon:SetDesaturated(desat and true or false)
-            return true
-        end
-        return false
-    end
-
-    local function normalize_path(s)
-        s = s:gsub("\\", "/")
-        s = s:gsub("^interface/", "Interface/")
-        s = s:gsub("^Interface/addons/", "Interface/AddOns/")
-        if not s:find("^Interface/") then s = "Interface/" .. s end
-        return s
-    end
-
-    if type(tex) == "table" then
-        if tex.atlas or tex.a then
-            local atlas = tex.atlas or tex.a
-            if not apply_atlas(atlas, tex.desaturated or tex.desat) then
-                apply_file(134400)
-            end
-            return
-        else
-            local file = tex.texture or tex.file or tex.path
-            local id   = tex.id
-            local coords = tex.coords or tex.t or (tex.t0 and {tex.t0, tex.t1, tex.t2, tex.t3})
-            if type(file) == "string" then file = normalize_path(file) end
-            apply_file(file or id, coords)
-            return
-        end
-    end
-
-    if type(tex) == "string" then
-        if (not tex:find("/")) and (not tex:find("%.")) then
-            if not apply_atlas(tex, false) then
-                apply_file(134400)
-            end
-            return
-        else
-            apply_file(normalize_path(tex))
-            return
-        end
-    end
-
-    if type(tex) == "number" then
-        apply_file(tex)
-        return
-    end
-
-    apply_file(134400)
-end
-
-------------------------------------------------------------
 -- Lazy name resolution (items/achievements/spells)
 ------------------------------------------------------------
 local hiddenTT
@@ -294,17 +217,17 @@ local function ResolveDisplayForNode(node, label, btn)
         local name = GetItemInfo(node.itemID)
         if name then
             display = display or name
-            SetNodeIcon(btn, node)
+            Util.ApplyNodeIcon(btn, node)
         else
             display = display or ("Item " .. tostring(node.itemID))
             itemLabelsByID[node.itemID] = { label = label, btn = btn }
-            PrimeItemInfo(itemID)
+            PrimeItemInfo(node.itemID)
         end
     elseif node.achievementID then
         local _, name = GetAchievementInfo(node.achievementID)
         if name and name ~= "" then
             display = display or name
-            SetNodeIcon(btn, node)
+            Util.ApplyNodeIcon(btn, node)
         else
             display = display or ("Achievement " .. tostring(node.achievementID))
             achLabelsByID[node.achievementID] = label
@@ -427,11 +350,6 @@ local function DedupAchievements(nodes)
             uniq[#uniq+1] = n
         end
     end
-
---    local removed = #nodes - #uniq
---    if removed > 0 then
---        DebugLogf("[Popup] DedupAchievements: removed %d duplicate achievement rows", removed)
---    end
     return uniq
 end
 
@@ -503,8 +421,6 @@ local function CollapseAchievementFamilies(root, nodes)
         local _, _, _, completed = GetAchievementInfo(aid)
         if not completed then
             keep[#keep + 1] = rep
---        else
---            DebugLogf("[Popup] skip family %d — already completed.", aid)
         end
     end
 
@@ -600,8 +516,6 @@ local function GatherUncollectedNodes(node, out, activeKeys, seen)
 end
 
 local function BuildNodeList(root)
---    local __t0 = (debugprofilestop and debugprofilestop()) or (GetTimePreciseSec() * 1000)
-
     local activeKeys = CollectActiveKeys()
     if #activeKeys == 0 then
         return {}, activeKeys
@@ -610,16 +524,12 @@ local function BuildNodeList(root)
     -- Gather raw leaves per active filters
     local nodes = {}
     GatherUncollectedNodes(root, nodes, activeKeys)
---    DebugLogf("[Trace] BuildNodeList(%s)", SafeNodeName(root))
 
     -- Transformations (in order)
     nodes = DedupQuests(nodes)
     nodes = CollapseAchievementFamilies(root, nodes)
     nodes = GroupItemsByVisualID(nodes)
     SortPopupNodes(nodes)
-
-    local __t1 = (debugprofilestop and debugprofilestop()) or (GetTimePreciseSec() * 1000)
---    DebugLogf("[Perf] BuildNodeList(%s): %d nodes in %.2f ms", SafeNodeName(root), #nodes, __t1 - __t0)
 
     return nodes, activeKeys
 end
@@ -683,7 +593,7 @@ local function RenderRowAt(scrollContent, row, dataIndex, nodes)
 
     -- Fill visuals (fast path: icon + name)
     row.btn.node = node
-    SetNodeIcon(row.btn, node)
+    Util.ApplyNodeIcon(row.btn, node)
     ResolveDisplayForNode(node, row.label, row.btn)
 
     row.btn:Show()
@@ -906,7 +816,7 @@ updater:SetScript("OnEvent", function(_, event, a1)
             local name = GetItemInfo(itemID)
             if name then
                 entry.label:SetText(name)
-                if entry.btn then SetNodeIcon(entry.btn, entry.btn.node) end
+                if entry.btn then Util.ApplyNodeIcon(entry.btn, entry.btn.node) end
                 itemLabelsByID[itemID] = nil
             end
         end
@@ -930,13 +840,9 @@ local function RefreshPopup(data)
     end
     uncollectedPopup.currentNodes = nodes
 
---    DebugLogf("[Popup] Active filters: %s", (#activeKeys > 0) and table.concat(activeKeys, ",") or "(none)")
-
     pcall(PopulateUncollectedPopup, uncollectedPopup.scrollContent, nodes)
 
     uncollectedPopup.title:SetText(Util.NodeDisplayName(data))
-
---    DebugFlushSoon("popup")
 
     -- lazy refresh to update late-resolving names/icons
     C_Timer.After(1.0, function()
@@ -947,7 +853,6 @@ local function RefreshPopup(data)
 end
 
 function ShowUncollectedPopup(data)
---    DebugLogf("[Trace] ShowUncollectedPopup: %s", tostring(data and (data.text or data.name or data.instanceID or data.mapID) or "nil"))
 --    DebugPrintNodePath(data, { verbose = true })
 --    if data.parent then DebugRecursive(data.parent, "popup.parent", 0, 1, false) end
 --    DebugRecursive(data, "popup.data", 0, 2, false)

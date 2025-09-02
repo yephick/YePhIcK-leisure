@@ -12,8 +12,6 @@ local function PrintStartup()
 end
 
 local function OpenUncollectedForCurrentContext()
---    DebugLogf("[Trace] OpenUncollectedForCurrentContext()")
-
     local node, info = Util.ResolveContextNode(true)
     if not node then return false end
 

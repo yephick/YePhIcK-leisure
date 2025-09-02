@@ -166,7 +166,6 @@ end
 
 -- Helper: Populate a frame with widgets in a grid
 function Grid.Populate(content, dataset, widgetFactory, widgets, widgetSize, padding, scroll)
---    local __t0 = (debugprofilestop and debugprofilestop()) or (GetTimePreciseSec() * 1000)
     Util.ClearChildrenOrTabs(content)
     wipe(widgets)
     local frameWidth = scroll:GetWidth()
@@ -179,9 +178,6 @@ function Grid.Populate(content, dataset, widgetFactory, widgets, widgetSize, pad
         if x >= cols then x = 0; y = y + 1 end
     end
     content:SetSize(frameWidth, (y + 1) * (60 + padding) + 80)
---    DebugFlushSoon("Grid.Populate")
---    local __t1 = (debugprofilestop and debugprofilestop()) or (GetTimePreciseSec() * 1000)
---    DebugLogf("[Perf] Populate(%s): %.2f ms", tostring(tab and tab.name or "?"), __t1 - __t0)
 end
 
 -- Factory: Create a scrolling grid for any dataset and widget factory

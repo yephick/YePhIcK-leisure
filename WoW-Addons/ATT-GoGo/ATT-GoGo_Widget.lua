@@ -110,20 +110,15 @@ function Widget.CreateProgressWidget(content, data, x, y, widgetSize, padding, i
     if GetSetting("showInstanceIconOnWidgets", true) and data.instanceID then
         local instNode = Util.ATTFindInstanceByInstanceID(data.instanceID)
         if instNode then
-            local iconPath = Util.GetNodeIcon(instNode)
-            if iconPath then
-                local icon = f:CreateTexture(nil, "ARTWORK")
-                icon:SetSize(48, 48)
-                icon:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -6)
-                icon:SetTexture(iconPath)
-                icon:SetTexCoord(0.07, 0.93, 0.07, 0.93) -- crop edges nicely
-            end
+            local tex = f:CreateTexture(nil, "ARTWORK")
+            tex:SetSize(48, 48)
+            tex:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -6)
+            Util.ApplyNodeIcon(tex, instNode, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
         end
     end
 
     local nodeForProgress = attNode or data
     local collected, total, percent = Util.ResolveProgress(nodeForProgress)
---    DebugLogf("[Trace] CreateProgressWidget(%s)", tostring((data and (data.text or data.name)) or data and (data.instanceID or data.mapID) or "?"))
     Widget.SetProgressWidgetVisuals(f, data, percent, isZone)
     Widget.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
     Widget.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone)

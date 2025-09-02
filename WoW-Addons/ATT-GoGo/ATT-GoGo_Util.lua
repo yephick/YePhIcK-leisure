@@ -42,15 +42,6 @@ Util = Util or {}
 ATTGoGoDB     = ATTGoGoDB     or {}
 ATTGoGoCharDB = ATTGoGoCharDB or {}
 
---function Util.WithStopwatch(label, fn, ...)
---    local t0 = (debugprofilestop and debugprofilestop()) or (GetTimePreciseSec() * 1000)
---    local ok, a, b, c = pcall(fn, ...)
---    local t1 = (debugprofilestop and debugprofilestop()) or (GetTimePreciseSec() * 1000)
-----    DebugLogf("[Perf] %s: %.2f ms", label, t1 - t0)
---    if not ok then error(a) end
---    return a, b, c
---end
-
 -- === Account-scoped settings ===
 function GetSetting(key, default)
     ATTGoGoDB = ATTGoGoDB or {}
@@ -476,6 +467,100 @@ function Util.GetNodeIcon(node)
   return nil
 end
 
+-- Centralized icon applier: works with ItemButtons *and* raw Textures.
+-- Usage:
+--   Util.ApplyNodeIcon(btnOrTexture, node)
+--   Util.ApplyNodeIcon(btnOrTexture, node, { texCoord = {0.07,0.93,0.07,0.93} })
+function Util.ApplyNodeIcon(target, node, opts)
+  opts = opts or {}
+  local tex = Util.GetNodeIcon(node)   -- may be file path, fileID, atlas, or a table {atlas=..., coords=..., id=..., texture=...}
+  local icon
+  -- Determine the "icon" subtexture if target is an ItemButton; otherwise treat target as the Texture itself.
+  if target and target.GetObjectType and target:GetObjectType() == "Texture" then
+    icon = target
+  else
+    icon = (target and (target.icon or target.Icon or target.IconTexture))
+        or (target and target.GetName and _G[target:GetName() .. "IconTexture"])
+  end
+
+  local function clear_icon()
+    if icon and icon.SetAtlas     then icon:SetAtlas(nil) end
+    if icon and icon.SetTexture   then icon:SetTexture(nil) end
+    if icon and icon.SetTexCoord  then icon:SetTexCoord(0, 1, 0, 1) end
+    if icon and icon.SetDesaturated then icon:SetDesaturated(false) end
+  end
+  local function normalize_path(s)
+    s = s:gsub("\\", "/")
+    s = s:gsub("^interface/", "Interface/")
+    s = s:gsub("^Interface/addons/", "Interface/AddOns/")
+    if not s:find("^Interface/") then s = "Interface/" .. s end
+    return s
+  end
+  local function apply_file(file_or_id, coords)
+    clear_icon()
+    -- If we have a Texture, set it directly; otherwise try ItemButton texture path.
+    if icon and icon.GetObjectType and icon:GetObjectType() == "Texture" then
+      icon:SetTexture(file_or_id or 134400)
+    elseif SetItemButtonTexture and target then
+      SetItemButtonTexture(target, file_or_id or 134400)
+    elseif icon and icon.SetTexture then
+      icon:SetTexture(file_or_id or 134400)
+    end
+    local tc = opts.texCoord or coords
+    if icon and tc and #tc == 4 then
+      icon:SetTexCoord(tc[1], tc[2], tc[3], tc[4])
+    end
+  end
+  local function apply_atlas(atlas, desat)
+    if icon and icon.SetAtlas then
+      clear_icon()
+      icon:SetAtlas(atlas, false)
+      icon:SetDesaturated(desat and true or false)
+      return true
+    end
+    return false
+  end
+
+  -- Handle table format from ATT or callers
+  if type(tex) == "table" then
+    if tex.atlas or tex.a then
+      if not apply_atlas(tex.atlas or tex.a, tex.desaturated or tex.desat) then
+        apply_file(134400)
+      end
+      return
+    else
+      local file   = tex.texture or tex.file or tex.path
+      local id     = tex.id
+      local coords = tex.coords or tex.t or (tex.t0 and { tex.t0, tex.t1, tex.t2, tex.t3 })
+      if type(file) == "string" then file = normalize_path(file) end
+      apply_file(file or id, coords)
+      return
+    end
+  end
+
+  -- String: atlas name (no slash/dot) OR file path
+  if type(tex) == "string" then
+    if (not tex:find("/")) and (not tex:find("%.")) then
+      if not apply_atlas(tex, false) then
+        apply_file(134400)
+      end
+      return
+    else
+      apply_file(normalize_path(tex))
+      return
+    end
+  end
+
+  -- Numeric fileID
+  if type(tex) == "number" then
+    apply_file(tex)
+    return
+  end
+
+  -- Fallback
+  apply_file(134400)
+end
+
 -- === Removed/retired detection ===
 -- Convert "major.minor.patch" into ATT-style RWP integer (e.g. "5.5.0" -> 50500, "1.15.3" -> 11503)
 function Util.CurrentClientRWP()
@@ -521,8 +606,14 @@ end
 ATTDB = ATTDB or {}
 
 function ATTDB.BuildInstanceCache()
---  DebugLogf("[Trace] ATTDB_BuildInstanceCache")
-  local cache = { list = {}, byMapID = {}, byInstanceID = {}, byEJID = {} }
+  local cache = {
+      list = {},
+      byMapID = {},
+      byInstanceID = {},
+      byEJID = {},
+      bySavedInstanceID = {},
+      byContainedMap = {},    -- uiMapID -> instance node (from instance.maps[])
+  }
 
   local exps = BuildExpansionList()
   for _, exp in ipairs(exps) do
@@ -531,14 +622,27 @@ function ATTDB.BuildInstanceCache()
       local n = e.attNode or e
       if type(n) == "table" then
         cache.list[#cache.list+1] = n
-        if n.mapID       then cache.byMapID[n.mapID]         = n end
-        if n.instanceID  then cache.byInstanceID[n.instanceID] = n; cache.byEJID[n.instanceID] = n end
+        if n.mapID      then cache.byMapID[n.mapID] = n end
+        if n.instanceID then
+          cache.byInstanceID[n.instanceID] = n
+          cache.byEJID[n.instanceID] = n
+        end
+        if n.savedInstanceID then
+          cache.bySavedInstanceID[tonumber(n.savedInstanceID)] = n
+        end
+        if type(n.maps) == "table" then
+          for _, m in ipairs(n.maps) do
+            local mid = tonumber(m)
+            if mid and not cache.byContainedMap[mid] then
+              cache.byContainedMap[mid] = n
+            end
+          end
+        end
       end
     end
   end
 
   ATTDB.cache = cache
---  DebugLogf("[ATTDB] cache built: instances=%d", #cache.list)
   return cache
 end
 
@@ -571,43 +675,15 @@ end
 -- Instance whose `maps` array contains a given uiMapID
 function Util.ATTFindInstanceByContainedMap(uiMapID)
   uiMapID = tonumber(uiMapID); if not uiMapID then return nil end
-  local root = _Root(); if not (root and root.g) then return nil end
-  for _, cat in ipairs(root.g) do
-    if type(cat.g) == "table" then
-      for _, exp in ipairs(cat.g) do
-        if type(exp) == "table" and type(exp.g) == "table" then
-          for _, n in ipairs(exp.g) do
-            if type(n) == "table" and n.instanceID and type(n.maps) == "table" then
-              for _, m in ipairs(n.maps) do
-                if tonumber(m) == uiMapID then return n end
-              end
-            end
-          end
-        end
-      end
-    end
-  end
-  return nil
+  local c = ATTDB.GetCache()
+  return (c.byContainedMap and c.byContainedMap[uiMapID]) or nil
 end
 
 -- Instance by Blizzard savedInstanceID
 function Util.ATTFindInstanceBySavedInstanceID(id)
   id = tonumber(id); if not id then return nil end
-  local root = _Root(); if not (root and root.g) then return nil end
-  for _, cat in ipairs(root.g) do
-    if type(cat.g) == "table" then
-      for _, exp in ipairs(cat.g) do
-        if type(exp) == "table" and type(exp.g) == "table" then
-          for _, n in ipairs(exp.g) do
-            if type(n) == "table" and n.instanceID and tonumber(n.savedInstanceID) == id then
-              return n
-            end
-          end
-        end
-      end
-    end
-  end
-  return nil
+  local c = ATTDB.GetCache()
+  return (c.bySavedInstanceID and c.bySavedInstanceID[id]) or nil
 end
 
 -- Unified context resolver: returns the ATT node for current instance or zone.
@@ -624,8 +700,6 @@ function Util.ResolveContextNode(verbose)
   info.giName  = gi[1]
   info.giMapID = tonumber(gi[8])
   local inInstance = IsInInstance()
-
---  DebugLogf("[Trace] ResolveContextNode(uiMapID=%s, giMapID=%s, inInst=%s)", tostring(info.uiMapID), tostring(info.giMapID), tostring(inInstance))
 
   -- Instance by contained uiMapID in node.maps[]
   if inInstance and info.uiMapID then
@@ -649,7 +723,6 @@ function Util.ResolveContextNode(verbose)
 end
 
 function ResolveBestZoneNode(mapID)
---  DebugLogf("[Trace] ResolveBestZoneNode(%s)", tostring(mapID))
   if not mapID then return nil end
   local strict = ResolveContainerZoneNodeStrict(mapID)
   if strict then return strict end
@@ -663,7 +736,6 @@ function ResolveBestZoneNode(mapID)
 end
 
 function ResolveContainerZoneNodeStrict(mapID)
---  DebugLogf("[Trace] ResolveContainerZoneNodeStrict(%s)", tostring(mapID))
   if not mapID then return nil end
   local root = _Root(); if not (root and root.g) then return nil end
   local function isContainerZone(n)
@@ -710,7 +782,6 @@ function GetCompletionColor(percent)
 end
 
 function BuildExpansionList()
---  DebugLogf("[Trace] BuildExpansionList()")
   local list, seen = {}, {}
   local root = _Root()
   if not (root and type(root.g) == "table") then return list end
@@ -736,7 +807,6 @@ function BuildExpansionList()
 end
 
 function GetInstancesForExpansion(expansionID)
---  DebugLogf("[Trace] GetInstancesForExpansion(%s)", tostring(expansionID))
   local out = {}
   local root = _Root()
   if not (root and root.g) then return out end
@@ -765,7 +835,6 @@ function GetInstancesForExpansion(expansionID)
 end
 
 function BuildZoneList()
---  DebugLogf("[Trace] BuildZoneList()")
   local root = _Root(); if not (root and root.g) then return {} end
 
   local zones, seen = {}, {}
@@ -794,7 +863,6 @@ function BuildZoneList()
           if not seen[mid] then
             seen[mid] = true
             zones[#zones+1] = { id = "zone_" .. tostring(mid), name = Util.NodeDisplayName(n), node = n }
---            DebugLogf("[Trace] BuildZoneList: +continent %s", tostring(mid))
           end
         end
         if type(n.g) == "table" then scan(n.g) end

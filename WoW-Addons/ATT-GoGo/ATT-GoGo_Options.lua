@@ -15,115 +15,100 @@ optionsFrame:Hide()
 
 -- Title
 optionsFrame.TitleText:SetText("ATT-GoGo Options")
-
--- Checkbox for minimap icon
-local minimapCheckbox = CreateFrame("CheckButton", "ATTGoGoShowMinimapCheckbox", optionsFrame, "ChatConfigCheckButtonTemplate")
-minimapCheckbox:SetPoint("TOPLEFT", 20, -35)
-minimapCheckbox.Text:SetText("Show minimap icon")
-
-local function UpdateMinimapCheckbox()
-    minimapCheckbox:SetChecked(not (ATTGoGoDB and ATTGoGoDB.minimap and ATTGoGoDB.minimap.hide))
+ 
+-- Generic checkbox factory:
+-- point: { "TOPLEFT", 20, -35 } or { "TOPLEFT", anchorFrame, "BOTTOMLEFT", 0, -8 }
+-- getValue: function() -> boolean
+-- setValue: function(boolean)
+-- onChange: optional function(boolean)
+local function AddCheckbox(parent, label, point, getValue, setValue, onChange)
+    local cb = CreateFrame("CheckButton", nil, parent, "ChatConfigCheckButtonTemplate")
+    cb:SetPoint(unpack(point))
+    cb.Text:SetText(label)
+    cb:SetScript("OnShow", function()
+        local ok, val = pcall(getValue); if ok then cb:SetChecked(val and true or false) end
+    end)
+    cb:SetScript("OnClick", function(self)
+        local v = self:GetChecked() and true or false
+        pcall(setValue, v)
+        if onChange then pcall(onChange, v) end
+    end)
+    return cb
 end
 
-local function SaveMinimapCheckbox()
-    local checked = minimapCheckbox:GetChecked()
-    ATTGoGoDB = ATTGoGoDB or {}
-    ATTGoGoDB.minimap = ATTGoGoDB.minimap or {}
-    ATTGoGoDB.minimap.hide = not checked
-    local icon = LibStub:GetLibrary("LibDBIcon-1.0", true)
-    if icon then
-        if checked then
-            icon:Show("ATT-GoGo")
-        else
-            icon:Hide("ATT-GoGo")
+-- Checkbox: minimap icon (special DB path + LibDBIcon show/hide)
+local minimapCheckbox = AddCheckbox(
+    optionsFrame,
+    "Show minimap icon",
+    { "TOPLEFT", 20, -35 },
+    function()
+        return not (ATTGoGoDB and ATTGoGoDB.minimap and ATTGoGoDB.minimap.hide)
+    end,
+    function(v)
+        ATTGoGoDB = ATTGoGoDB or {}
+        ATTGoGoDB.minimap = ATTGoGoDB.minimap or {}
+        ATTGoGoDB.minimap.hide = (not v)
+        local icon = LibStub:GetLibrary("LibDBIcon-1.0", true)
+        if icon then
+            if v then icon:Show("ATT-GoGo") else icon:Hide("ATT-GoGo") end
         end
     end
-end
-
-minimapCheckbox:SetScript("OnClick", SaveMinimapCheckbox)
+)
 
 -- Checkbox: show instance icon on widgets
-local instIconCheckbox = CreateFrame("CheckButton", "ATTGoGoWidgetInstIconCheckbox", optionsFrame, "ChatConfigCheckButtonTemplate")
-instIconCheckbox:SetPoint("TOPLEFT", minimapCheckbox, "BOTTOMLEFT", 0, -8)
-instIconCheckbox.Text:SetText("Show instance icon on widgets")
+local instIconCheckbox = AddCheckbox(
+    optionsFrame,
+    "Show instance icon on widgets",
+    { "TOPLEFT", minimapCheckbox, "BOTTOMLEFT", 0, -8 },
+    function() return GetSetting("showInstanceIconOnWidgets", true) end,
+    function(v) SetSetting("showInstanceIconOnWidgets", v) end,
+    function() if RefreshActiveTab then RefreshActiveTab() end end
+)
 
-local function UpdateInstIconCheckbox()
-    -- default true if not set
-    instIconCheckbox:SetChecked(GetSetting("showInstanceIconOnWidgets", true))
-end
-
-local function SaveInstIconCheckbox()
-    local checked = instIconCheckbox:GetChecked() and true or false
-    SetSetting("showInstanceIconOnWidgets", checked)
-
-    RefreshActiveTab()
-end
-
-instIconCheckbox:SetScript("OnClick", SaveInstIconCheckbox)
-
--- Checkbox: expand/collapse achievement criteria in popup (per-character)
-local criteriaCheckbox = CreateFrame("CheckButton", "ATTGoGoExpandCriteriaCheckbox", optionsFrame, "ChatConfigCheckButtonTemplate")
-criteriaCheckbox:SetPoint("TOPLEFT", instIconCheckbox, "BOTTOMLEFT", 0, -8)
-criteriaCheckbox.Text:SetText("List individual achievement criteria")  -- unchecked = collapse (default)
-
-local function UpdateCriteriaCheckbox()
-    criteriaCheckbox:SetChecked(GetCharSetting("expandAchievementCriteria", false))
-end
-
-local function SaveCriteriaCheckbox()
-    local val = criteriaCheckbox:GetChecked() and true or false
-    SetCharSetting("expandAchievementCriteria", val)
-
-    -- If the popup is open, refresh it to reflect the new behavior
-    local popup = _G.ATTGoGoUncollectedPopup
-    if popup and popup:IsShown() and popup.currentData then
-        ShowUncollectedPopup(popup.currentData)
+-- Checkbox: list individual achievement criteria (per-character)
+local criteriaCheckbox = AddCheckbox(
+    optionsFrame,
+    "List individual achievement criteria",
+    { "TOPLEFT", instIconCheckbox, "BOTTOMLEFT", 0, -8 },
+    function() return GetCharSetting("expandAchievementCriteria", false) end,
+    function(v) SetCharSetting("expandAchievementCriteria", v) end,
+    function()
+        local popup = _G.ATTGoGoUncollectedPopup
+        if popup and popup:IsShown() and popup.currentData then
+            ShowUncollectedPopup(popup.currentData)
+        end
     end
-end
-
-criteriaCheckbox:SetScript("OnClick", SaveCriteriaCheckbox)
+)
 
 -- Checkbox: include removed/retired content (account-wide)
-local removedCheckbox = CreateFrame("CheckButton", "ATTGoGoIncludeRemovedCheckbox", optionsFrame, "ChatConfigCheckButtonTemplate")
-removedCheckbox:SetPoint("TOPLEFT", criteriaCheckbox, "BOTTOMLEFT", 0, -8)
-removedCheckbox.Text:SetText("Include removed/retired content")
-
-local function UpdateRemovedCheckbox()
-    removedCheckbox:SetChecked(GetSetting("includeRemoved", false))
-end
-
-local function SaveRemovedCheckbox()
-    local val = removedCheckbox:GetChecked() and true or false
-    SetSetting("includeRemoved", val)
-    -- If the popup is open, refresh to reflect new behavior
-    local popup = _G.ATTGoGoUncollectedPopup
-    if popup and popup:IsShown() and popup.currentData then
-        ShowUncollectedPopup(popup.currentData)
+local removedCheckbox = AddCheckbox(
+    optionsFrame,
+    "Include removed/retired content",
+    { "TOPLEFT", criteriaCheckbox, "BOTTOMLEFT", 0, -8 },
+    function() return GetSetting("includeRemoved", false) end,
+    function(v) SetSetting("includeRemoved", v) end,
+    function()
+        local popup = _G.ATTGoGoUncollectedPopup
+        if popup and popup:IsShown() and popup.currentData then
+            ShowUncollectedPopup(popup.currentData)
+        end
     end
-end
+)
 
-removedCheckbox:SetScript("OnClick", SaveRemovedCheckbox)
-
--- Checkbox: group items with same appearance (per-character, default = ON)
-local groupVisualsCheckbox = CreateFrame("CheckButton", "ATTGoGoGroupVisualsCheckbox", optionsFrame, "ChatConfigCheckButtonTemplate")
-groupVisualsCheckbox:SetPoint("TOPLEFT", removedCheckbox, "BOTTOMLEFT", 0, -8)
-groupVisualsCheckbox.Text:SetText("Group items by appearance (visualID)")
-
-local function UpdateGroupVisualsCheckbox()
-    groupVisualsCheckbox:SetChecked(GetCharSetting("groupByVisualID", true))
-end
-
-local function SaveGroupVisualsCheckbox()
-    local val = groupVisualsCheckbox:GetChecked() and true or false
-    SetCharSetting("groupByVisualID", val)
-    -- If the popup is open, refresh to reflect new behavior
-    local popup = _G.ATTGoGoUncollectedPopup
-    if popup and popup:IsShown() and popup.currentData then
-        ShowUncollectedPopup(popup.currentData)
+-- Checkbox: group items by appearance (visualID) — per-character (default ON)
+local groupVisualsCheckbox = AddCheckbox(
+    optionsFrame,
+    "Group items by appearance (visualID)",
+    { "TOPLEFT", removedCheckbox, "BOTTOMLEFT", 0, -8 },
+    function() return GetCharSetting("groupByVisualID", true) end,
+    function(v) SetCharSetting("groupByVisualID", v) end,
+    function()
+        local popup = _G.ATTGoGoUncollectedPopup
+        if popup and popup:IsShown() and popup.currentData then
+            ShowUncollectedPopup(popup.currentData)
+        end
     end
-end
-
-groupVisualsCheckbox:SetScript("OnClick", SaveGroupVisualsCheckbox)
+)
 
 -- === Filter Options (Dynamic Checkboxes) ===
 local COLLECTIBLE_ID_ORDER = {
@@ -147,13 +132,7 @@ for _, v in ipairs(COLLECTIBLE_ID_ORDER) do
     if row == 0 then
         cb:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", col*colWidth, -8)
     else
-        local prevCheckbox = filterCheckboxes[i-2]
-        if prevCheckbox then
-            cb:SetPoint("TOPLEFT", prevCheckbox, "BOTTOMLEFT", 0, -2)
-        else
-            -- Fallback anchoring to avoid nil reference
-            cb:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", col*colWidth, -8 - row*rowHeight)
-        end
+        cb:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", col*colWidth, -8 - row*rowHeight)
     end
     cb.Text:SetText(COLLECTIBLE_ID_LABELS[v] or v)
     cb.Text:SetPoint("LEFT", cb, "RIGHT", 4, 0)
@@ -182,11 +161,13 @@ local function UpdateFilterCheckboxes()
 end
 
 optionsFrame:HookScript("OnShow", function()
-    UpdateMinimapCheckbox()
-    UpdateInstIconCheckbox()
-    UpdateCriteriaCheckbox()
-    UpdateRemovedCheckbox()
-    UpdateGroupVisualsCheckbox()
+    -- trigger each checkbox's OnShow to re-read current values
+    local function Refresh(cb) if cb and cb.GetScript then local f = cb:GetScript("OnShow"); if f then f(cb) end end end
+    Refresh(minimapCheckbox)
+    Refresh(instIconCheckbox)
+    Refresh(criteriaCheckbox)
+    Refresh(removedCheckbox)
+    Refresh(groupVisualsCheckbox)
     UpdateFilterCheckboxes()
 end)
 
@@ -196,7 +177,6 @@ function ShowATTGoGoOptions()
         optionsFrame:SetFrameStrata("DIALOG") -- Explicitly set to DIALOG to ensure it’s above mainFrame
     end
     Util.LoadFramePosition(optionsFrame, "optionsWindowPos", "LEFT", 92, 80)
-    UpdateMinimapCheckbox()
     optionsFrame:Show()
 end
 
