@@ -621,6 +621,15 @@ function Util.IsNodeRemoved(n, nowRWP)
     return r <= nowRWP
   end
 
+  -- awp: added with patch > client build
+  if(n.awp) then
+    local a = tonumber(n.awp)
+    if a and nowRWP then
+      if a > tonumber(nowRWP) then print("n.awp = " .. a .. " > " .. nowRWP .. " = " .. (a > nowRWP)) end
+      return a > nowRWP
+    end
+  end
+
   return false
 end
 
@@ -731,16 +740,16 @@ function Util.ResolveContextNode(verbose)
   info.giMapID = tonumber(gi[8])
   local inInstance = IsInInstance()
 
-  -- Instance by contained uiMapID in node.maps[]
-  if inInstance and info.uiMapID then
-    local byContained = Util.ATTFindInstanceByContainedMap(info.uiMapID)
-    if byContained then return ret(byContained, "instance", "maps[]") end
-  end
-
-  -- Instance by Blizzard savedInstanceID (Classic)
-  if inInstance and info.giMapID then
-    local bySaved = Util.ATTFindInstanceBySavedInstanceID(info.giMapID)
-    if bySaved then return ret(bySaved, "instance", "savedInstanceID") end
+  if inInstance then
+    if info.uiMapID then
+      local byContained = Util.ATTFindInstanceByContainedMap(info.uiMapID)
+      if byContained then return ret(byContained, "instance", "node.maps[]") end
+    elseif info.giMapID then
+      print("XXX: Instance by Blizzard savedInstanceID (Classic), info.giMapID = %d", info.giMapID)
+--      DebugLogf("XXX: Instance by Blizzard savedInstanceID (Classic), info.giMapID = %d", info.giMapID)
+      local bySaved = Util.ATTFindInstanceBySavedInstanceID(info.giMapID)
+      if bySaved then return ret(bySaved, "instance", "savedInstanceID") end
+    end
   end
 
   -- Zone fallback by mapID
@@ -796,6 +805,102 @@ function IsInstanceLockedOut(instance)
     end
   end
   return false
+end
+
+-- ============================================================
+-- Persist per-character progress for instances & zones
+-- Layout (arrays, in c/t order):
+--   ATTGoGoDB.progress[<realm>][<char>].instances[instanceID] = {
+--       [1]=c, [2]=t,
+--       lock = { expiresAt=<epoch>, bosses = { { name=<string>, down=<bool> }, ... } } | nil
+--   }
+--   ATTGoGoDB.progress[<realm>][<char>].zones[mapID] = { [1]=c, [2]=t }
+-- ============================================================
+
+-- Cached DB bucket (immutable after first build for this session)
+local _AGG_ProgressCache -- { me=<table>, realm=<string>, char=<string> }
+
+function Util.EnsureProgressDB()
+  if _AGG_ProgressCache then
+    return _AGG_ProgressCache.me, _AGG_ProgressCache.realm, _AGG_ProgressCache.char
+  end
+
+  ATTGoGoDB = ATTGoGoDB or {}
+  local prog = ATTGoGoDB.progress
+  if type(prog) ~= "table" then prog = {}; ATTGoGoDB.progress = prog end
+
+  local realm = GetRealmName() or "?"
+  prog[realm] = prog[realm] or {}
+
+  local charName = UnitName("player") or "?"
+  local byChar = prog[realm]
+  byChar[charName] = byChar[charName] or { instances = {}, zones = {} }
+
+  _AGG_ProgressCache = { me = byChar[charName], realm = realm, char = charName }
+  return _AGG_ProgressCache.me, realm, charName
+end
+
+-- Build a lockout snapshot (absolute expiry + boss list by name only)
+local function BuildLockoutFromSavedInstances(attInstanceNode)
+  local isLocked, _, numBosses, lockoutIndex = IsInstanceLockedOut(attInstanceNode)
+  if not (isLocked and lockoutIndex) then return nil end
+
+  local resetSeconds = select(3, GetSavedInstanceInfo(lockoutIndex)) or 0
+  local expiresAt = time() + resetSeconds
+
+  local bosses = {}
+  for i = 1, (numBosses or 0) do
+    local bossName, _, killed = GetSavedInstanceEncounterInfo(lockoutIndex, i)
+    bosses[#bosses+1] = { name = bossName or ("Boss " .. i), down = (killed and true) or false }
+  end
+
+  return { expiresAt = expiresAt, bosses = bosses }
+end
+
+-- Save instance progress for an ATT instance node (preferred input)
+function Util.SaveInstanceProgressByNode(attInstanceNode)
+  if type(attInstanceNode) ~= "table" then return end
+  local instanceID = tonumber(attInstanceNode.instanceID)
+  if not instanceID then return end
+
+  local c, t = Util.ResolveProgress(attInstanceNode)
+  local lock = BuildLockoutFromSavedInstances(attInstanceNode)
+
+  Util.EnsureProgressDB().instances[instanceID] = { c or 0, t or 0, lock = lock }
+end
+
+-- Save zone progress for an ATT zone node
+function Util.SaveZoneProgressByNode(attZoneNode)
+  if type(attZoneNode) ~= "table" then return end
+  local mapID = tonumber(attZoneNode.mapID)
+  if not mapID then return end
+
+  local c, t = Util.ResolveProgress(attZoneNode)
+
+  Util.EnsureProgressDB().zones[mapID] = { c or 0, t or 0 }
+end
+
+-- Convenience: snapshot whatever the current context is
+function Util.SaveCurrentContextProgress()
+  local node, info = Util.ResolveContextNode(true)
+  if not node then return end
+
+  if info and info.kind == "instance" then
+    Util.SaveInstanceProgressByNode(node)
+  else
+    local bestZone = ResolveBestZoneNode(info and info.uiMapID) or node
+    if bestZone and bestZone.mapID then
+      Util.SaveZoneProgressByNode(bestZone)
+    end
+  end
+end
+
+-- === Other-toons option (tri-state) ===
+function Util.GetOtherToonsMode()
+  -- 0 = off, 1 = instances with lockouts, 2 = zones+instances
+  local v = tonumber(GetSetting("otherToonsInTooltips", 1)) or 1
+  if v < 0 or v > 2 then v = 1 end
+  return v
 end
 
 -------------------------------------------------
@@ -941,15 +1046,78 @@ function Tooltip.AddInstanceLockoutTo(tooltip, data)
     end
 end
 
+-- Append other-toons progress (same realm, skip current toon)
+-- ownerNode: zone (mapID) or instance (instanceID) node used to key into the DB.
+local function AddOtherToonsSection(tooltip, ownerNode, isZone)
+  local mode = Util.GetOtherToonsMode()
+  if mode == 0 then return end
+
+  local _, realm, myChar = Util.EnsureProgressDB()
+  local realmBucket = ATTGoGoDB.progress[realm]
+
+  local key, bucket
+  if isZone then
+    bucket = "zones"
+    key = ownerNode.mapID
+  else
+    bucket = "instances"
+    key = ownerNode.instanceID
+  end
+  if not key then return end
+
+  local rows, now = {}, time()
+  for charName, perChar in pairs(realmBucket) do
+    if charName ~= myChar then
+      local entry = perChar[bucket] and perChar[bucket][key]
+      if entry then
+        if mode == 1 then
+          if isZone then
+            entry = nil
+          else
+            local secs = (entry.lock and entry.lock.expiresAt - now) or 0
+            if secs <= 0 then entry = nil end
+          end
+        end
+      end
+
+      if entry then
+        local c, t = entry[1] or 0, entry[2] or 0
+        local p = (t > 0) and (c / t * 100) or 0
+        local line = string.format("• %s: %d / %d (%.1f%%)", charName, c, t, p)
+        if not isZone then
+          local secs = (entry.lock and entry.lock.expiresAt - now) or 0
+          if secs > 0 then
+            line = line .. " — " .. Util.FormatLockoutTime(secs)
+          end
+        end
+        rows[#rows+1] = line
+      end
+    end
+  end
+
+  if #rows > 0 then
+    table.sort(rows)
+    tooltip:AddLine(" ")
+    tooltip:AddLine("Other characters (" .. realm .. ")", 0.9, 0.9, 0.9)
+    for _, l in ipairs(rows) do
+      tooltip:AddLine(l, 0.9, 0.9, 0.9, true)
+    end
+  end
+end
+
 function Tooltip.AddProgress(tooltip, data, collected, total, percent, isZone, lockoutData)
   tooltip:AddLine(string.format("Collected: %d / %d (%.2f%%)", collected, total, percent))
   if not isZone then
     Tooltip.AddInstanceLockoutTo(tooltip, lockoutData or data)
   end
+  AddOtherToonsSection(tooltip, ownerNode or data, isZone)
 end
 
 function Tooltip.AddContextProgressTo(tooltip)
   local node, info = Util.ResolveContextNode(true)
+--  DebugPrintNodePath(node, { verbose = true })
+--  DebugRecursive(node, "Tooltip.AddContextProgressTo:node", 0, 1, false)
+--  DebugRecursive(info, "Tooltip.AddContextProgressTo:info", 0, 2, false)
   if not node then
     tooltip:AddLine("Not in an instance.", 0.5, 0.5, 0.5)
     return
@@ -974,7 +1142,7 @@ function Tooltip.AddContextProgressTo(tooltip)
     end
 
     local best, c, t, p = Util.ResolveBestProgressNode(strictZone)
-    Tooltip.AddProgress(tooltip, best or strictZone or {}, c, t, (t > 0 and (c/t*100) or 0), true)
+    Tooltip.AddProgress(tooltip, best or strictZone or {}, c, t, (t > 0 and (c/t*100) or 0), true, strictZone)
   end
 end
 

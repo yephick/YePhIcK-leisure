@@ -24,6 +24,11 @@ local __rowSerial = 0           -- unique names for ItemButtonTemplate rows
 local function IsAllowedLeaf(node, activeKeys)
     if type(node) ~= "table" then return false end
 
+    -- Exclude nodes explicitly marked as not a main collectible
+    if node.nmc and node.nmc == false then
+        return false, {}
+    end
+
     local includeRemoved = GetSetting("includeRemoved", false)
     if not includeRemoved then
         if Util.IsNodeRemoved(node) then

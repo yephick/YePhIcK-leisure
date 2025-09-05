@@ -79,9 +79,19 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
 end
 
 function Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, tabs, contentY, isZone, filterFunc, sortFunc, gridFunc)
+    -- Zones: snapshot each zone entry that we present as a widget
+    -- Instances: snapshot each instance entry that has an instanceID
+    local saveFn = isZone and Util.SaveZoneProgressByNode
+                            or Util.SaveInstanceProgressByNode
+
     for i, t in ipairs(tabs) do
         local tabId = t.id  -- use the exact id used when creating the tab
         local entries = PrepareTabData(t, isZone, filterFunc, sortFunc)
+
+        for _, e in ipairs(entries) do
+            saveFn(e.attNode or e)
+        end
+
         CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, gridFunc)
     end
 end
@@ -264,7 +274,6 @@ local function SelectTab(tabID)
         SetCharSetting("lastTabID", tabID)
         tab.content:Show()
         currentTab = tab.content
---        DebugFlushSoon("tab-switch")
         -- Update summary for expansions
         if type(tabID) == "number" then
             Summary.UpdateExpansionSummary(mainFrame, tabID)
@@ -273,15 +282,6 @@ local function SelectTab(tabID)
         end
     end
 end
-
---mainFrame:HookScript("OnHide", function()
---    if bookmarksFrame then bookmarksFrame:Hide() end
---end)
---
---function HideATTGoGoMain()
---    mainFrame:Hide()
---    if bookmarksFrame then bookmarksFrame:Hide() end
---end
 
 function ShowATTGoGoMain()
     Util.LoadFramePosition(mainFrame, "mainWindowPos", "TOP", -36, -48)
