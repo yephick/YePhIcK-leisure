@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Window
     x:Class="runlock.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -10,7 +10,7 @@
     mc:Ignorable="d"
     Title="runlock">
 
-    <Grid AllowDrop="True" Drop="Archive_Drop" DragOver="Archive_DragOver">
+    <Grid AllowDrop="True" Drop="Archive_Drop" DragOver="Archive_DragOver" Loaded="Window_Loaded">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -32,7 +32,7 @@
                 <ComboBox x:Name="CpuCoresComboBox" Width="60"/>
             </StackPanel>
 
-            <TextBox x:Name="PasswordRulesBox" Height="200" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" AllowDrop="True" Drop="PasswordRules_Drop" DragOver="PasswordRules_DragOver" PlaceholderText="Enter password rules or drop a text file"/>
+            <TextBox x:Name="PasswordRulesBox" Height="200" AcceptsReturn="True" ScrollViewer.VerticalScrollBarVisibility="Auto" AllowDrop="True" Drop="PasswordRules_Drop" DragOver="PasswordRules_DragOver" PlaceholderText="Enter password rules or drop a text file"/>
 
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <TextBlock Text="Min Length" VerticalAlignment="Center"/>

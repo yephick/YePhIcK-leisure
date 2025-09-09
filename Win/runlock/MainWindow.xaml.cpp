@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "MainWindow.xaml.h"
 #if __has_include("MainWindow.g.cpp")
 #include "MainWindow.g.cpp"
@@ -15,7 +15,7 @@ namespace winrt::runlock::implementation
     MainWindow::MainWindow()
     {
         InitializeComponent();
-        Loaded({ this, &MainWindow::Window_Loaded });
+//        Loaded({ this, &MainWindow::Window_Loaded });
     }
 
     void MainWindow::Window_Loaded(IInspectable const&, RoutedEventArgs const&)
