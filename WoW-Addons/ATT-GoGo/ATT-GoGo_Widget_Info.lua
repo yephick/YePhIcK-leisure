@@ -24,6 +24,11 @@ local __rowSerial = 0           -- unique names for ItemButtonTemplate rows
 local function IsAllowedLeaf(node, activeKeys)
     if type(node) ~= "table" then return false end
 
+    -- Exclude nodes explicitly marked as not a main collectible
+    if node.nmc and node.nmc == false then
+        return false, {}
+    end
+
     local includeRemoved = GetSetting("includeRemoved", false)
     if not includeRemoved then
         if Util.IsNodeRemoved(node) then
@@ -249,13 +254,13 @@ local function SetupNodeTooltip(btn, boundNode)
         elseif node.creatureID then
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
 
-            -- List up to 7 uncollected collectibles obtainable from this creature
+            -- List up to N uncollected collectibles obtainable from this creature
             if type(node.g) == "table" and #node.g > 0 then
                 local shown, extra = 0, 0
                 for i = 1, #node.g do
                     local ch = node.g[i]
                     if type(ch) == "table" and ch.collectible and ch.collected ~= true then
-                        if shown < 7 then
+                        if shown < 31 then
                             GameTooltip:AddLine("• " .. NodeShortName(ch), 1, 1, 1, true)
                             shown = shown + 1
                         else
@@ -583,6 +588,26 @@ local function GroupItemsByVisualID(nodes)
     return keep
 end
 
+-- De-duplicate items by itemID, keeping only the first seen.
+local function DedupItemsByItemID(nodes)
+    if type(nodes) ~= "table" or #nodes <= 1 then return nodes end
+    local seen, keep = {}, {}
+    for i = 1, #nodes do
+        local n = nodes[i]
+        local id = n and n.itemID
+        if id then
+            if not seen[id] then
+                seen[id] = true
+                keep[#keep + 1] = n
+            end
+            -- else: skip duplicate
+        else
+            keep[#keep + 1] = n
+        end
+    end
+    return keep
+end
+
 -- Final sort used by the popup
 local function SortPopupNodes(nodes)
     table.sort(nodes, function(a, b)
@@ -639,6 +664,7 @@ local function BuildNodeList(root)
     -- Transformations (in order)
     nodes = DedupQuests(nodes)
     nodes = CollapseAchievementFamilies(root, nodes)
+    nodes = DedupItemsByItemID(nodes)
     nodes = GroupItemsByVisualID(nodes)
     SortPopupNodes(nodes)
 

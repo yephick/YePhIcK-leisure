@@ -1,7 +1,7 @@
 ﻿-- === ATT-GoGo Options UI ===
 
 local optionsFrame = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
-optionsFrame:SetSize(300, 520)
+optionsFrame:SetSize(300, 570)
 
 optionsFrame:SetMovable(true)
 optionsFrame:EnableMouse(true)
@@ -105,7 +105,7 @@ local instIconCheckbox = AddCheckbox(
 
 local removedCheckbox = AddCheckbox(
     accountGroup,
-    "Include removed/retired content",
+    "Include unobtainable content",
     { "TOPLEFT", instIconCheckbox, "BOTTOMLEFT", 0, -6 },
     function() return GetSetting("includeRemoved", false) end,
     function(v) SetSetting("includeRemoved", v) end,
@@ -113,7 +113,7 @@ local removedCheckbox = AddCheckbox(
         local popup = _G.ATTGoGoUncollectedPopup
         if popup and popup:IsShown() and popup.currentData then ShowUncollectedPopup(popup.currentData) end
     end,
-    "Include removed/retired content in the uncollected popup list."
+    "Include removed/retired/future content in the uncollected popup list."
 )
 
 local hover3DCheckbox = AddCheckbox(
@@ -143,7 +143,7 @@ local nakedTryOnCheckbox = AddCheckbox(
 
 local autoRefreshPopupCheckbox = AddCheckbox(
     accountGroup,
-    "Popup follows zone/instance change",
+    "Popup tracks zone/instance change",
     { "TOPLEFT", nakedTryOnCheckbox, "BOTTOMLEFT", 0, -6 },
     function() return GetSetting("autoRefreshPopupOnZone", true) end,
     function(v) SetSetting("autoRefreshPopupOnZone", v) end,
@@ -165,7 +165,51 @@ local autoRefreshPopupCheckbox = AddCheckbox(
     "If the Uncollected popup is open, retarget it when you change zone or enter an instance."
 )
 
-accountGroup:SetHeight(24 + (6 * 20) + (5 * 6) + 18 + 12)
+-- === Other-toons-in-tooltips dropdown (account-wide) ===
+local otherToonsLabel = accountGroup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+otherToonsLabel:SetPoint("TOPLEFT", autoRefreshPopupCheckbox, "BOTTOMLEFT", 0, -8)
+otherToonsLabel:SetText("Show other characters in tooltips")
+
+local otherToonsDD = CreateFrame("Frame", "ATTGoGoOtherToonsDropdown", accountGroup, "UIDropDownMenuTemplate")
+otherToonsDD:SetPoint("TOPLEFT", otherToonsLabel, "BOTTOMLEFT", -12, -4)
+
+local OT_CHOICES = {
+  { text = "Don’t show", value = 0 },
+  { text = "Only with lockouts (instances)", value = 1 },
+  { text = "Show all (zones & instances)", value = 2 },
+}
+
+UIDropDownMenu_SetWidth(otherToonsDD, 210)
+
+local function SyncOtherToonsDropdown()
+  local v = Util.GetOtherToonsMode()
+  UIDropDownMenu_SetSelectedValue(otherToonsDD, v)
+  -- Also set the visible text so it never shows "Custom"
+  for _, opt in ipairs(OT_CHOICES) do
+    if opt.value == v then
+      UIDropDownMenu_SetText(otherToonsDD, opt.text)
+      break
+    end
+  end
+end
+
+UIDropDownMenu_Initialize(otherToonsDD, function(self, level)
+  for _, opt in ipairs(OT_CHOICES) do
+    local info = UIDropDownMenu_CreateInfo()
+    info.text = opt.text
+    info.value = opt.value
+    info.checked = (opt.value == Util.GetOtherToonsMode())
+    info.func = function()
+      SetSetting("otherToonsInTooltips", tonumber(opt.value) or 1)
+      SyncOtherToonsDropdown()
+    end
+    UIDropDownMenu_AddButton(info, level)
+  end
+end)
+
+otherToonsDD:SetScript("OnShow", SyncOtherToonsDropdown)
+
+accountGroup:SetHeight(24 + (6 * 20) + (5 * 6) + 18 + 12 + 50)
 
 -- =============================
 -- Per-character group
@@ -277,7 +321,7 @@ resetBtn:SetScript("OnClick", function()
         popup:SetSize(268, 592)
         Util.LoadFramePosition(popup, "popupWindowPos", "RIGHT", -200, 64)
     end
-    optionsFrame:SetSize(300, 520)
+    optionsFrame:SetSize(300, 570)
     Util.LoadFramePosition(optionsFrame, "optionsWindowPos", "LEFT", 92, 80)
     print("|cff00ff00[ATT-GoGo]|r Window sizes/positions reset to defaults.")
 end)

@@ -3,8 +3,6 @@
 -- Ensure debug table
 ATTGoGoDebugDB = {}
 
-local MAX_LINES = 4000
-
 local function ensure()
   ATTGoGoDB = ATTGoGoDB or {}
   ATTGoGoDB.debug = ATTGoGoDB.debug or { log = {} }
@@ -17,9 +15,6 @@ local function push(line)
   local s = date("%H:%M:%S ") .. tostring(line)
   if L[#L] == s then return end               -- drop consecutive dupes
   L[#L+1] = s
-  if #L > MAX_LINES then
-    for i = 1, #L - MAX_LINES do table.remove(L, 1) end
-  end
 end
 
 
@@ -28,9 +23,6 @@ function DebugLog(msg)
         push(msg)
     end
 end
-
--- ---------- Aggregated tracing ----------
-local agg, flushTimer = {}, nil
 
 -- strip WoW color codes and links; collapse noisy item links
 local function sanitize(label)
@@ -71,7 +63,8 @@ local SKIP_FIELDS = {
   lore = true, description = true,
 
   -- perf/visual/no-coding
-  visible = true, nmr = true, nmc = true, awp = true,
+  visible = true, nmr = true, nmc = true,
+  --awp = true,
 
   -- flags rarely needed for structure
   u = true, lvl = true, text = true,
@@ -114,51 +107,9 @@ local function is_noise_label(key)
   return false
 end
 
-local function flush(reason)
-  if not next(agg) then return end
-  push(("---[Trace summary] %s---"):format(reason or "auto"))
-  local t = {}
-  for k, c in pairs(agg) do t[#t+1] = {k=k, c=c} end
-  table.sort(t, function(a,b) return a.c > b.c end)
-  for i=1,#t do
-    push(("[x%03d] %s"):format(t[i].c, t[i].k))
-  end
-  wipe(agg)
-end
-
--- public helpers
-function DebugTrace(key)
-  if not key or key == "" then return end
-  if is_noise_label(key) then return end
-  agg[key] = (agg[key] or 0) + 1
-end
-
-function DebugFlushSoon(reason)
-  if flushTimer then return end
-  flushTimer = C_Timer.After(0.25, function() flushTimer=nil; flush(reason) end)
-end
-
 -- ---------- Single entry point for formatted logs ----------
--- If message is "[Trace] {FUNC}(...)", aggregate; otherwise push verbatim.
 function DebugLogf(fmt, ...)
-  local msg = string.format(fmt, ...)
-  repeat
-    if not msg:find("^%[Trace%] ") then break end
-
-    local body  = msg:sub(9)
-
-    local which = body:match("^(%S+)%(") or ""
-
-    local raw = body:match("^%S+%((.*)%)$") or body
-    if is_link_spam(raw) then return end
-    local key = sanitize(raw)
-    if is_noise_label(key) then return end
-    DebugTrace(which .. "(" .. key .. ")")
-    DebugFlushSoon("trace")
-    return
-  until true
-
-  push(msg)
+    push(string.format(fmt, ...))
 end
 
 -- Helper: recursive dump, depth-limited
@@ -276,7 +227,7 @@ end
 
 -- this is a placeholder function to be used as needed, do not remove
 local function DebugDump()
-    --DebugRecursive(ATT:GetDataCache(), "ATT Root", 0, 2)
+    --DebugRecursive(ATT:GetDataCache(), "ATT Root", 0, 2, false)
 end
 
 -- Call this on ADDON_LOADED or manually to start a new debug session

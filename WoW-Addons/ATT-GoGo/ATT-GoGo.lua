@@ -125,6 +125,41 @@ local function EnsurePopupIdFilters()
     end
 end
 
+----------------------------------------------------------------
+-- Batch ATT "OnThingCollected" updates (simple version)
+----------------------------------------------------------------
+local THRESHOLD   = 8
+local BATCH_DELAY = 0.40 -- wait this long after the *last* event
+
+local collectedBatch = { count = 0, timer = nil }
+
+local function FlushCollectedBatch()
+    local cnt = collectedBatch.count
+    collectedBatch.count, collectedBatch.timer = 0, nil
+
+    if cnt >= THRESHOLD then
+        -- Big wave => assume whole-DB refresh; rebuild everything
+        Util.ClearProgressCache()
+        SetupMainUI()           -- full rebuild of main frame widgets (also refreshes data)
+        RefreshActiveTab()
+    else
+        -- Small wave => current-context refresh only
+        Util.SaveCurrentContextProgress()
+        RefreshActiveTab()
+        RefreshUncollectedPopupForContextIfShown()
+    end
+end
+
+local function OnThingCollected(_node)
+    collectedBatch.count = collectedBatch.count + 1
+
+    -- Silence-based debounce: restart a cancelable timer each event
+    if collectedBatch.timer then
+        collectedBatch.timer:Cancel()
+    end
+    collectedBatch.timer = C_Timer.NewTimer(BATCH_DELAY, FlushCollectedBatch)
+end
+
 frame:SetScript("OnEvent", function(self, event, arg1)
     if arg1 ~= addonName then return end
 
@@ -132,6 +167,8 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     ATTGoGoDB = ATTGoGoDB or {}
     ATTGoGoCharDB = ATTGoGoCharDB or {}
     ATTGoGoDB.minimap = ATTGoGoDB.minimap or {}
+
+    Debug_Init()
 
     EnsurePopupIdFilters()
 
@@ -163,7 +200,6 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             ATT = _G.AllTheThings
             print("|cff00ff00[" .. title .. "]|r is ready!")
             SetupMainUI()
-            Debug_Init()
 
             -- Auto-refresh Uncollected popup on zone/instance changes (if enabled)
             local zoneWatcher = CreateFrame("Frame")
@@ -180,6 +216,13 @@ frame:SetScript("OnEvent", function(self, event, arg1)
                 -- slight delay so C_Map / GetInstanceInfo settle
                 C_Timer.After(0.15, RefreshUncollectedPopupForContextIfShown)
             end)
+
+            local bossWatcher = CreateFrame("Frame")
+            bossWatcher:RegisterEvent("BOSS_KILL")
+            bossWatcher:RegisterEvent("ENCOUNTER_END")
+            bossWatcher:SetScript("OnEvent", OnThingCollected)
+
+            ATT_API.AddEventHandler("OnThingCollected", OnThingCollected)
 
             -- keep your progress cache coherent with ATT refreshes
             local clear = function() Util.ClearProgressCache() end
