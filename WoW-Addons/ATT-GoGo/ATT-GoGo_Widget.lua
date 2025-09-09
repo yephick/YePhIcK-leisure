@@ -89,7 +89,7 @@ end
 function Widget.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone)
   Tooltip.CreateTooltip(f, "ANCHOR_RIGHT", function()
     Tooltip.AddLine(Util.NodeDisplayName(data))
-    Tooltip.AddProgress(GameTooltip, data, collected, total, percent, isZone)
+    Tooltip.AddProgress(GameTooltip, data, collected, total, percent, isZone, data)
   end)
 end
 

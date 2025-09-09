@@ -752,6 +752,12 @@ function Util.ResolveContextNode(verbose)
     end
   end
 
+  -- Fallback: try direct instance lookup by the uiMapID (some classic instances map directly)
+  if inInstance and info.uiMapID then
+    local byMap = Util.ATTFindInstanceByMapID(info.uiMapID)
+    if byMap then return ret(byMap, "instance", "instanceMapID") end
+  end
+
   -- Zone fallback by mapID
   if info.uiMapID then
     local zoneNode = ResolveBestZoneNode(info.uiMapID)
@@ -777,21 +783,31 @@ end
 function ResolveContainerZoneNodeStrict(mapID)
   if not mapID then return nil end
   local root = _Root(); if not (root and root.g) then return nil end
-  local function isContainerZone(n)
+
+  local function isContainerZone(n, id)
     return type(n)=="table"
-       and n.mapID == mapID
+       and n.mapID == id
        and type(n.g)=="table" and #n.g>0
        and not n.instanceID
   end
-  local function scan(t)
+  local function scan(t, id)
     for _, n in ipairs(t) do
-      if isContainerZone(n) then return n end
+      if isContainerZone(n, id) then return n end
       if type(n)=="table" and type(n.g)=="table" then
-        local r = scan(n.g); if r then return r end
+        local r = scan(n.g, id); if r then return r end
       end
     end
   end
-  return scan(root.g)
+
+  local id, safety = mapID, 0
+  while id and safety < 8 do
+    local found = scan(root.g, id)
+    if found then return found end
+    local mi = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(id) or nil
+    id = mi and mi.parentMapID or nil
+    safety = safety + 1
+  end
+  return nil
 end
 
 function IsInstanceLockedOut(instance)
@@ -1134,8 +1150,11 @@ function Tooltip.AddContextProgressTo(tooltip)
     local zoneDisplay = (subZone and subZone ~= "" and subZone ~= zoneName) and (subZone .. ", " .. zoneName) or zoneName
     tooltip:AddLine("|cffffd200" .. zoneDisplay .. "|r")
 
-    -- …but only show progress when the zone exists in Outdoor Zones strictly.
+    -- Prefer a strict container; if none, fall back to the best container up the ATT tree
     local strictZone = ResolveContainerZoneNodeStrict(info.uiMapID)
+    if not strictZone then
+      strictZone = ResolveBestZoneNode(info.uiMapID)
+    end
     if not strictZone then
       tooltip:AddLine("Nothing to show for this location.", 0.7, 0.7, 0.7)
       return
