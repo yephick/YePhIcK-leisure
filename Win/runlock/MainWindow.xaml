@@ -1,0 +1,41 @@
+<Window
+    x:Class="runlock.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    Title="runlock" Height="500" Width="800">
+    <Grid RowDefinitions="Auto,*">
+        <muxc:MenuBar>
+            <muxc:MenuBarItem Title="File">
+                <muxc:MenuFlyoutItem Text="Load Project" />
+                <muxc:MenuFlyoutItem Text="Save Project" />
+            </muxc:MenuBarItem>
+        </muxc:MenuBar>
+        <ScrollViewer Grid.Row="1">
+            <StackPanel Spacing="12" Padding="12">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBox x:Name="ArchivePathBox" Width="300" AllowDrop="True" PlaceholderText="Select RAR file"/>
+                    <Button Content="Browse" />
+                </StackPanel>
+                <muxc:NumberBox x:Name="CpuCoresBox" Header="CPU Cores" Minimum="1" Maximum="64" Value="1"/>
+                <TextBox x:Name="PasswordRulesBox" Header="Password Rules" AcceptsReturn="True" Height="150" AllowDrop="True" TextWrapping="Wrap"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <muxc:NumberBox x:Name="MinLengthBox" Header="Min Length" Minimum="1" Value="1"/>
+                    <muxc:NumberBox x:Name="MaxLengthBox" Header="Max Length" Minimum="1" Value="8"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="GenerateButton" Content="Generate Passwords" />
+                    <Button x:Name="CancelGenerateButton" Content="Cancel" IsEnabled="False" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="StartButton" Content="Start" />
+                    <Button x:Name="PauseButton" Content="Pause" />
+                    <Button x:Name="ResumeButton" Content="Resume" />
+                    <Button x:Name="StopButton" Content="Stop" />
+                </StackPanel>
+                <ProgressBar x:Name="ProgressBar" Minimum="0" Maximum="100" Height="20"/>
+                <TextBlock x:Name="StatusText" Text="Ready" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>
