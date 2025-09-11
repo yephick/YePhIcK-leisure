@@ -197,7 +197,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             __ATT_INIT_DONE = true
 
             ATT = _G.AllTheThings
-            print("|cff00ff00[" .. title .. "]|r is now ready")
+            print("|cff00ff00[" .. title .. "]|r is ready")
             SetupMainUI()
 
             -- Auto-refresh Uncollected popup on zone/instance changes (if enabled)

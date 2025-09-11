@@ -197,6 +197,29 @@ local function AddUncollectedChildrenToTooltip(node)
     end
 end
 
+-- Returns a single-line compact description of quest objectives, or nil if unavailable.
+local function GetQuestObjectivesText(qid)
+    if not (C_QuestLog and C_QuestLog.GetQuestObjectives) then return nil end
+    local objs = C_QuestLog.GetQuestObjectives(qid)
+    if type(objs) ~= "table" or #objs == 0 then return nil end
+    local parts = {}
+    for i = 1, #objs do
+        local o = objs[i]
+        if o and o.text and o.text ~= "" then parts[#parts+1] = o.text end
+    end
+    if #parts == 0 then return nil end
+    return (table.concat(parts, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- Renders the quest tooltip once (no retry). Returns true if it printed real objectives.
+local function RenderQuestTooltip(node, matched, owner)
+    local line = GetQuestObjectivesText(node.questID)
+    GameTooltip:AddLine(line or "Objective unavailable", 1, 1, 1, true)
+    AddUncollectedChildrenToTooltip(node)
+    AddMatchedIDLines(node, matched)
+    return line ~= nil
+end
+
 local function SetupNodeTooltip(btn, boundNode)
     btn:SetScript("OnEnter", function(self)
         local node = self.node or boundNode
@@ -215,44 +238,14 @@ local function SetupNodeTooltip(btn, boundNode)
         if node.itemID then
             GameTooltip:SetHyperlink("item:" .. node.itemID)
         elseif node.questID then
-            local qid = node.questID
-            local parts = {}
-            if C_QuestLog and C_QuestLog.GetQuestObjectives then
-                local objs = C_QuestLog.GetQuestObjectives(qid)
-                if type(objs) == "table" then
-                    for i = 1, #objs do
-                        local o = objs[i]
-                        if o and o.text and o.text ~= "" then parts[#parts+1] = o.text end
-                    end
-                end
-            end
-            local shortDesc
-            if #parts > 0 then
-                shortDesc = table.concat(parts, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-            end
-            GameTooltip:AddLine(shortDesc or "Objective unavailable", 1,1,1, true)
-            AddUncollectedChildrenToTooltip(node)
-            AddMatchedIDLines(node, matched)
-
-            if not shortDesc then
-                if C_QuestLog and C_QuestLog.RequestLoadQuestByID then
-                    C_QuestLog.RequestLoadQuestByID(qid)
-                end
+            local hadRealObjectives = RenderQuestTooltip(node, matched, self)
+            if not hadRealObjectives then
+                if C_QuestLog and C_QuestLog.RequestLoadQuestByID then C_QuestLog.RequestLoadQuestByID(node.questID) end
                 local owner = self
                 C_Timer.After(0.50, function()
                     if currentTooltipNode == node and owner:IsMouseOver() then
                         GameTooltip:ClearLines()
-                        local objs = C_QuestLog and C_QuestLog.GetQuestObjectives and C_QuestLog.GetQuestObjectives(qid)
-                        local p2 = {}
-                        if type(objs) == "table" then
-                            for i = 1, #objs do
-                                local o = objs[i]; if o and o.text and o.text ~= "" then p2[#p2+1] = o.text end
-                            end
-                        end
-                        local s2 = (#p2 > 0) and (table.concat(p2, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")) or "Objective unavailable"
-                        GameTooltip:AddLine(s2, 1,1,1, true)
-                        AddUncollectedChildrenToTooltip(node)
-                        AddMatchedIDLines(node, passKeysByNode[node])
+                        RenderQuestTooltip(node, passKeysByNode[node], owner)
                         GameTooltip:Show()
                     end
                 end)
@@ -274,7 +267,6 @@ local function SetupNodeTooltip(btn, boundNode)
 
             AddUncollectedChildrenToTooltip(node)
             AddMatchedIDLines(node, matched)
-            GameTooltip:Show()
         elseif node.creatureID then
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
             AddUncollectedChildrenToTooltip(node)
