@@ -17,7 +17,8 @@ local function OpenUncollectedForCurrentContext()
 
     -- Always open for instances.
     if info and info.kind == "instance" then
-        ShowUncollectedPopup(node)
+        -- Prefer the current-difficulty child group when available
+        ShowUncollectedPopup(Util.SelectDifficultyChild(node, Util.GetCurrentDifficultyID()) or node)
         return true
     end
 
@@ -43,12 +44,10 @@ local function RefreshUncollectedPopupForContextIfShown()
     local node, info = Util.ResolveContextNode(true)
     if not node then return end
 
-    local popup = _G.ATTGoGoUncollectedPopup
-
     if info and info.kind == "instance" then
         -- Only refresh if the instance node actually changed
         if popup.currentData ~= node then
-            ShowUncollectedPopup(node)
+            ShowUncollectedPopup(Util.SelectDifficultyChild(node, Util.GetCurrentDifficultyID()) or node)
         end
         return
     end
@@ -86,7 +85,7 @@ local function SetupMinimapIcon()
             icon = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga",
             OnClick = function(self, button)
                 -- Shift-click opens the Uncollected popup for current instance/zone
-                if IsShiftKeyDown and IsShiftKeyDown() then
+                if IsShiftKeyDown() then
                     ShowATTGoGoOptions()
                     return
                 end
@@ -198,7 +197,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             __ATT_INIT_DONE = true
 
             ATT = _G.AllTheThings
-            print("|cff00ff00[" .. title .. "]|r is ready!")
+            print("|cff00ff00[" .. title .. "]|r is now ready")
             SetupMainUI()
 
             -- Auto-refresh Uncollected popup on zone/instance changes (if enabled)
@@ -225,10 +224,9 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             ATT_API.AddEventHandler("OnThingCollected", OnThingCollected)
 
             -- keep your progress cache coherent with ATT refreshes
-            local clear = function() Util.ClearProgressCache() end
-            pcall(ATT_API.AddEventHandler, "OnInit",         clear)
-            pcall(ATT_API.AddEventHandler, "OnRefresh",      clear)
-            pcall(ATT_API.AddEventHandler, "OnAfterRefresh", clear)
+            ATT_API.AddEventHandler("OnInit",         Util.ClearProgressCache)
+            ATT_API.AddEventHandler("OnRefresh",      Util.ClearProgressCache)
+            ATT_API.AddEventHandler("OnAfterRefresh", Util.ClearProgressCache)
         end)
     end
 

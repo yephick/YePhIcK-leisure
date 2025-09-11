@@ -71,7 +71,7 @@ local function NodeShortName(n)
     if not n or type(n) ~= "table" then return "Collectible" end
     if n.text and n.text ~= "" then return n.text end
     if n.name and n.name ~= "" then return n.name end
-    if n.itemID and GetItemInfo then
+    if n.itemID then
         local nm = GetItemInfo(n.itemID); if nm then return nm end
         return "Item " .. tostring(n.itemID)
     end
@@ -173,7 +173,7 @@ local function ShowPreviewForNode(node)
 
     local mdl = dock.model
     if not mdl then return end
-    pcall(mdl.SetCreature, mdl, node.creatureID)
+    mdl:SetCreature(node.creatureID)
     dock:Show()
 end
 
@@ -215,7 +215,7 @@ local function SetupNodeTooltip(btn, boundNode)
 
             if not shortDesc then
                 if C_QuestLog and C_QuestLog.RequestLoadQuestByID then
-                    pcall(C_QuestLog.RequestLoadQuestByID, qid)
+                    C_QuestLog.RequestLoadQuestByID(qid)
                 end
                 local owner = self
                 C_Timer.After(0.50, function()
@@ -396,11 +396,11 @@ end
 local function GetNodeDisplayName(node)
     local display = node.text or node.name
     if display and display ~= "" then return display:lower() end
-    if node.itemID and GetItemInfo then
+    if node.itemID then
         local name = GetItemInfo(node.itemID); if name then return name:lower() end
         return ("item %d"):format(node.itemID)
     end
-    if node.achievementID and GetAchievementInfo then
+    if node.achievementID then
         local _, name = GetAchievementInfo(node.achievementID)
         if name and name ~= "" then return name:lower() end
         return ("achievement %d"):format(node.achievementID)
@@ -549,7 +549,7 @@ end
 local function QualityRank(node)
     -- Prefer ATT's 'q' (already numeric, 0..7). Fallback to GetItemInfo.
     local q = tonumber(node and node.q)
-    if not q and node and node.itemID and GetItemInfo then
+    if not q and node and node.itemID then
         q = select(3, GetItemInfo(node.itemID))
     end
     q = tonumber(q) or 0
@@ -701,15 +701,15 @@ local function AcquireRow(scrollContent, i)
 
             -- Bring up Blizzard's dressing room
             if DressUpFrame then
-                if ShowUIPanel then pcall(ShowUIPanel, DressUpFrame) else DressUpFrame:Show() end
+                if ShowUIPanel then ShowUIPanel(DressUpFrame) else DressUpFrame:Show() end
             end
 
             -- Model used by the dressing room across Classic/MoP UIs
             local mdl = _G.DressUpModel or (DressUpFrame and (DressUpFrame.Model or DressUpFrame.DressUpModel))
             if mdl and mdl.TryOn then
-                if mdl.SetUnit then pcall(mdl.SetUnit, mdl, "player") end
-                if GetSetting("dressUpNaked", true) and mdl.Undress then pcall(mdl.Undress, mdl) end
-                pcall(mdl.TryOn, mdl, link)
+                if mdl.SetUnit then mdl.SetUnit(mdl, "player") end
+                if GetSetting("dressUpNaked", true) and mdl.Undress then mdl.Undress(mdl) end
+                mdl.TryOn(mdl, link)
             else
                 -- Fallback (may keep current gear)
                 if DressUpItemLink and link then DressUpItemLink(link) end
@@ -968,20 +968,17 @@ end
 local function PopupLazyRefresh(self)
     if not (self and self:IsShown() and self.currentData) then return end
 
-    local ok, nodes, _ = pcall(function() return BuildNodeList(self.currentData) end)
-    if not ok then return end
+    local nodes = BuildNodeList(self.currentData)
     self.currentNodes = nodes or {}
-
-    pcall(PopulateUncollectedPopup, self.scrollContent, self.currentNodes)
+    PopulateUncollectedPopup(self.scrollContent, self.currentNodes)
 end
 
 ------------------------------------------------------------
 -- Data-updater frame (late item/spell names)
 ------------------------------------------------------------
 local updater = CreateFrame("Frame")
-local function TryRegister(ev) pcall(updater.RegisterEvent, updater, ev) end
-TryRegister("GET_ITEM_INFO_RECEIVED")
-TryRegister("SPELLS_CHANGED")
+updater:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+updater:RegisterEvent("SPELLS_CHANGED")
 
 updater:SetScript("OnEvent", function(_, event, a1)
     if event == "GET_ITEM_INFO_RECEIVED" then
@@ -1009,20 +1006,16 @@ end)
 local function RefreshPopup(data)
     uncollectedPopup.currentData = data
 
-    local ok, nodes, activeKeys = pcall(function() return BuildNodeList(data) end)
-    if not ok then
-        nodes, activeKeys = {}, {}
-    end
+    local nodes, activeKeys = BuildNodeList(data)
     uncollectedPopup.currentNodes = nodes
-
-    pcall(PopulateUncollectedPopup, uncollectedPopup.scrollContent, nodes)
+    PopulateUncollectedPopup(uncollectedPopup.scrollContent, nodes)
 
     uncollectedPopup.title:SetText(Util.NodeDisplayName(data))
 
     -- lazy refresh to update late-resolving names/icons
     C_Timer.After(1.0, function()
         if uncollectedPopup and uncollectedPopup:IsShown() then
-            local ok3, err3 = pcall(PopupLazyRefresh, uncollectedPopup)
+            PopupLazyRefresh(uncollectedPopup)
         end
     end)
 end

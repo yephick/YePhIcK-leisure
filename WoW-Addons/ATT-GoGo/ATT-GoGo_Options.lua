@@ -54,18 +54,17 @@ local function AddCheckbox(parent, label, point, getValue, setValue, onChange, .
 
     -- Tooltip lines (no title/header)
     local lines = { ... }
-    if Util and Util.SetTooltip and #lines > 0 then
+    if #lines > 0 then
         Util.SetTooltip(cb, "ANCHOR_LEFT", "", unpack(lines))
     end
 
     cb:SetScript("OnShow", function()
-        local ok, val = pcall(getValue)
-        if ok then cb:SetChecked(val and true or false) end
+        cb:SetChecked(getValue() and true or false)
     end)
     cb:SetScript("OnClick", function(self)
         local v = self:GetChecked() and true or false
-        pcall(setValue, v)
-        if onChange then pcall(onChange, v) end
+        setValue(v)
+        if onChange then onChange(v) end
     end)
     return cb
 end
@@ -297,11 +296,9 @@ local resetBtn = CreateFrame("Button", nil, optionsFrame, "UIPanelButtonTemplate
 resetBtn:SetSize(190, 22)
 resetBtn:SetPoint("BOTTOM", optionsFrame, "BOTTOM", 0, 12)
 resetBtn:SetText("Reset window sizes/positions")
-if Util and Util.SetTooltip then
-    Util.SetTooltip(resetBtn, "ANCHOR_TOPLEFT",
-        "Reset window sizes/positions",
-        "Clear saved sizes/positions for the main, popup, and options windows and restore defaults.")
-end
+Util.SetTooltip(resetBtn, "ANCHOR_TOPLEFT",
+    "Reset window sizes/positions",
+    "Clear saved sizes/positions for the main, popup, and options windows and restore defaults.")
 
 resetBtn:SetScript("OnClick", function()
     -- wipe saved positions/sizes
