@@ -177,6 +177,26 @@ local function ShowPreviewForNode(node)
     dock:Show()
 end
 
+-- List up to 31 dependent uncollected child collectibles on the tooltip (sub-achievements, item rewards, etc.)
+local function AddUncollectedChildrenToTooltip(node)
+    if type(node) ~= "table" or type(node.g) ~= "table" or #node.g == 0 then return end
+    local shown, extra = 0, 0
+    for i = 1, #node.g do
+        local ch = node.g[i]
+        if type(ch) == "table" and ch.collectible and ch.collected ~= true then
+            if shown < 31 then
+                GameTooltip:AddLine("• " .. NodeShortName(ch), 1, 1, 1, true)
+                shown = shown + 1
+            else
+                extra = extra + 1
+            end
+        end
+    end
+    if shown > 0 and extra > 0 then
+        GameTooltip:AddLine(string.format("And %d more...", extra), 0.85, 0.85, 0.85, true)
+    end
+end
+
 local function SetupNodeTooltip(btn, boundNode)
     btn:SetScript("OnEnter", function(self)
         local node = self.node or boundNode
@@ -211,6 +231,7 @@ local function SetupNodeTooltip(btn, boundNode)
                 shortDesc = table.concat(parts, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
             end
             GameTooltip:AddLine(shortDesc or "Objective unavailable", 1,1,1, true)
+            AddUncollectedChildrenToTooltip(node)
             AddMatchedIDLines(node, matched)
 
             if not shortDesc then
@@ -230,6 +251,7 @@ local function SetupNodeTooltip(btn, boundNode)
                         end
                         local s2 = (#p2 > 0) and (table.concat(p2, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")) or "Objective unavailable"
                         GameTooltip:AddLine(s2, 1,1,1, true)
+                        AddUncollectedChildrenToTooltip(node)
                         AddMatchedIDLines(node, passKeysByNode[node])
                         GameTooltip:Show()
                     end
@@ -249,33 +271,17 @@ local function SetupNodeTooltip(btn, boundNode)
                     any = true
                 end
             end
+
+            AddUncollectedChildrenToTooltip(node)
             AddMatchedIDLines(node, matched)
             GameTooltip:Show()
         elseif node.creatureID then
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
-
-            -- List up to N uncollected collectibles obtainable from this creature
-            if type(node.g) == "table" and #node.g > 0 then
-                local shown, extra = 0, 0
-                for i = 1, #node.g do
-                    local ch = node.g[i]
-                    if type(ch) == "table" and ch.collectible and ch.collected ~= true then
-                        if shown < 31 then
-                            GameTooltip:AddLine("• " .. NodeShortName(ch), 1, 1, 1, true)
-                            shown = shown + 1
-                        else
-                            extra = extra + 1
-                        end
-                    end
-                end
-                if shown > 0 and extra > 0 then
-                    GameTooltip:AddLine(string.format("And %d more...", extra), 0.85, 0.85, 0.85, true)
-                end
-            end
-
+            AddUncollectedChildrenToTooltip(node)
             AddMatchedIDLines(node, matched)
         else
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
+            AddUncollectedChildrenToTooltip(node)
             AddMatchedIDLines(node, matched)
         end
         GameTooltip:Show()

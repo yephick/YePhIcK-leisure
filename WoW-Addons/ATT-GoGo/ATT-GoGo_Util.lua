@@ -599,12 +599,9 @@ function Util.IsNodeRemoved(n, nowRWP)
   end
 
   -- awp: added with patch > client build
-  if(n.awp) then
-    local a = tonumber(n.awp)
-    if a and nowRWP then
-      if a > tonumber(nowRWP) then print("n.awp = " .. a .. " > " .. nowRWP .. " = " .. (a > nowRWP)) end
-      return a > nowRWP
-    end
+  local a = tonumber(n.awp)
+  if a and nowRWP then
+    return a > nowRWP
   end
 
   return false
