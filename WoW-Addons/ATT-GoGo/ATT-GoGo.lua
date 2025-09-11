@@ -18,7 +18,7 @@ local function OpenUncollectedForCurrentContext()
     -- Always open for instances.
     if info and info.kind == "instance" then
         -- Prefer the current-difficulty child group when available
-        ShowUncollectedPopup(Util.SelectDifficultyChild(node, Util.GetCurrentDifficultyID()) or node)
+        ShowUncollectedPopup(Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID()) or node)
         return true
     end
 
@@ -47,7 +47,7 @@ local function RefreshUncollectedPopupForContextIfShown()
     if info and info.kind == "instance" then
         -- Only refresh if the instance node actually changed
         if popup.currentData ~= node then
-            ShowUncollectedPopup(Util.SelectDifficultyChild(node, Util.GetCurrentDifficultyID()) or node)
+            ShowUncollectedPopup(Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID()()) or node)
         end
         return
     end
