@@ -3,7 +3,7 @@
 ## Notes: Companion addon for 'All The Things' to show instance farming status in a grid.
 ## Author: YePhIcK
 ## X-CoAuthor: GenAI
-## Version: 0.61
+## Version: 0.7
 ## Dependencies: AllTheThings
 ## OptionalDeps: LibStub LibDataBroker-1.1 LibDBIcon-1.0
 Libs\LibStub\LibStub.lua
@@ -14,7 +14,7 @@ ATT-GoGo_Debug.lua
 ATT-GoGo_Util.lua
 ATT-GoGo_Widget_Info.lua
 ATT-GoGo_Widget.lua
-ATT-GoGo_Main.lua
+ATT-GoGo_Grid.lua
 ATT-GoGo_Options.lua
 ATT-GoGo.lua
 

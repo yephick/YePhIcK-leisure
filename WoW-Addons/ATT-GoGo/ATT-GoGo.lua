@@ -5,9 +5,9 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 
 local function PrintStartup()
-    local version = GetAddOnMetadata(addonName, "Version") or "UNKNOWN"
-    local author = GetAddOnMetadata(addonName, "Author") or "UNKNOWN"
-    local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor") or "UNKNOWN"
+    local version = GetAddOnMetadata(addonName, "Version") or ""
+    local author = GetAddOnMetadata(addonName, "Author") or "YePhIcK"
+    local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor") or "AI"
     print("|cff00ff00[" .. title .. "]|r " .. version .. " |cffffff00Vibed by:|r " .. author .. " & " .. coauthor)
 end
 
@@ -17,7 +17,8 @@ local function OpenUncollectedForCurrentContext()
 
     -- Always open for instances.
     if info and info.kind == "instance" then
-        ShowUncollectedPopup(node)
+        -- Prefer the current-difficulty child group when available
+        ShowUncollectedPopup(Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID()))
         return true
     end
 
@@ -29,7 +30,7 @@ local function OpenUncollectedForCurrentContext()
         return true
     end
 
-    -- No valid ATT zone for this map (e.g., DMF island) -> say nothing to show.
+    -- No valid ATT zone for this map
     return false
 end
 
@@ -43,12 +44,11 @@ local function RefreshUncollectedPopupForContextIfShown()
     local node, info = Util.ResolveContextNode(true)
     if not node then return end
 
-    local popup = _G.ATTGoGoUncollectedPopup
-
     if info and info.kind == "instance" then
         -- Only refresh if the instance node actually changed
-        if popup.currentData ~= node then
-            ShowUncollectedPopup(node)
+        local inst = Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID())
+        if popup.currentData ~= inst then
+            ShowUncollectedPopup(inst)
         end
         return
     end
@@ -86,7 +86,7 @@ local function SetupMinimapIcon()
             icon = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga",
             OnClick = function(self, button)
                 -- Shift-click opens the Uncollected popup for current instance/zone
-                if IsShiftKeyDown and IsShiftKeyDown() then
+                if IsShiftKeyDown() then
                     ShowATTGoGoOptions()
                     return
                 end
@@ -198,7 +198,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             __ATT_INIT_DONE = true
 
             ATT = _G.AllTheThings
-            print("|cff00ff00[" .. title .. "]|r is ready!")
+            print("|cff00ff00[" .. title .. "]|r is ready")
             SetupMainUI()
 
             -- Auto-refresh Uncollected popup on zone/instance changes (if enabled)
@@ -225,10 +225,9 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             ATT_API.AddEventHandler("OnThingCollected", OnThingCollected)
 
             -- keep your progress cache coherent with ATT refreshes
-            local clear = function() Util.ClearProgressCache() end
-            pcall(ATT_API.AddEventHandler, "OnInit",         clear)
-            pcall(ATT_API.AddEventHandler, "OnRefresh",      clear)
-            pcall(ATT_API.AddEventHandler, "OnAfterRefresh", clear)
+            ATT_API.AddEventHandler("OnInit",         Util.ClearProgressCache)
+            ATT_API.AddEventHandler("OnRefresh",      Util.ClearProgressCache)
+            ATT_API.AddEventHandler("OnAfterRefresh", Util.ClearProgressCache)
         end)
     end
 
@@ -236,22 +235,32 @@ frame:SetScript("OnEvent", function(self, event, arg1)
 end)
 
 SLASH_ATTGOGO1 = "/attgogo"
+SLASH_ATTGOGO2 = "/gogo"
+
 SlashCmdList["ATTGOGO"] = function(msg)
-    local cmd = msg:lower():trim()
+    local cmd = (msg or ""):lower():trim()
 
     if cmd == "" or cmd == "?" or cmd == "help" or cmd == "h" then
         print("|cffffff00[" .. title .. " Commands]|r")
-        print("/attgogo help       - Show this help")
-        print("/attgogo options    - Open the options window")
-        print("/attgogo show       - Show the main window")
+        print("/attgogo help        - Show this help")
+        print("/attgogo options     - Open the options window")
+        print("/attgogo show        - Show the main window")
+        print("/attgogo list        - Open Uncollected for current instance/zone")
+        print("/attgogo here        - Same as 'list'")
+        print("alternatively you can use /gogo")
         return
     end
 
-    if cmd == "options"     then ShowATTGoGoOptions() return end
-    if cmd == "show"        then ShowATTGoGoMain() return end
-    if cmd == "debug clear" then Debug_Init() print("ATT-GoGo: debug log cleared") return end
+    if cmd == "options" then ShowATTGoGoOptions() return end
+    if cmd == "show"    then ShowATTGoGoMain()    return end
+
+    -- NEW: open Uncollected popup for current context
+    if cmd == "list" or cmd == "here" then
+        if not OpenUncollectedForCurrentContext() then
+            print("|cffff0000[" .. title .. "]|r Nothing to show for this location.")
+        end
+        return
+    end
 
     print("|cffff0000[" .. title .. "]|r Unknown command. Type '/attgogo help' for options.")
 end
-
--- writing a WoW addon for MoP Classic version and need a bit of help. In my main window the list of instances and zones is displayed as rectangular widgets with info. Here are all the relevant files for the project.

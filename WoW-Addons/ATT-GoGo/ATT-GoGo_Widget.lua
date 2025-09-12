@@ -24,7 +24,7 @@ function Widget.AttachClickAndHoverUX(f, data)
     f:HookScript("OnEnter", function(self)
         cacheOriginals(self)
         self:SetBackdropBorderColor(1, 0.82, 0, 1)   -- gold-ish
-        if SetCursor then pcall(SetCursor, "Interface\\CURSOR\\Point") end
+        SetCursor("Interface\\CURSOR\\Point")
     end)
 
     f:HookScript("OnLeave", function(self)
@@ -34,7 +34,7 @@ function Widget.AttachClickAndHoverUX(f, data)
                 self.__origBorderColor[3], self.__origBorderColor[4]
             )
         end
-        if ResetCursor then pcall(ResetCursor) end
+        ResetCursor()
     end)
 end
 
@@ -44,7 +44,7 @@ function Widget.SetProgressWidgetVisuals(f, data, percent, isZone)
   local br, bg, bb = math.min(r * 2.2, 1), math.min(g * 2.2, 1), math.min(b * 2.2, 1)
   f:SetBackdropBorderColor(br, bg, bb, 1)
   f:SetAlpha(1)
-  if not isZone and IsInstanceLockedOut then
+  if not isZone then
     local isLocked, numDown, numBosses = IsInstanceLockedOut(data)
     if isLocked then
       local allDead = numBosses and numBosses > 0 and numDown == numBosses
@@ -66,7 +66,7 @@ function Widget.AddProgressWidgetText(f, data, widgetSize, collected, total, per
   title:SetText(Util.NodeDisplayName(data))
   title:SetWordWrap(false)
   title:SetMaxLines(1)
-  if data.instanceID and IsInstanceLockedOut then
+  if data.instanceID  then
     local isLocked, _, _, lockoutIndex = IsInstanceLockedOut(data)
     if isLocked and lockoutIndex then
       local reset = select(3, GetSavedInstanceInfo(lockoutIndex))

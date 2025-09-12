@@ -260,10 +260,12 @@ function Util.GetGridCols(scrollWidth, widgetSize, padding)
 end
 
 function Util.SetTooltip(frame, anchor, title, ...)
-  local lines = { ... }
+  local n    = select("#", ...)
+  local args = { ... }
+
   Tooltip.CreateTooltip(frame, anchor, function()
     Tooltip.AddHeader(title)
-    for _, line in ipairs(lines) do Tooltip.AddLine(line) end
+    for i = 1, n do Tooltip.AddLine(args[i]) end
   end)
 end
 
@@ -365,46 +367,24 @@ end
 -------------------------------------------------
 function Util.ExtractMapAndCoords(node)
   if not node or type(node) ~= "table" then return nil end
-  local function isValidMap(id)
-    return type(id) == "number" and id >= 1 and id % 1 == 0
-       and C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(id) ~= nil
-  end
-  local function normXY(x, y)
-    if type(x) ~= "number" or type(y) ~= "number" then return nil, nil end
-    if x > 1 then x = x / 100 end
-    if y > 1 then y = y / 100 end
-    x = math.max(0, math.min(1, x)); y = math.max(0, math.min(1, y))
-    return x, y
+  local mapID = type(node.mapID) == "number" and node.mapID or nil
+
+  local c = node.coords
+  if type(c) == "table" and type(c[1]) == "table" then
+    local x = tonumber(c[1][1])
+    local y = tonumber(c[1][2])
+    local m = tonumber(c[1][3])
+    if x and y then
+      if x > 1 then x = x / 100 end
+      if y > 1 then y = y / 100 end
+      if x < 0 then x = 0 elseif x > 1 then x = 1 end
+      if y < 0 then y = 0 elseif y > 1 then y = 1 end
+      mapID = m or mapID
+      if mapID then return mapID, x, y end
+    end
   end
 
-  local raw = node.mapID
-  local mapID = isValidMap(raw) and raw or nil
-
-  local function parseTriple(t)
-    if type(t) ~= "table" then return nil end
-    local a, b, c = t[1], t[2], t[3]
-    local aIsMap, cIsMap = isValidMap(a), isValidMap(c)
-    if cIsMap then
-      if (not mapID) or (c == mapID) then local x,y=normXY(a,b); if x and y then return c,x,y end end
-    end
-    if aIsMap and ((not mapID) or (a == mapID)) then
-      local x,y=normXY(b,c); if x and y then return a,x,y end
-    end
-    if aIsMap and cIsMap then
-      local x3,y3=normXY(a,b); if x3 and y3 then return c,x3,y3 end
-    end
-    local x,y=normXY(a,b); if x and y then return nil,x,y end
-    return nil
-  end
-
-  if type(node.coord) == "table" then
-    local m, x, y = parseTriple(node.coord); mapID = isValidMap(m) and m or mapID
-    if mapID and x and y then return mapID, x, y end
-  end
-  if type(node.coords) == "table" and #node.coords > 0 then
-    local m, x, y = parseTriple(node.coords[1]); mapID = isValidMap(m) and m or mapID
-    if mapID and x and y then return mapID, x, y end
-  end
+  -- Only a map, no coords
   if mapID then return mapID, nil, nil end
   return nil
 end
@@ -413,10 +393,7 @@ function Util.OpenWorldMapTo(mapID)
   if not (mapID and C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(mapID)) then return end
   if WorldMapFrame then
     if not WorldMapFrame:IsShown() then if ShowUIPanel then ShowUIPanel(WorldMapFrame) else WorldMapFrame:Show() end end
-    if WorldMapFrame.SetMapID then WorldMapFrame:SetMapID(mapID)
-    elseif SetMapByID then SetMapByID(mapID) end
-  elseif OpenWorldMap then
-    OpenWorldMap(mapID)
+    if WorldMapFrame.SetMapID then WorldMapFrame:SetMapID(mapID) end
   end
 end
 
@@ -449,7 +426,7 @@ function Util.TryTomTomWaypoint(mapID, x, y, title)
   if not (type(x)=="number" and type(y)=="number") then return false end
   title = title or "ATT-GoGo"
   if TomTom and TomTom.AddWaypoint then
-    pcall(TomTom.AddWaypoint, TomTom, mapID, x, y, { title = title, persistent = false })
+    TomTom:AddWaypoint(mapID, x, y, { title = title, persistent = false })
     return true
   end
   return false
@@ -477,13 +454,13 @@ function Util.GetNodeIcon(node)
   if node.icon then return node.icon end
 
   -- meta-achievement icon via Blizzard API (covers our stub reps)
-  if node.achievementID and GetAchievementInfo then
+  if node.achievementID then
     local _, _, _, _, _, _, _, _, _, icon = GetAchievementInfo(node.achievementID)
     if icon then return icon end
   end
 
   -- spell icons
-  if node.spellID and GetSpellTexture then
+  if node.spellID then
     local icon = GetSpellTexture(node.spellID)
     if icon then return icon end
   end
@@ -622,12 +599,9 @@ function Util.IsNodeRemoved(n, nowRWP)
   end
 
   -- awp: added with patch > client build
-  if(n.awp) then
-    local a = tonumber(n.awp)
-    if a and nowRWP then
-      if a > tonumber(nowRWP) then print("n.awp = " .. a .. " > " .. nowRWP .. " = " .. (a > nowRWP)) end
-      return a > nowRWP
-    end
+  local a = tonumber(n.awp)
+  if a and nowRWP then
+    return a > nowRWP
   end
 
   return false
@@ -705,12 +679,6 @@ function Util.ATTFindInstanceByInstanceID(id)
     return api.SearchForField("instanceID", id)[1]
 end
 
-function Util.ATTFindInstanceByMapID(id)
-    local api = _ATT()
-    if not api then return nil end
-    return api.SearchForField("mapID", id)[1]
-end
-
 -- Instance whose `maps` array contains a given uiMapID
 function Util.ATTFindInstanceByContainedMap(uiMapID)
   uiMapID = tonumber(uiMapID); if not uiMapID then return nil end
@@ -723,6 +691,27 @@ function Util.ATTFindInstanceBySavedInstanceID(id)
   id = tonumber(id); if not id then return nil end
   local c = ATTDB.GetCache()
   return (c.bySavedInstanceID and c.bySavedInstanceID[id]) or nil
+end
+
+-- From an Instance node, pick the child Group which matches a difficultyID
+function Util.SelectDifficultyChild(instanceNode, difficultyID)
+  local id = tonumber(difficultyID)
+  if not (instanceNode and instanceNode.g) then return nil end
+  local hadDifficultyChildren = false
+  local seen = {}
+
+  for _, child in ipairs(instanceNode.g) do
+    local d = tonumber(child.difficultyID)
+    if d then
+      hadDifficultyChildren = true
+      seen[#seen+1] = d
+      if d == id then
+        return child
+      end
+    end
+  end
+
+  return instanceNode
 end
 
 -- Unified context resolver: returns the ATT node for current instance or zone.
@@ -742,11 +731,15 @@ function Util.ResolveContextNode(verbose)
 
   if inInstance then
     if info.uiMapID then
+      -- Preferred: search by mapID to get the proper Instance node even if multiple maps exist
+      local byMap = Util.ATTSearchOne("mapID", info.uiMapID)
+      if byMap then return ret(byMap, "instance", "mapID") end
+    
+      -- (Fallback) contained-map cache if needed
       local byContained = Util.ATTFindInstanceByContainedMap(info.uiMapID)
       if byContained then return ret(byContained, "instance", "node.maps[]") end
     elseif info.giMapID then
-      print("XXX: Instance by Blizzard savedInstanceID (Classic), info.giMapID = %d", info.giMapID)
---      DebugLogf("XXX: Instance by Blizzard savedInstanceID (Classic), info.giMapID = %d", info.giMapID)
+      print("Inform YePhIcK: Instance by Blizzard savedInstanceID (Classic), info.giMapID = %d", info.giMapID)
       local bySaved = Util.ATTFindInstanceBySavedInstanceID(info.giMapID)
       if bySaved then return ret(bySaved, "instance", "savedInstanceID") end
     end
@@ -754,7 +747,7 @@ function Util.ResolveContextNode(verbose)
 
   -- Fallback: try direct instance lookup by the uiMapID (some classic instances map directly)
   if inInstance and info.uiMapID then
-    local byMap = Util.ATTFindInstanceByMapID(info.uiMapID)
+    local byMap = Util.ATTSearchOne("mapID", info.uiMapID)
     if byMap then return ret(byMap, "instance", "instanceMapID") end
   end
 
@@ -1116,7 +1109,7 @@ local function AddOtherToonsSection(tooltip, ownerNode, isZone)
     tooltip:AddLine(" ")
     tooltip:AddLine("Other characters (" .. realm .. ")", 0.9, 0.9, 0.9)
     for _, l in ipairs(rows) do
-      tooltip:AddLine(l, 0.9, 0.9, 0.9, true)
+      tooltip:AddLine(l, 0.9, 0.9, 0.9, false)
     end
   end
 end
@@ -1131,9 +1124,6 @@ end
 
 function Tooltip.AddContextProgressTo(tooltip)
   local node, info = Util.ResolveContextNode(true)
---  DebugPrintNodePath(node, { verbose = true })
---  DebugRecursive(node, "Tooltip.AddContextProgressTo:node", 0, 1, false)
---  DebugRecursive(info, "Tooltip.AddContextProgressTo:info", 0, 2, false)
   if not node then
     tooltip:AddLine("Not in an instance.", 0.5, 0.5, 0.5)
     return
