@@ -695,14 +695,23 @@ end
 
 -- From an Instance node, pick the child Group which matches a difficultyID
 function Util.SelectDifficultyChild(instanceNode, difficultyID)
-  if not (instanceNode and instanceNode.g and difficultyID) then return nil end
+  local id = tonumber(difficultyID)
+  if not (instanceNode and instanceNode.g) then return nil end
+  local hadDifficultyChildren = false
+  local seen = {}
+
   for _, child in ipairs(instanceNode.g) do
-    if tonumber(child.difficultyID) == tonumber(difficultyID) then
-      return child
+    local d = tonumber(child.difficultyID)
+    if d then
+      hadDifficultyChildren = true
+      seen[#seen+1] = d
+      if d == id then
+        return child
+      end
     end
   end
-  print("ATT-GoGo: Couldn't find an instance for difficultyID " .. tostring(difficultyID))
-  return nil
+
+  return instanceNode
 end
 
 -- Unified context resolver: returns the ATT node for current instance or zone.
@@ -730,8 +739,7 @@ function Util.ResolveContextNode(verbose)
       local byContained = Util.ATTFindInstanceByContainedMap(info.uiMapID)
       if byContained then return ret(byContained, "instance", "node.maps[]") end
     elseif info.giMapID then
-      print("XXX: Instance by Blizzard savedInstanceID (Classic), info.giMapID = %d", info.giMapID)
---      DebugLogf("XXX: Instance by Blizzard savedInstanceID (Classic), info.giMapID = %d", info.giMapID)
+      print("Inform YePhIcK: Instance by Blizzard savedInstanceID (Classic), info.giMapID = %d", info.giMapID)
       local bySaved = Util.ATTFindInstanceBySavedInstanceID(info.giMapID)
       if bySaved then return ret(bySaved, "instance", "savedInstanceID") end
     end
@@ -1116,9 +1124,6 @@ end
 
 function Tooltip.AddContextProgressTo(tooltip)
   local node, info = Util.ResolveContextNode(true)
---  DebugPrintNodePath(node, { verbose = true })
---  DebugRecursive(node, "Tooltip.AddContextProgressTo:node", 0, 1, false)
---  DebugRecursive(info, "Tooltip.AddContextProgressTo:info", 0, 2, false)
   if not node then
     tooltip:AddLine("Not in an instance.", 0.5, 0.5, 0.5)
     return

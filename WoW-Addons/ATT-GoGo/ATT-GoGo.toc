@@ -14,7 +14,7 @@ ATT-GoGo_Debug.lua
 ATT-GoGo_Util.lua
 ATT-GoGo_Widget_Info.lua
 ATT-GoGo_Widget.lua
-ATT-GoGo_Main.lua
+ATT-GoGo_Grid.lua
 ATT-GoGo_Options.lua
 ATT-GoGo.lua
 

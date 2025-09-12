@@ -636,7 +636,6 @@ local function GatherUncollectedNodes(node, out, activeKeys, seen)
     if isAllowed then
         out[#out + 1] = node
         passKeysByNode[node] = matched
---        DebugRecursive(node, "added uncollected node", 0, 1, false)
     end
 
     local kids = node.g
@@ -1019,10 +1018,6 @@ local function RefreshPopup(data)
 end
 
 function ShowUncollectedPopup(data)
---    DebugPrintNodePath(data, { verbose = true })
---    if data.parent then DebugRecursive(data.parent, "popup.parent", 0, 1, false) end
---    DebugRecursive(data, "popup.data", 0, 2, false)
-
     EnsurePopup()
     RefreshPopup(data)
     uncollectedPopup:Show()
