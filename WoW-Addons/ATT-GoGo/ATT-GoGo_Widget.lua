@@ -93,6 +93,48 @@ function Widget.SetProgressWidgetTooltip(f, data, collected, total, percent, isZ
   end)
 end
 
+local DIFF_LABEL = {
+  [1] = "5N", [2] = "5H", [8] = "CM",
+  [3] = "10N", [4] = "25N", [5] = "10H", [6] = "25H", [9] = "40",
+  [7] = "LFR", [14] = "Flex/N", [15] = "Flex/H", [16] = "M",
+  [114] = "DS LFR", [115] = "DS LFR", [118] = "SoD LFR", [119] = "SoD LFR", [120] = "SoD LFR", [121] = "SoD LFR",
+}
+
+local function AttachInfoIcon(parentFrame, eraNode)
+  if not (eraNode and eraNode.instanceID) then return end
+
+  -- collect per-difficulty rows present in this era wrapper
+  local diffs = {}
+  if type(eraNode.g) == "table" then
+    for _, ch in ipairs(eraNode.g) do
+      local d = tonumber(ch.difficultyID)
+      if d then
+        local c, t = Util.ResolveProgress(ch)
+        diffs[#diffs+1] = { d = d, c = c or 0, t = t or 0 }
+      end
+    end
+  end
+  if #diffs == 0 then return end
+
+  local btn = CreateFrame("Button", nil, parentFrame)
+  btn:SetSize(16, 16)
+  btn:SetPoint("TOPRIGHT", parentFrame, "TOPRIGHT", -6, -6)
+
+  local tex = btn:CreateTexture(nil, "ARTWORK")
+  tex:SetAllPoints(btn)
+  tex:SetTexture("Interface\\FriendsFrame\\InformationIcon")
+
+  Tooltip.CreateTooltip(btn, "ANCHOR_LEFT", function()
+    GameTooltip:AddLine("Difficulties", 1, 1, 1)
+    table.sort(diffs, function(a,b) return (a.d or 0) < (b.d or 0) end)
+    for _, r in ipairs(diffs) do
+      local p = (r.t > 0) and (r.c / r.t * 100) or 0
+      local tag = DIFF_LABEL[r.d] or tostring(r.d)
+      GameTooltip:AddLine(string.format("• %s — %d/%d (%.1f%%)", tag, r.c, r.t, p), 0.9, 0.9, 0.9)
+    end
+  end)
+end
+
 -- Main: Create a progress widget for grid
 function Widget.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode)
     local f = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
@@ -123,6 +165,9 @@ function Widget.CreateProgressWidget(content, data, x, y, widgetSize, padding, i
     Widget.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
     Widget.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone)
     Widget.AttachClickAndHoverUX(f, attNode or data)
+    if (attNode and attNode.instanceID and attNode.eraKey) then
+      AttachInfoIcon(f, attNode)
+    end
 
     return f
 end

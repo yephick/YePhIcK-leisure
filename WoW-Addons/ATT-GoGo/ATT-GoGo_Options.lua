@@ -111,6 +111,7 @@ local removedCheckbox = AddCheckbox(
     function()
         local popup = _G.ATTGoGoUncollectedPopup
         if popup and popup:IsShown() and popup.currentData then ShowUncollectedPopup(popup.currentData) end
+        RefreshActiveTab()
     end,
     "Include removed/retired/future content in the uncollected popup list."
 )

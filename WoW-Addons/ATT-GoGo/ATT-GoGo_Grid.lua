@@ -176,18 +176,23 @@ end
 
 -- Helper: Populate a frame with widgets in a grid
 function Grid.Populate(content, dataset, widgetFactory, widgets, widgetSize, padding, scroll)
-    Util.ClearChildrenOrTabs(content)
-    wipe(widgets)
-    local frameWidth = scroll:GetWidth()
-    local cols = Util.GetGridCols(frameWidth, widgetSize, padding) -- Calculate grid columns based on container width
-    local x, y = 0, 0
-    for _, entry in ipairs(dataset) do
-        local f = widgetFactory(content, entry, x, y, widgetSize, padding)
-        table.insert(widgets, f)
-        x = x + 1
-        if x >= cols then x = 0; y = y + 1 end
+  Util.ClearChildrenOrTabs(content)
+  wipe(widgets)
+
+  local includeRemoved = GetSetting("includeRemoved", false)
+  local frameWidth = scroll:GetWidth()
+  local cols = Util.GetGridCols(frameWidth, widgetSize, padding)
+  local x, y = 0, 0
+
+  for _, entry in ipairs(dataset) do
+    if includeRemoved or (not entry.removed) then
+      local f = widgetFactory(content, entry, x, y, widgetSize, padding)
+      widgets[#widgets+1] = f
+      x = x + 1
+      if x >= cols then x = 0; y = y + 1 end
     end
-    content:SetSize(frameWidth, (y + 1) * (60 + padding) + 80)
+  end
+  content:SetSize(frameWidth, (y + 1) * (60 + padding) + 80)
 end
 
 -- Factory: Create a scrolling grid for any dataset and widget factory

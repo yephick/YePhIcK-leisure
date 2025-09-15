@@ -843,7 +843,12 @@ function Util.EnsureProgressDB()
 
   local charName = UnitName("player") or "?"
   local byChar = prog[realm]
-  byChar[charName] = byChar[charName] or { instances = {}, zones = {} }
+  -- always reset this toon’s layout (new schema every load)
+  byChar[charName] = {
+    locks = {},        -- [instanceID] = lock snapshot
+    instances  = {},   -- ["<instanceID>:<era>"] = { c, t }
+    zones = {},        -- [mapID] = { c, t }
+  }
 
   _AGG_ProgressCache = { me = byChar[charName], realm = realm, char = charName }
   return _AGG_ProgressCache.me, realm, charName
@@ -866,16 +871,27 @@ local function BuildLockoutFromSavedInstances(attInstanceNode)
   return { expiresAt = expiresAt, bosses = bosses }
 end
 
--- Save instance progress for an ATT instance node (preferred input)
 function Util.SaveInstanceProgressByNode(attInstanceNode)
   if type(attInstanceNode) ~= "table" then return end
-  local instanceID = tonumber(attInstanceNode.instanceID)
-  if not instanceID then return end
+  local instanceID = tonumber(attInstanceNode.instanceID); if not instanceID then return end
 
+  local key = Util.GetInstanceProgressKey(attInstanceNode) or instanceID
   local c, t = Util.ResolveProgress(attInstanceNode)
   local lock = BuildLockoutFromSavedInstances(attInstanceNode)
 
-  Util.EnsureProgressDB().instances[instanceID] = { c or 0, t or 0, lock = lock }
+  local me = Util.EnsureProgressDB()
+  me.instances = me.instances or {}
+
+  if key == instanceID then
+    -- non-split: progress + lock under numeric key
+    me.instances[instanceID] = { c or 0, t or 0, lock = lock }
+  else
+    -- split: store progress under composite key; keep lock under numeric ID
+    me.instances[key] = { c or 0, t or 0 }
+    local base = me.instances[instanceID] or {}
+    base.lock = lock
+    me.instances[instanceID] = base
+  end
 end
 
 -- Save zone progress for an ATT zone node
@@ -950,23 +966,121 @@ function BuildExpansionList()
   return list
 end
 
+-- === Era helpers ===
+local function EraFromAwp(awp)
+  local a = tonumber(awp)
+  if not a then return nil end
+  local era = math.floor(a / 10000)
+  if era <= 0 then return 1 end
+  if era >= 11 then return nil end
+  return era
+end
+
+-- Return era for a difficulty child (prefer child.awp, then instance.awp, then instance.expansionID, else Classic)
+local function EraForChild(instanceNode, child)
+  if child and child.difficultyID then
+    return EraFromAwp(child.awp)
+        or EraFromAwp(instanceNode.awp)
+        or tonumber(instanceNode.expansionID)
+        or 1
+  end
+  return nil
+end
+
+-- Build { [era] = {difficultyChildren...} } ignoring non-difficulty headers
+local function BuildEraBuckets(instanceNode)
+  local buckets, hasDiff = {}, false
+  local kids = type(instanceNode.g) == "table" and instanceNode.g or nil
+  if kids then
+    for _, ch in ipairs(kids) do
+      local d = tonumber(ch.difficultyID)
+      if d then
+        hasDiff = true
+        local era = EraForChild(instanceNode, ch)
+        if era then
+          local t = buckets[era] or {}
+          t[#t+1] = ch
+          buckets[era] = t
+        end
+      end
+    end
+  end
+
+  if not hasDiff then
+    -- no difficulty children -> one bucket (non-split)
+    local era = EraFromAwp(instanceNode.awp) or tonumber(instanceNode.expansionID) or 1
+    buckets[era] = {}
+  end
+  return buckets
+end
+
+-- Wrapper limited to era; also decide and *store once* a stable progress key
+local function MakeEraWrapper(instanceNode, era, diffs, isSplit)
+  local name = instanceNode.text or instanceNode.name
+  local wrap = {
+    text = name, name = name,
+    instanceID = instanceNode.instanceID,
+    mapID = instanceNode.mapID,
+    icon = instanceNode.icon,
+    parent = instanceNode.parent,
+    g = (type(diffs)=="table" and #diffs>0) and diffs or instanceNode.g,
+    awp = instanceNode.awp,
+    rwp = instanceNode.rwp,
+    eraKey = tonumber(era),
+  }
+  -- progressKey: for non-split keep numeric instanceID (back-compat); for split include era
+  local id = tonumber(instanceNode.instanceID)
+  if isSplit then
+    wrap.__eraSplit = true
+    wrap.progressKey = tostring(id) .. ":" .. tostring(era)
+  else
+    wrap.progressKey = id
+  end
+  return wrap
+end
+
+function Util.GetInstanceProgressKey(node)
+  if type(node) ~= "table" then return nil end
+  if node.progressKey ~= nil then return node.progressKey end
+  local id = tonumber(node.instanceID); if not id then return nil end
+  local era = tonumber(node.eraKey)
+  -- if we don’t know whether it’s split, default to legacy (numeric)
+  node.progressKey = (node.__eraSplit and era) and (tostring(id)..":"..tostring(era)) or id
+  return node.progressKey
+end
+
 function GetInstancesForExpansion(expansionID)
   local out = {}
   local root = _Root()
   if not (root and root.g) then return out end
+  local nowRWP = Util.CurrentClientRWP()
 
   local function scanContainer(cat)
     if type(cat.g) ~= "table" then return end
     for _, exp in ipairs(cat.g) do
-      if exp and exp.expansionID == expansionID and type(exp.g) == "table" then
-        for _, child in ipairs(exp.g) do
-          if child and child.instanceID then
-            out[#out+1] = {
-              name = Util.NodeDisplayName(child),
-              instanceID = child.instanceID,
-              mapID = child.mapID, savedInstanceID = child.savedInstanceID,
-              icon = Util.GetNodeIcon(child), attNode = child,
-            }
+      if type(exp.g) == "table" then
+        for _, inst in ipairs(exp.g) do
+          if inst and inst.instanceID then
+            local buckets = BuildEraBuckets(inst)
+            -- is this instance era-split? (more than one bucket)
+            local first = next(buckets)
+            local isSplit = (first and next(buckets, first)) and true or false
+
+            for era, diffs in pairs(buckets) do
+              if era == expansionID then
+                local wrap = MakeEraWrapper(inst, era, diffs, isSplit)
+                local removed = Util.IsNodeRemoved(inst, nowRWP)  -- instance-level gate
+                out[#out+1] = {
+                  name = Util.NodeDisplayName(inst),
+                  instanceID = inst.instanceID,
+                  mapID = inst.mapID,
+                  savedInstanceID = inst.savedInstanceID,
+                  icon = Util.GetNodeIcon(inst),
+                  attNode = wrap,              -- era-scoped node
+                  removed = removed,           -- for includeRemoved filtering
+                }
+              end
+            end
           end
         end
       end
@@ -1063,6 +1177,7 @@ local function AddOtherToonsSection(tooltip, ownerNode, isZone)
 
   local _, realm, myChar = Util.EnsureProgressDB()
   local realmBucket = ATTGoGoDB.progress[realm]
+  if not (realmBucket and ownerNode) then return end
 
   local key, bucket
   if isZone then
@@ -1078,14 +1193,14 @@ local function AddOtherToonsSection(tooltip, ownerNode, isZone)
   for charName, perChar in pairs(realmBucket) do
     if charName ~= myChar then
       local entry = perChar[bucket] and perChar[bucket][key]
-      if entry then
-        if mode == 1 then
-          if isZone then
-            entry = nil
-          else
-            local secs = (entry.lock and entry.lock.expiresAt - now) or 0
-            if secs <= 0 then entry = nil end
-          end
+
+      -- Mode 1: only instances with an active lockout
+      if mode == 1 then
+        if isZone then
+          entry = nil
+        else
+          local secs = entry and entry.lock and (entry.lock.expiresAt - now) or 0
+          if secs <= 0 then entry = nil end
         end
       end
 
@@ -1114,12 +1229,16 @@ local function AddOtherToonsSection(tooltip, ownerNode, isZone)
   end
 end
 
-function Tooltip.AddProgress(tooltip, data, collected, total, percent, isZone, lockoutData)
+-- Consolidated progress block used by the minimap tooltip
+function Tooltip.AddProgress(tooltip, data, collected, total, percent, isZone, ownerNode, lockoutData)
   tooltip:AddLine(string.format("Collected: %d / %d (%.2f%%)", collected, total, percent))
   if not isZone then
-    Tooltip.AddInstanceLockoutTo(tooltip, lockoutData or data)
+    Tooltip.AddInstanceLockoutTo(tooltip, lockoutData or ownerNode or data)
   end
-  AddOtherToonsSection(tooltip, ownerNode or data, isZone)
+  -- Only append the “other toons” section if enabled, and use the correct owner node for keys
+  if Util.GetOtherToonsMode() ~= 0 then
+    AddOtherToonsSection(tooltip, ownerNode or data, isZone)
+  end
 end
 
 function Tooltip.AddContextProgressTo(tooltip)
@@ -1132,26 +1251,23 @@ function Tooltip.AddContextProgressTo(tooltip)
   if info.kind == "instance" then
     local best, c, t, p = Util.ResolveBestProgressNode(node)
     tooltip:AddLine("|cffffd200" .. Util.NodeDisplayName(node) .. "|r")
-    Tooltip.AddProgress(tooltip, best, c, t, (t > 0 and (c/t*100) or 0), false, node)
+    -- ownerNode = the INSTANCE node (has instanceID)
+    Tooltip.AddProgress(tooltip, best, c, t, (t > 0 and (c/t*100) or 0), false, node, node)
   else
-    -- Always show the zone/sub-zone name…
     local zoneName = GetRealZoneText() or (node and node.text) or "Zone"
     local subZone  = GetSubZoneText()
     local zoneDisplay = (subZone and subZone ~= "" and subZone ~= zoneName) and (subZone .. ", " .. zoneName) or zoneName
     tooltip:AddLine("|cffffd200" .. zoneDisplay .. "|r")
 
-    -- Prefer a strict container; if none, fall back to the best container up the ATT tree
-    local strictZone = ResolveContainerZoneNodeStrict(info.uiMapID)
-    if not strictZone then
-      strictZone = ResolveBestZoneNode(info.uiMapID)
-    end
+    local strictZone = ResolveContainerZoneNodeStrict(info.uiMapID) or ResolveBestZoneNode(info.uiMapID)
     if not strictZone then
       tooltip:AddLine("Nothing to show for this location.", 0.7, 0.7, 0.7)
       return
     end
 
     local best, c, t, p = Util.ResolveBestProgressNode(strictZone)
-    Tooltip.AddProgress(tooltip, best or strictZone or {}, c, t, (t > 0 and (c/t*100) or 0), true, strictZone)
+    -- ownerNode = the ZONE container (has mapID)
+    Tooltip.AddProgress(tooltip, best or strictZone or {}, c, t, (t > 0 and (c/t*100) or 0), true, strictZone, strictZone)
   end
 end
 
