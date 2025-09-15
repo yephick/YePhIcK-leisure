@@ -53,7 +53,7 @@ local function IsAllowedLeaf(node, activeKeys)
     end
 
     local isVisible     = (node.visible ~= false)
-    local isUncollected = (node.collected ~= true)
+    local isUncollected = not node.collected
 
     if isUncollected and isVisible and #matched > 0 then
         return true, matched
@@ -964,7 +964,7 @@ end
 
 local function PopupLazyRefresh(self)
     if not (self and self:IsShown() and self.currentData) then return end
-
+    Util.ClearProgressCache()
     local nodes = BuildNodeList(self.currentData)
     self.currentNodes = nodes or {}
     PopulateUncollectedPopup(self.scrollContent, self.currentNodes)
@@ -1001,6 +1001,7 @@ end)
 -- Build + show
 ------------------------------------------------------------
 local function RefreshPopup(data)
+    Util.ClearProgressCache()
     uncollectedPopup.currentData = data
 
     local nodes, activeKeys = BuildNodeList(data)

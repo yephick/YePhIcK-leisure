@@ -13,13 +13,13 @@ end
 
 local function OpenUncollectedForCurrentContext()
     local node, info = Util.ResolveContextNode(true)
-    if not node then return false end
+    if not node then return end
 
     -- Always open for instances.
     if info and info.kind == "instance" then
         -- Prefer the current-difficulty child group when available
         ShowUncollectedPopup(Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID()))
-        return true
+        return
     end
 
     -- For zones: open for the best (top container) zone so we don't churn on sub-zones.
@@ -27,16 +27,17 @@ local function OpenUncollectedForCurrentContext()
     local bestZone = ResolveBestZoneNode(mapID)
     if bestZone then
         ShowUncollectedPopup(bestZone)
-        return true
+        return
     end
 
     -- No valid ATT zone for this map
-    return false
+    print("|cffff0000[" .. title .. "]|r Nothing to show for this location.")
 end
 
 -- Refresh the Uncollected popup to the *current* context, if visible and allowed.
-local function RefreshUncollectedPopupForContextIfShown()
-    if not GetSetting("autoRefreshPopupOnZone", true) then return end
+-- @param force boolean (optional) - force rebuild even if current node didn't change
+local function RefreshUncollectedPopupForContextIfShown(force)
+    if not (force or GetSetting("autoRefreshPopupOnZone", true)) then return end
 
     local popup = _G.ATTGoGoUncollectedPopup
     if not (popup and popup:IsShown()) then return end
@@ -44,20 +45,17 @@ local function RefreshUncollectedPopupForContextIfShown()
     local node, info = Util.ResolveContextNode(true)
     if not node then return end
 
+    local target
     if info and info.kind == "instance" then
-        -- Only refresh if the instance node actually changed
-        local inst = Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID())
-        if popup.currentData ~= inst then
-            ShowUncollectedPopup(inst)
-        end
-        return
+        target = Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID())
+    else
+        target = ResolveBestZoneNode(info and info.uiMapID)
     end
 
-    -- Zones: resolve to the top container zone and refresh only if it changed
-    local bestZone = ResolveBestZoneNode(info and info.uiMapID)
-    if bestZone and popup.currentData ~= bestZone then
-        ShowUncollectedPopup(bestZone)
+    if target and (force or popup.currentData ~= target) then
+      ShowUncollectedPopup(target)
     end
+
 end
 
 -- Tooltip header helper
@@ -91,9 +89,7 @@ local function SetupMinimapIcon()
                     return
                 end
                 if button == "RightButton" then
-                    if not OpenUncollectedForCurrentContext() then
-                        print("|cffff0000[" .. title .. "]|r Nothing to show for this location.")
-                    end
+                    OpenUncollectedForCurrentContext()
                 else
                     if ATTGoGoMainFrame:IsShown() then
                         ATTGoGoMainFrame:Hide()
@@ -137,20 +133,19 @@ local function FlushCollectedBatch()
     local cnt = collectedBatch.count
     collectedBatch.count, collectedBatch.timer = 0, nil
 
+    Util.ClearProgressCache()
     if cnt >= THRESHOLD then
         -- Big wave => assume whole-DB refresh; rebuild everything
-        Util.ClearProgressCache()
         SetupMainUI()           -- full rebuild of main frame widgets (also refreshes data)
-        RefreshActiveTab()
     else
         -- Small wave => current-context refresh only
         Util.SaveCurrentContextProgress()
-        RefreshActiveTab()
-        RefreshUncollectedPopupForContextIfShown()
+        RefreshUncollectedPopupForContextIfShown(true)
     end
+    RefreshActiveTab()
 end
 
-local function OnThingCollected(_node)
+local function OnThingCollected(node)
     collectedBatch.count = collectedBatch.count + 1
 
     -- Silence-based debounce: restart a cancelable timer each event
@@ -224,21 +219,41 @@ frame:SetScript("OnEvent", function(self, event, arg1)
 
             ATT_API.AddEventHandler("OnThingCollected", OnThingCollected)
 
-            -- keep your progress cache coherent with ATT refreshes
-            ATT_API.AddEventHandler("OnInit",         Util.ClearProgressCache)
-            ATT_API.AddEventHandler("OnRefresh",      Util.ClearProgressCache)
-            ATT_API.AddEventHandler("OnAfterRefresh", Util.ClearProgressCache)
+--            ATT_API.AddEventHandler("OnInit",         function() print("ATT-GoGo: OnInit"); Util.ClearProgressCache() end) -- this one doesn't fire after initial load
+--            ATT_API.AddEventHandler("OnRefresh",      function() print("ATT-GoGo: OnRefresh"); Util.ClearProgressCache() end)
         end)
     end
 
     WaitForATT()
 end)
 
+local function DumpCurrentCtx()
+  local node, info = Util.ResolveContextNode(true)
+  if not node then
+    print("|cffff0000[" .. title .. "]|r dump: couldn't resolve context.")
+    return
+  end
+
+  local target
+  if info and info.kind == "instance" then
+    target = Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID()) or node
+  else
+    local mapID = info and info.uiMapID
+    target = ResolveBestZoneNode(mapID) or node
+  end
+
+  print("|cff00ff00[" .. title .. "]|r dump → " .. (Util.NodeDisplayName(target) or "?"))
+  DebugPrintNodePath(target)
+  DebugRecursive(target, ((info and info.kind) or "node"), 0, 3, false)
+end
+
 SLASH_ATTGOGO1 = "/attgogo"
 SLASH_ATTGOGO2 = "/gogo"
 
 SlashCmdList["ATTGOGO"] = function(msg)
-    local cmd = (msg or ""):lower():trim()
+    local raw = (msg or ""):trim()
+    local cmd, rest = raw:match("^(%S+)%s*(.*)$")
+    cmd = (cmd or ""):lower()
 
     if cmd == "" or cmd == "?" or cmd == "help" or cmd == "h" then
         print("|cffffff00[" .. title .. " Commands]|r")
@@ -247,18 +262,25 @@ SlashCmdList["ATTGOGO"] = function(msg)
         print("/attgogo show        - Show the main window")
         print("/attgogo list        - Open Uncollected for current instance/zone")
         print("/attgogo here        - Same as 'list'")
+        print("/attgogo dump        - Debug: path + recursive dump for current context")
+        print("/attgogo add <text>  - Append <text> into ATT-GoGo debug log")
         print("alternatively you can use /gogo")
         return
     end
 
     if cmd == "options" then ShowATTGoGoOptions() return end
     if cmd == "show"    then ShowATTGoGoMain()    return end
+    if cmd == "dump"    then DumpCurrentCtx()     return end
 
-    -- NEW: open Uncollected popup for current context
+    -- open Uncollected popup for current context
     if cmd == "list" or cmd == "here" then
-        if not OpenUncollectedForCurrentContext() then
-            print("|cffff0000[" .. title .. "]|r Nothing to show for this location.")
-        end
+        OpenUncollectedForCurrentContext()
+        return
+    end
+
+    if cmd == "add" then
+        rest = "GUI action: " .. (rest or "<text to add to logs was not provided by user>")
+        DebugLog(rest)
         return
     end
 

@@ -1,8 +1,6 @@
 ﻿-- ATT-GoGo_Debug.lua
 
 -- Ensure debug table
-ATTGoGoDebugDB = {}
-
 local function ensure()
   ATTGoGoDB = ATTGoGoDB or {}
   ATTGoGoDB.debug = ATTGoGoDB.debug or { log = {} }

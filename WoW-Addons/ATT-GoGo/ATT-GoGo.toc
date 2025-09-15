@@ -18,5 +18,5 @@ ATT-GoGo_Grid.lua
 ATT-GoGo_Options.lua
 ATT-GoGo.lua
 
-## SavedVariables: ATTGoGoDB, ATTGoGoDebugDB
+## SavedVariables: ATTGoGoDB
 ## SavedVariablesPerCharacter: ATTGoGoCharDB
