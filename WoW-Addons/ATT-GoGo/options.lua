@@ -1,4 +1,4 @@
-﻿-- === ATT-GoGo Options UI ===
+﻿-- === Options UI ===
 
 local optionsFrame = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
 optionsFrame:SetSize(300, 570)

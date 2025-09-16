@@ -70,11 +70,11 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
     tabContent:SetPoint("BOTTOMRIGHT", -5, 5)
     tabContent:Hide()
 
-    local widgetFactory = function(content, data, x, y, widgetSize, padding)
+    local tileFactory = function(content, data, x, y, widgetSize, padding)
         local attNode = data.attNode or data
-        return Widget.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode)
+        return Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode)
     end
-    gridFunc(tabContent, entries, widgetFactory, 160, 10)
+    gridFunc(tabContent, entries, tileFactory, 160, 10)
     tabButtons[tabId].content = tabContent
 end
 
@@ -175,7 +175,7 @@ function Summary.UpdateZoneSummary(mainFrame, tab, tabButtons)
 end
 
 -- Helper: Populate a frame with widgets in a grid
-function Grid.Populate(content, dataset, widgetFactory, widgets, widgetSize, padding, scroll)
+function Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll)
   Util.ClearChildrenOrTabs(content)
   wipe(widgets)
 
@@ -186,7 +186,7 @@ function Grid.Populate(content, dataset, widgetFactory, widgets, widgetSize, pad
 
   for _, entry in ipairs(dataset) do
     if includeRemoved or (not entry.removed) then
-      local f = widgetFactory(content, entry, x, y, widgetSize, padding)
+      local f = tileFactory(content, entry, x, y, widgetSize, padding)
       widgets[#widgets+1] = f
       x = x + 1
       if x >= cols then x = 0; y = y + 1 end
@@ -196,7 +196,7 @@ function Grid.Populate(content, dataset, widgetFactory, widgets, widgetSize, pad
 end
 
 -- Factory: Create a scrolling grid for any dataset and widget factory
-function Grid.Create(parent, dataset, widgetFactory, widgetSize, padding)
+function Grid.Create(parent, dataset, tileFactory, widgetSize, padding)
     local scroll = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 10, -10)
     scroll:SetPoint("BOTTOMRIGHT", -30, 10)
@@ -208,7 +208,7 @@ function Grid.Create(parent, dataset, widgetFactory, widgetSize, padding)
     local widgets = {}
 
     local function Populate()
-        Grid.Populate(content, dataset, widgetFactory, widgets, widgetSize, padding, scroll)
+        Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll)
     end
     local Debounced = Util.Debounce(Populate, 0.08)
 

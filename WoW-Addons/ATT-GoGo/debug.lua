@@ -1,4 +1,4 @@
-﻿-- ATT-GoGo_Debug.lua
+﻿-- debug.lua
 
 -- Ensure debug table
 local function ensure()

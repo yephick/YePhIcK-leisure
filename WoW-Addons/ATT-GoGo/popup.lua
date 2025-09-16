@@ -1,4 +1,4 @@
-﻿-- ATT-GoGo_Widget_Info.lua
+﻿-- popup.lua
 -- Virtualized uncollected-list popup: fast, low-GC, and flicker-free.
 
 ------------------------------------------------------------

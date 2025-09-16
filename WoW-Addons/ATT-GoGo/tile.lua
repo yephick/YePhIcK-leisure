@@ -1,9 +1,9 @@
-﻿-- ATT-GoGo_Widget.lua
+﻿-- === main frame with tiles in a grid ===
 
-Widget = {}
+Tile = {}
 
 -- Whole-widget click + hover border + hand cursor
-function Widget.AttachClickAndHoverUX(f, data)
+function Tile.AttachClickAndHoverUX(f, data)
     -- Click anywhere on the widget to open the popup
     f:EnableMouse(true)
     f:SetScript("OnMouseUp", function(self, button)
@@ -38,7 +38,7 @@ function Widget.AttachClickAndHoverUX(f, data)
     end)
 end
 
-function Widget.SetProgressWidgetVisuals(f, data, percent, isZone)
+function Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
   local r, g, b = GetCompletionColor(percent)
   f:SetBackdropColor(r, g, b, 0.85)
   local br, bg, bb = math.min(r * 2.2, 1), math.min(g * 2.2, 1), math.min(b * 2.2, 1)
@@ -58,7 +58,7 @@ function Widget.SetProgressWidgetVisuals(f, data, percent, isZone)
     end
   end
 end
-function Widget.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
+function Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   title:SetPoint("TOP", 0, -10)
   title:SetJustifyH("CENTER")
@@ -86,7 +86,7 @@ function Widget.AddProgressWidgetText(f, data, widgetSize, collected, total, per
   stats:SetText(string.format("%d / %d (%.1f%%)", collected, total, percent))
 end
 
-function Widget.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone)
+function Tile.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone)
   Tooltip.CreateTooltip(f, "ANCHOR_RIGHT", function()
     Tooltip.AddLine(Util.NodeDisplayName(data))
     Tooltip.AddProgress(GameTooltip, data, collected, total, percent, isZone, data)
@@ -136,7 +136,7 @@ local function AttachInfoIcon(parentFrame, eraNode)
 end
 
 -- Main: Create a progress widget for grid
-function Widget.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode)
+function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode)
     local f = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
     f:SetSize(widgetSize, 60)
     f:SetPoint("TOPLEFT", x * (widgetSize + padding), -y * (60 + padding))
@@ -161,10 +161,10 @@ function Widget.CreateProgressWidget(content, data, x, y, widgetSize, padding, i
 
     local nodeForProgress = attNode or data
     local collected, total, percent = Util.ResolveProgress(nodeForProgress)
-    Widget.SetProgressWidgetVisuals(f, data, percent, isZone)
-    Widget.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
-    Widget.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone)
-    Widget.AttachClickAndHoverUX(f, attNode or data)
+    Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
+    Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
+    Tile.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone)
+    Tile.AttachClickAndHoverUX(f, attNode or data)
     if (attNode and attNode.instanceID and attNode.eraKey) then
       AttachInfoIcon(f, attNode)
     end

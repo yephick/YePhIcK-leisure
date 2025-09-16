@@ -1,4 +1,4 @@
-﻿-- === ATT-GoGo Utility Functions ===
+﻿-- === Utility Functions ===
 
 -- all the global variables/tables/etc are in this file to ensure smooth access with no order dependencies
 
@@ -738,17 +738,15 @@ function Util.ResolveContextNode(verbose)
       -- (Fallback) contained-map cache if needed
       local byContained = Util.ATTFindInstanceByContainedMap(info.uiMapID)
       if byContained then return ret(byContained, "instance", "node.maps[]") end
+
+      -- Fallback: try direct instance lookup by the uiMapID (some classic instances map directly)
+      local byMap = Util.ATTSearchOne("mapID", info.uiMapID)
+      if byMap then return ret(byMap, "instance", "instanceMapID") end
     elseif info.giMapID then
       print("Inform YePhIcK: Instance by Blizzard savedInstanceID (Classic), info.giMapID = %d", info.giMapID)
       local bySaved = Util.ATTFindInstanceBySavedInstanceID(info.giMapID)
       if bySaved then return ret(bySaved, "instance", "savedInstanceID") end
     end
-  end
-
-  -- Fallback: try direct instance lookup by the uiMapID (some classic instances map directly)
-  if inInstance and info.uiMapID then
-    local byMap = Util.ATTSearchOne("mapID", info.uiMapID)
-    if byMap then return ret(byMap, "instance", "instanceMapID") end
   end
 
   -- Zone fallback by mapID
