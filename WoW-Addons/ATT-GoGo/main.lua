@@ -1,55 +1,55 @@
 ﻿local addonName, addonTable = ...
+ICON_FILE = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga"
 title = GetAddOnMetadata(addonName, "Title") or "UNKNOWN"
+CTITLE = "|cff00ff00[" .. title .. "]|r "
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 
 local function PrintStartup()
-    local version = GetAddOnMetadata(addonName, "Version") or ""
-    local author = GetAddOnMetadata(addonName, "Author") or "YePhIcK"
-    local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor") or "AI"
-    print("|cff00ff00[" .. title .. "]|r " .. version .. " |cffffff00Vibed by:|r " .. author .. " & " .. coauthor)
+    local version = GetAddOnMetadata(addonName, "Version")
+    local author = GetAddOnMetadata(addonName, "Author")
+    local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor")
+    print(CTITLE .. version .. " |cffffff00Vibed by:|r " .. author .. " & " .. coauthor)
 end
 
-local function OpenUncollectedForCurrentContext()
-    local node, info = Util.ResolveContextNode(true)
-    if not node then return end
+local function OpenUncollectedForHere()
+    local node, info = Util.ResolveContextNode()
 
     -- Always open for instances.
-    if info and info.kind == "instance" then
+    if info.kind == "instance" then
         -- Prefer the current-difficulty child group when available
-        ShowUncollectedPopup(Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID()))
+        ShowUncollectedPopup(Util.SelectDifficultyChild(node, ATT.GetCurrentDifficultyID()))
         return
     end
 
-    -- For zones: open for the best (top container) zone so we don't churn on sub-zones.
-    local mapID = info and info.uiMapID
-    local bestZone = ResolveBestZoneNode(mapID)
-    if bestZone then
-        ShowUncollectedPopup(bestZone)
+    -- For zones: open the cached map package (/attmini equivalent).
+    local root = Util.GetMapRoot(info.uiMapID)
+    if root then
+        ShowUncollectedPopup(root)
         return
     end
 
     -- No valid ATT zone for this map
-    print("|cffff0000[" .. title .. "]|r Nothing to show for this location.")
+    TP(node, info)
+    print(CTITLE .. "Nothing to show for this location.")
 end
 
 -- Refresh the Uncollected popup to the *current* context, if visible and allowed.
 -- @param force boolean (optional) - force rebuild even if current node didn't change
 local function RefreshUncollectedPopupForContextIfShown(force)
+    local popup = _G.ATTGoGoUncollectedPopup -- gets created in EnsurePopup() on first use
+    if not popup:IsShown() then return end
+
     if not (force or GetSetting("autoRefreshPopupOnZone", true)) then return end
 
-    local popup = _G.ATTGoGoUncollectedPopup
-    if not (popup and popup:IsShown()) then return end
-
-    local node, info = Util.ResolveContextNode(true)
-    if not node then return end
+    local node, info = Util.ResolveContextNode()
 
     local target
-    if info and info.kind == "instance" then
-        target = Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID())
+    if info.kind == "instance" then
+        target = Util.SelectDifficultyChild(node, ATT.GetCurrentDifficultyID())
     else
-        target = ResolveBestZoneNode(info and info.uiMapID)
+        target = Util.GetMapRoot(info.uiMapID)
     end
 
     if target and (force or popup.currentData ~= target) then
@@ -58,16 +58,14 @@ local function RefreshUncollectedPopupForContextIfShown(force)
 
 end
 
--- Tooltip header helper
 local function AddTooltipHeader(tooltip)
     tooltip:AddLine(title, 0, 1, 0)
-    tooltip:AddLine("Left-click: Toggle main window", 1, 1, 1)
+    tooltip:AddLine("Left-click: Open main grid window", 1, 1, 1)
     tooltip:AddLine("Right-click: Uncollected for current instance/zone", 1, 1, 1)
     tooltip:AddLine("Shift-click: Open options", 1, 1, 1)
-    tooltip:AddLine("Drag: Move icon", 1, 1, 1)
+    tooltip:AddLine("Left-drag: Move icon", 1, 1, 1)
 end
 
--- Entry point for tooltip
 local function ShowMinimapTooltip(tooltip)
     RequestRaidInfo()
     AddTooltipHeader(tooltip)
@@ -77,48 +75,28 @@ end
 local function SetupMinimapIcon()
     local ldb = LibStub:GetLibrary("LibDataBroker-1.1", true)
     local icon = LibStub:GetLibrary("LibDBIcon-1.0", true)
-    if ldb and icon then
-        local dataObj = ldb:NewDataObject(addonName, {
-            type = "data source",
-            text = title,
-            icon = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga",
-            OnClick = function(self, button)
-                -- Shift-click opens the Uncollected popup for current instance/zone
+    local dataObj = ldb:NewDataObject(addonName, {
+        type = "data source",
+        text = title,
+        icon = ICON_FILE,
+        OnClick = function(self, button)
+            if button == "LeftButton" then
                 if IsShiftKeyDown() then
-                    ShowATTGoGoOptions()
-                    return
-                end
-                if button == "RightButton" then
-                    OpenUncollectedForCurrentContext()
+                    OptionsUI.Show()
+                elseif IsAltKeyDown() then -- toggle LUA errors' window
+                    local en = GetCVarBool("scriptErrors") and "0" or "1"
+                    print(CTITLE .. "Setting scriptErrors to " .. en)
+                    SetCVar("scriptErrors", en)
                 else
-                    if ATTGoGoMainFrame:IsShown() then
-                        ATTGoGoMainFrame:Hide()
-                    else
-                        ShowATTGoGoMain()
-                    end
+                    ShowMainFrame()
                 end
-            end,
-            OnTooltipShow = ShowMinimapTooltip, -- References Minimap.lua's version
-        })
-        icon:Register(addonName, dataObj, ATTGoGoDB.minimap)
-        if ATTGoGoDB and ATTGoGoDB.minimap and ATTGoGoDB.minimap.hide then
-            icon:Hide(addonName)
-        else
-            icon:Show(addonName)
-        end
-    else
-        print("|cffff0000[" .. title .. "]|r Minimap icon libraries not found! Minimap icon will be unavailable.")
-    end
-end
-
-local function EnsurePopupIdFilters()
-    ATTGoGoCharDB = ATTGoGoCharDB or {}
-    ATTGoGoCharDB.popupIdFilters = ATTGoGoCharDB.popupIdFilters or {}
-    for k, v in pairs(COLLECTIBLE_ID_FIELDS) do
-        if ATTGoGoCharDB.popupIdFilters[k] == nil then
-            ATTGoGoCharDB.popupIdFilters[k] = v
-        end
-    end
+            elseif button == "RightButton" then
+                OpenUncollectedForHere()
+            end
+        end,
+        OnTooltipShow = ShowMinimapTooltip,
+    })
+    icon:Register(addonName, dataObj, ATTGoGoDB.minimap)
 end
 
 ----------------------------------------------------------------
@@ -128,24 +106,31 @@ local THRESHOLD   = 8
 local BATCH_DELAY = 0.40 -- wait this long after the *last* event
 
 local collectedBatch = { count = 0, timer = nil }
+local smallWaveTimer = nil     -- one-shot guard for the delayed save
 
 local function FlushCollectedBatch()
     local cnt = collectedBatch.count
     collectedBatch.count, collectedBatch.timer = 0, nil
 
-    Util.ClearProgressCache()
     if cnt >= THRESHOLD then
         -- Big wave => assume whole-DB refresh; rebuild everything
         SetupMainUI()           -- full rebuild of main frame widgets (also refreshes data)
     else
-        -- Small wave => current-context refresh only
-        Util.SaveCurrentContextProgress()
-        RefreshUncollectedPopupForContextIfShown(true)
+        -- Small wave => do a delayed context snapshot + popup/active-tab refresh
+        if smallWaveTimer then
+          smallWaveTimer:Cancel()
+        end
+        local delay = C_Map.GetBestMapForUnit("player") and 0 or 2 -- extra settle time before context snapshot, if needed
+        smallWaveTimer = C_Timer.NewTimer(delay, function()
+          smallWaveTimer = nil
+          Util.SaveCurrentContextProgress()
+          RefreshUncollectedPopupForContextIfShown(true)
+          RefreshActiveTab()
+        end)
     end
-    RefreshActiveTab()
 end
 
-local function OnThingCollected(node)
+local function OnThingCollected(data, etype)
     collectedBatch.count = collectedBatch.count + 1
 
     -- Silence-based debounce: restart a cancelable timer each event
@@ -155,134 +140,103 @@ local function OnThingCollected(node)
     collectedBatch.timer = C_Timer.NewTimer(BATCH_DELAY, FlushCollectedBatch)
 end
 
-frame:SetScript("OnEvent", function(self, event, arg1)
-    if arg1 ~= addonName then return end
-
-    -- Ensure DB tables exist
-    ATTGoGoDB = ATTGoGoDB or {}
-    ATTGoGoCharDB = ATTGoGoCharDB or {}
-    ATTGoGoDB.minimap = ATTGoGoDB.minimap or {}
-
-    Debug_Init()
-
-    EnsurePopupIdFilters()
-
-    PrintStartup()
-
-    SetupMinimapIcon()
-
-    -- === Wait for ATT ("All The Things") ===
-    local __ATT_INIT_DONE = false
-    local function WaitForATT()
-        -- Hard dependency check, once.
-        if not IsAddOnLoaded("AllTheThings") then
-            print("|cffff0000[" .. title .. "]|r All The Things is |cffff2222not loaded|r.")
-            print("→ Please enable or install 'All The Things' for " .. title .. " to function.")
-            return
-        end
-
-        -- Bind once to ATT's lifecycle.
-        local ATT_API = _G.AllTheThings or _G.ATTC
-        if not (ATT_API and ATT_API.AddEventHandler) then
-            print("|cffff0000[" .. title .. "]|r Could not hook ATT events (missing AddEventHandler).")
-            return
-        end
-
-        ATT_API.AddEventHandler("OnReady", function()
-            if __ATT_INIT_DONE then return end
-            __ATT_INIT_DONE = true
-
-            ATT = _G.AllTheThings
-            print("|cff00ff00[" .. title .. "]|r is ready")
-            SetupMainUI()
-
-            -- Auto-refresh Uncollected popup on zone/instance changes (if enabled)
-            local zoneWatcher = CreateFrame("Frame")
-            for _, ev in ipairs({
-                "PLAYER_ENTERING_WORLD",
-                "ZONE_CHANGED",
-                "ZONE_CHANGED_INDOORS",
-                "ZONE_CHANGED_NEW_AREA",
-                "UPDATE_INSTANCE_INFO",
-            }) do
-                zoneWatcher:RegisterEvent(ev)
-            end
-            zoneWatcher:SetScript("OnEvent", function()
-                -- slight delay so C_Map / GetInstanceInfo settle
-                C_Timer.After(0.15, RefreshUncollectedPopupForContextIfShown)
-            end)
-
-            local bossWatcher = CreateFrame("Frame")
-            bossWatcher:RegisterEvent("BOSS_KILL")
-            bossWatcher:RegisterEvent("ENCOUNTER_END")
-            bossWatcher:SetScript("OnEvent", OnThingCollected)
-
-            ATT_API.AddEventHandler("OnThingCollected", OnThingCollected)
-
---            ATT_API.AddEventHandler("OnInit",         function() print("ATT-GoGo: OnInit"); Util.ClearProgressCache() end) -- this one doesn't fire after initial load
---            ATT_API.AddEventHandler("OnRefresh",      function() print("ATT-GoGo: OnRefresh"); Util.ClearProgressCache() end)
-        end)
-    end
-
-    WaitForATT()
-end)
-
 local function DumpCurrentCtx()
-  local node, info = Util.ResolveContextNode(true)
-  if not node then
-    print("|cffff0000[" .. title .. "]|r dump: couldn't resolve context.")
-    return
-  end
+  local node, info = Util.ResolveContextNode()
 
   local target
-  if info and info.kind == "instance" then
-    target = Util.SelectDifficultyChild(node, AllTheThings.GetCurrentDifficultyID()) or node
+  if info.kind == "instance" then
+    target = Util.SelectDifficultyChild(node, ATT.GetCurrentDifficultyID()) or node
   else
-    local mapID = info and info.uiMapID
-    target = ResolveBestZoneNode(mapID) or node
+    target = Util.GetMapRoot(info.uiMapID) or node
   end
 
-  print("|cff00ff00[" .. title .. "]|r dump → " .. (Util.NodeDisplayName(target) or "?"))
+  print(CTITLE .. "dump → " .. (Util.NodeDisplayName(target) or "?"))
   DebugPrintNodePath(target)
-  DebugRecursive(target, ((info and info.kind) or "node"), 0, 3, false)
+  DebugRecursive(target, (info.kind or "node"), 0, 3, false)
 end
 
 SLASH_ATTGOGO1 = "/attgogo"
 SLASH_ATTGOGO2 = "/gogo"
+SLASH_ATTGOGO3 = "/agg"
 
-SlashCmdList["ATTGOGO"] = function(msg)
-    local raw = (msg or ""):trim()
-    local cmd, rest = raw:match("^(%S+)%s*(.*)$")
-    cmd = (cmd or ""):lower()
-
-    if cmd == "" or cmd == "?" or cmd == "help" or cmd == "h" then
-        print("|cffffff00[" .. title .. " Commands]|r")
-        print("/attgogo help        - Show this help")
-        print("/attgogo options     - Open the options window")
-        print("/attgogo show        - Show the main window")
-        print("/attgogo list        - Open Uncollected for current instance/zone")
-        print("/attgogo here        - Same as 'list'")
-        print("/attgogo dump        - Debug: path + recursive dump for current context")
-        print("/attgogo add <text>  - Append <text> into ATT-GoGo debug log")
-        print("alternatively you can use /gogo")
-        return
-    end
-
-    if cmd == "options" then ShowATTGoGoOptions() return end
-    if cmd == "show"    then ShowATTGoGoMain()    return end
-    if cmd == "dump"    then DumpCurrentCtx()     return end
-
-    -- open Uncollected popup for current context
-    if cmd == "list" or cmd == "here" then
-        OpenUncollectedForCurrentContext()
-        return
-    end
-
-    if cmd == "add" then
-        rest = "GUI action: " .. (rest or "<text to add to logs was not provided by user>")
-        DebugLog(rest)
-        return
-    end
-
-    print("|cffff0000[" .. title .. "]|r Unknown command. Type '/attgogo help' for options.")
+local function PrintSlashCmdHelp()
+    print(CTITLE .. "Commands")
+    print("/gogo help        - Show this help")
+    print("/gogo options     - Open the options window")
+    print("/gogo show        - Show the main window")
+    print("/gogo list        - Open Uncollected for current instance/zone")
+--    print("/gogo dump        - Debug: path + recursive dump for current context")
+--    print("/gogo add <text>  - Append <text> into ATT-GoGo debug log")
+    print("alternatively you can use /attgogo")
 end
+
+local function SetupSlashCmd()
+    SlashCmdList["ATTGOGO"] = function(msg)
+        local raw = (msg or ""):trim()
+        local cmd, rest = raw:match("^(%S+)%s*(.*)$")
+        cmd = (cmd or ""):lower()
+
+        local HELP    = { h = true, help = true, ["?"] = true, [""]  = true }
+        local OPTIONS = { o = true, options = true }
+        local SHOW    = { s = true, show = true }
+        local LIST    = { l = true, list = true }
+        local DUMP    = { d = true, dump = true }
+
+        if HELP[cmd]    then PrintSlashCmdHelp()        return end
+        if OPTIONS[cmd] then OptionsUI.Show()           return end
+        if SHOW[cmd]    then ShowMainFrame()            return end
+        if LIST[cmd]    then OpenUncollectedForHere()   return end
+        if DUMP[cmd]    then DumpCurrentCtx()           return end
+        if cmd == "add" then DebugLog(rest)             return end
+
+        print(CTITLE .. "Unknown command. Type '/attgogo help' for options.")
+    end
+end
+
+frame:SetScript("OnEvent", function(self, event, arg1)
+    if arg1 ~= addonName then return end
+
+    -- Ensure DB tables exist
+    ATTGoGoCharDB = ATTGoGoCharDB or {}
+    ATTGoGoDB = ATTGoGoDB or {}
+    ATTGoGoDB.minimap = ATTGoGoDB.minimap or { minimapPos = 128, hide = false }
+
+    PrintStartup()
+    Debug_Init()
+
+    -- === Wait for ATT ("All The Things") ===
+    ATT.AddEventHandler("OnReady", function()
+        SetupMainUI()
+        SetupMinimapIcon()
+        EnsurePreviewDock() -- create the preview dock before the uncollected list popup that uses it
+        EnsurePopup()
+        OptionsUI.Init()
+        SetupSlashCmd()
+
+        -- Auto-refresh Uncollected popup on zone/instance changes (if enabled)
+        local zoneWatcher = CreateFrame("Frame")
+        for _, ev in ipairs({
+            "PLAYER_ENTERING_WORLD",
+            "ZONE_CHANGED",
+            "ZONE_CHANGED_INDOORS",
+            "ZONE_CHANGED_NEW_AREA",
+            "UPDATE_INSTANCE_INFO",
+        }) do
+            zoneWatcher:RegisterEvent(ev)
+        end
+        zoneWatcher:SetScript("OnEvent", function()
+            -- slight delay so C_Map / GetInstanceInfo settle
+            C_Timer.After(0.15, RefreshUncollectedPopupForContextIfShown)
+        end)
+
+        local bossWatcher = CreateFrame("Frame")
+        bossWatcher:RegisterEvent("BOSS_KILL")
+        bossWatcher:RegisterEvent("ENCOUNTER_END")
+        bossWatcher:SetScript("OnEvent", OnThingCollected)
+
+        ATT.AddEventHandler("OnThingCollected", OnThingCollected)
+
+        print(CTITLE .. "is ready")
+    end)
+end)
+

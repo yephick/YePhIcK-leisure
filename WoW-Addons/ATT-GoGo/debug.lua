@@ -1,26 +1,143 @@
 ﻿-- debug.lua
 
--- Ensure debug table
-local function ensure()
-  ATTGoGoDB = ATTGoGoDB or {}
-  ATTGoGoDB.debug = ATTGoGoDB.debug or { log = {} }
-  return ATTGoGoDB.debug
-end
+-- Store per-callsite stats and first-hit stack
+-- TP_CACHE[site] = { count = <int>, stack = <string>, args = <string> }
+local TP_CACHE = {}
 
-local function push(line)
-  local d = ensure()
-  local L = d.log
-  local s = date("%H:%M:%S ") .. tostring(line)
-  if L[#L] == s then return end               -- drop consecutive dupes
-  L[#L+1] = s
-end
+-- test point
+function TP(...)
+  if GetSetting("TP_en", false) ~= true then return end
+  local level = 1 + 1               -- 1 = TP itself; +1 = its caller
+  local s = debugstack(level, 1, 0) -- example stack line: Interface\AddOns\ATT-GoGo\util.lua:91: in function ...
+  local file, line = s:match("([^\n]+):(%d+):")
+  local msg = ("%s:%d"):format((file or "?"), (tonumber(line) or -1))
+  if TP_CACHE[msg] then
+    TP_CACHE[msg].count = TP_CACHE[msg].count + 1
+  else
+    local n = select('#', ...)
+    local args = {...}
+    args.n = n -- preserve exact arg count (including trailing nils)
+    TP_CACHE[msg] = {
+      count = 1,
+      stack = debugstack(level, 12, 0),
+      args = args,
+    }
 
-
-function DebugLog(msg)
-    if msg then
-        push(msg)
+    for i = 1, n do
+      local v = select(i, ...)
+      if type(v) == "table" then
+        DebugRecursive(v, msg .. " - " .. tostring(v) .. " " .. tostring(i) .. ")", 0, 2, false)
+      end
     end
+
+    print("|cff00ff00[ATT-GoGo]|r " .. msg)
+    DebugLog(msg, "trace")
+  end
 end
+
+local function fmt_tbl(t)
+  local function val_str(v)
+    local tv = type(v)
+    if tv == "string" then
+      return v
+    elseif tv == "table" then
+      local n = 0; for _ in pairs(v) do n = n + 1 end
+      return string.format("%s (keys=%d)", tostring(v), n)    -- e.g., "table: 0x1234 (keys=5)"
+    else
+      return tostring(v)
+    end
+  end
+
+  local lines = {}
+  for k, v in pairs(t) do
+    lines[#lines+1] = string.format("{<%s> %s = %s}", type(v), tostring(k), val_str(v))
+  end
+
+  table.sort(lines) -- stable, human-friendly order
+  return table.concat(lines, ", ")
+end
+
+local function fmt_arg(a)
+  local t = type(a)
+  local tstr = "<" .. t .. ">: "
+  if t == "string" then
+    local s = a:gsub("\n", "\\n")
+    if #s > 200 then s = s:sub(1, 197) .. "..." end
+    return tstr .. s
+  elseif t == "table" then
+    local mt = getmetatable(a)
+    local name = mt and mt.__name
+    return tstr .. fmt_tbl(a)
+  else
+    return tstr .. tostring(a)
+  end
+end
+
+function TP_summary()
+  local entries = {}
+  for k, v in pairs(TP_CACHE) do
+    entries[#entries + 1] = { k, v } -- { site, { count=..., stack=... } }
+  end
+
+  if #entries < 1 then return end
+
+  table.sort(entries, function(a, b)
+    if a[2].count ~= b[2].count then
+      return a[2].count > b[2].count -- sort by count desc
+    else
+      return a[1] < b[1] -- tie-break by key asc
+    end
+  end)
+
+  DebugLog("Test Points summary:", "trace")
+  for i = 1, #entries do
+    local k, v = entries[i][1], entries[i][2]
+    DebugLog(("%7d  %s"):format(v.count, k), "trace")
+  end
+
+  DebugLog("Test Points first-hit stacks:", "trace")
+  for i = 1, #entries do
+    local k, v = entries[i][1], entries[i][2]
+    DebugLog(("-------- %7d  %s --------"):format(v.count, k), "trace")
+    local n = v.args.n
+    if n > 0 then
+      local parts = {}
+      for ai = 1, n do
+        parts[ai] = tostring(ai) .. ") " .. fmt_arg(v.args[ai])
+      end
+      DebugLog("args[" .. n .. "]: " .. table.concat(parts, ", "), "trace")
+    end
+    local s = v.stack or "(no stack captured)"
+    for line in s:gmatch("(.-)\n") do DebugLog(line, "trace") end
+  end
+end
+
+local plof = CreateFrame("Frame")
+plof:RegisterEvent("PLAYER_LOGOUT")
+plof:SetScript("OnEvent", TP_summary)
+
+
+-- Ensure debug table
+local function ensure(key)
+  ATTGoGoDB       = ATTGoGoDB or {}
+  local dbg       = ATTGoGoDB.debug or {}
+  ATTGoGoDB.debug = dbg
+
+  key = (type(key) == "string" and key ~= "" and key) or "log"
+  dbg[key] = dbg[key] or {}
+  return dbg[key]
+end
+
+local function push(line, key)
+  if line == nil then return end
+  local d = ensure(key)
+  local s = date("%H:%M:%S ") .. tostring(line)
+  if d[#d] == s then return end               -- drop consecutive dupes
+  d[#d+1] = s
+end
+
+function DebugLog(msg, key) push(msg, key) end
+function DebugTrace(msg)    push(msg, "trace") end
 
 -- strip WoW color codes and links; collapse noisy item links
 local function sanitize(label)
@@ -120,7 +237,9 @@ function DebugRecursive(tbl, tblname, depth, maxDepth, showFuncs)
         return
     end
     if depth > maxDepth then
-        DebugLog(string.rep("  ", depth) .. tblname .. " = {...} (max depth reached)")
+        local n = 0
+        for _ in pairs(tbl) do n = n + 1 end
+        DebugLog(string.rep("  ", depth) .. tblname .. " = {.} (max depth reached; has " .. n .. " children)")
         return
     end
     DebugLog(string.rep("  ", depth) .. tblname .. " {")
@@ -142,9 +261,9 @@ function DebugRecursive(tbl, tblname, depth, maxDepth, showFuncs)
                 end
             else
                 DebugLog(string.rep("  ", depth+1) .. "[" .. tostring(k) .. "] = " .. clamp_string(v))
-            end
         end
     end
+end
 
     DebugLog(string.rep("  ", depth) .. "}")
 end
@@ -230,7 +349,7 @@ end
 
 -- Call this on ADDON_LOADED or manually to start a new debug session
 function Debug_Init()
-  local d = ensure()
-  wipe(d.log)
+  wipe(ensure("log"))
+  wipe(ensure("trace"))
   DebugDump()
 end
