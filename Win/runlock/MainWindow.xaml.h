@@ -1,6 +1,10 @@
 #pragma once
 
 #include "MainWindow.g.h"
+#include <vector>
+#include <string>
+#include <winrt/Windows.Storage.h>
+#include <winrt/Windows.Storage.Streams.h>
 
 namespace winrt::runlock::implementation
 {
@@ -16,7 +20,7 @@ namespace winrt::runlock::implementation
         void Archive_Drop(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::DragEventArgs const& args);
         void PasswordRules_DragOver(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::DragEventArgs const& args);
         void PasswordRules_Drop(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::DragEventArgs const& args);
-        void GeneratePasswords_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
+        winrt::Windows::Foundation::IAsyncAction GeneratePasswords_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
         void CancelGenerate_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
         void UnlockButton_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
         void SaveProject_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
@@ -26,6 +30,16 @@ namespace winrt::runlock::implementation
     private:
         enum class UnlockState { Stopped, Running, Paused };
         UnlockState m_unlockState{ UnlockState::Stopped };
+        bool m_cancelGenerate{ false };
+
+        winrt::Windows::Foundation::IAsyncAction GeneratePasswordFileAsync(winrt::Windows::Storage::StorageFile const& file);
+        void GenerateRecursive(
+            std::vector<std::vector<std::wstring>> const& groups,
+            size_t index,
+            std::wstring& current,
+            int minLen,
+            int maxLen,
+            winrt::Windows::Storage::Streams::DataWriter& writer);
     };
 }
 
