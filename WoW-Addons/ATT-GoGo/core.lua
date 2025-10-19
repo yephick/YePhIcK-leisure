@@ -430,7 +430,7 @@ end
 function Util.FocusMapForNode(node)
   local mapID, x, y = Util.ExtractMapAndCoords(node)
   if not mapID and node.instanceID then
-    local inst = ATT.SearchForField("instanceID", node.instanceID)[1]
+    local inst = Util.ATTSearchOne("instanceID", node.instanceID)
     if inst then mapID, x, y = Util.ExtractMapAndCoords(inst) end
   end
   if not mapID and node.flightpathID and node.g then

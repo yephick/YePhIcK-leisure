@@ -199,6 +199,32 @@ local function RenderQuestTooltip(node, matched, owner)
     return line ~= nil
 end
 
+-- === World Map ping (brief highlight at coords) ===
+    -- /run PingMapAt(WorldMapFrame:GetMapID(), 0.5, 0.5)
+local PingFrame
+function PingMapAt(mapID, x, y)
+  if not (WorldMapFrame:IsShown() and WorldMapFrame:GetMapID() == mapID and x and y) then return end
+
+  local child = WorldMapFrame.ScrollContainer
+  if not PingFrame then
+    PingFrame = CreateFrame("Frame", nil, child)
+    PingFrame:SetSize(16, 16)
+    local tex = PingFrame:CreateTexture(nil, "OVERLAY")
+    tex:SetAllPoints()
+    tex:SetTexture("Interface\\Buttons\\WHITE8X8")
+    tex:SetVertexColor(1, 0, 0.2, 0.6)
+    tex:SetMask("Interface\\CharacterFrame\\TempPortraitAlphaMask") -- makes it a circle
+    PingFrame.tex = tex
+    PingFrame:Hide()
+  end
+
+  local w, h = child:GetSize()
+  PingFrame:ClearAllPoints()
+  PingFrame:SetPoint("CENTER", child, "TOPLEFT", x * w, -y * h)
+  PingFrame:Show()
+  C_Timer.After(0.75, function() PingFrame:Hide() end)
+end
+
 local requestedOnce = {}
 
 local function SetupNodeTooltip(btn, boundNode)
@@ -208,6 +234,15 @@ local function SetupNodeTooltip(btn, boundNode)
         currentTooltipNode = node
 
         ShowPreviewForNode(node)
+
+        -- brief attention ping near coords (MVP, with minimal fallbacks like click)
+        do
+          local m,x,y = Util.ExtractMapAndCoords(node)
+          if not m and node.instanceID then local inst = Util.ATTSearchOne("instanceID", node.instanceID); if inst then m,x,y=Util.ExtractMapAndCoords(inst) end end
+          if not m and node.flightpathID and node.g then for i=1, #node.g do m, x, y = Util.ExtractMapAndCoords(node.g[i]); if m then break end end end
+          if not m and node.parent then m, x, y = Util.ExtractMapAndCoords(node.parent) end
+          PingMapAt(m, x, y)
+        end
 
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:ClearLines()
