@@ -51,25 +51,27 @@ local function IsAllowedLeaf(node, activeKeys)
     return false, matched
 end
 
+local RETRIEVING = "Retrieving data"
+local function IsPlaceholderTitle(t)
+    return (not t) or t == "" or t == RETRIEVING or (t and t:lower():find("retrieving"))
+end
+
 -- Short display name for a collectible leaf
 local function NodeShortName(n)
-    if not n or type(n) ~= "table" then TP(n); return "Collectible" end
-    if n.text and n.text ~= "" then return n.text end
-    if n.name and n.name ~= "" then return n.name end
-    if n.itemID then
-        local nm = GetItemInfo(n.itemID); if nm then return nm end
-        return "Item " .. tostring(n.itemID)
-    end
-    if n.achievementID then
-        local _, nm = GetAchievementInfo(n.achievementID); if nm and nm ~= "" then return nm end
-        return "Achievement " .. tostring(n.achievementID)
-    end
-    if n.spellID then
-        local nm = GetSpellInfo(n.spellID); if nm then return nm end
-        return "Spell " .. tostring(n.spellID)
-    end
-    if n.questID then return C_QuestLog.GetQuestInfo(n.questID) end
+    local t = n and (n.text or n.name)
+    if t and t ~= "" and not IsPlaceholderTitle(t) then return t end
+    if n.itemID  then return GetItemInfo(n.itemID) or "Item " .. tostring(n.itemID) end
+    if n.spellID then return GetSpellInfo(n.spellID) or ("Spell " .. tostring(n.spellID)) end
+    if n.questID then return C_QuestLog.GetQuestInfo(n.questID) or TP(n.questID) or ("Quest " .. tostring(n.questID)) end
     if n.titleID then return "Title " .. tostring(n.titleID) end
+    if n.achievementID then
+        local _, nm = GetAchievementInfo(n.achievementID)
+        return nm or ("Achievement " .. tostring(n.achievementID))
+    end
+    if n.creatureID then
+        local c = ATT.SearchForObject("creatureID", n.creatureID, "field")
+        return c and c.name or TP(n.creatureID) or C_CreatureInfo.GetCreatureInfo(n.creatureID).name or ("Creature " .. tostring(n.creatureID))
+    end
     return "Collectible"
 end
 
@@ -306,13 +308,8 @@ end
 ------------------------------------------------------------
 -- Display text
 ------------------------------------------------------------
-local RETRIEVING = "Retrieving data"
-local function IsPlaceholderTitle(t)
-    return (not t) or t == "" or t == RETRIEVING or (t and t:lower():find("retrieving"))
-end
-
 local function ResolveDisplayForNode(node, label, btn)
-    local display = node.text or node.name
+    local display = NodeShortName(node)
 
     if node.itemID then
         local name, link = GetItemInfo(node.itemID)
@@ -325,9 +322,9 @@ local function ResolveDisplayForNode(node, label, btn)
             PrimeItemInfo(node.itemID)
         end
     elseif node.achievementID then
-        local link, name = GetAchievementInfo(node.achievementID)
-        if link or name and name ~= "" then
-            display = link or display or name
+        local _, name = GetAchievementInfo(node.achievementID)
+        if name and name ~= "" then
+            display = name
             Util.ApplyNodeIcon(btn, node)
         else
             display = display or ("Achievement " .. tostring(node.achievementID))
@@ -337,7 +334,7 @@ local function ResolveDisplayForNode(node, label, btn)
     elseif node.spellID then
         local link = GetSpellInfo(node.spellID)
         if link then
-            display = link or display
+            display = link
         else
             display = display or ("Spell " .. tostring(node.spellID))
             spellLabelsByID[node.spellID] = label
@@ -657,7 +654,7 @@ local function BuildNodeList(root)
     GatherUncollectedNodes(root, nodes, activeKeys)
 
     -- Transformations (in order)
-    --nodes = DedupQuests(nodes)
+--    nodes = DedupQuests(nodes)
     nodes = CollapseAchievementFamilies(root, nodes)
     nodes = DedupItemsByItemID(nodes)
     nodes = GroupItemsByVisualID(nodes)
@@ -997,7 +994,7 @@ local function RefreshPopup(data)
     uncollectedPopup.currentNodes = nodes
     PopulateUncollectedPopup(uncollectedPopup.scrollContent, nodes)
 
-    uncollectedPopup.title:SetText(Util.NodeDisplayName(data))
+    uncollectedPopup.title:SetText(string.format("%s (%d)", Util.NodeDisplayName(data), #nodes))
 end
 
 function ShowUncollectedPopup(data)
