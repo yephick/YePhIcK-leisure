@@ -150,7 +150,7 @@ function OptionsUI.BuildAccountGroup(parent)
   -- Instance icon on widgets
   local instIconCheckbox = AddCheckbox(
     g,
-    "Show instance icon on widgets",
+    "Show instance/zone icon on widgets",
     { "TOPLEFT", minimapCheckbox, "BOTTOMLEFT", 0, -6 },
     function() return GetSetting("showInstanceIconOnWidgets", true) end,
     function(v) SetSetting("showInstanceIconOnWidgets", v) end,

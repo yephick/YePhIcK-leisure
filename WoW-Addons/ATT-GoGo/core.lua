@@ -573,7 +573,7 @@ end
 --   - If neither is present, treat as not removed.
 function Util.IsNodeRemoved(n, nowRWP)
   if type(n) ~= "table" then TP(n, nowRWP); return false end
-  nowRWP = nowRWP or Util.CurrentClientRWP()
+  if not nowRWP then TP() end
 
   -- ATT unobtainable flag for removed content
   if n.u == 2 then return true end

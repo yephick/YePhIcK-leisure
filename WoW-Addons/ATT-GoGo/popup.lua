@@ -29,7 +29,8 @@ local function IsAllowedLeaf(node, activeKeys)
     if type(node) ~= "table" then TP(node); return false end
 
     if not GetSetting("includeRemoved", false) then
-        if Util.IsNodeRemoved(node) then
+        local nowRWP = Util.CurrentClientRWP()
+        if Util.IsNodeRemoved(node, nowRWP) then
             return false, {}   -- filtered out as 'removed'
         end
     end
@@ -396,9 +397,7 @@ local function GetNodeDisplayName(node)
     end
     if node.achievementID then
         local _, name = GetAchievementInfo(node.achievementID)
-        if name and name ~= "" then return name:lower() end
-        TP(node, display, node.achievementID, name)
-        return ("achievement %d"):format(node.achievementID)
+        return name and name ~= "" and name:lower() or TP(node, display, node.achievementID, name) or ("achievement %d"):format(node.achievementID)
     end
     if node.questID then return ("quest %d"):format(node.questID) end
     if node.mapID then return ("map %d"):format(node.mapID) end
@@ -629,14 +628,14 @@ local function SortPopupNodes(nodes)
     end)
 end
 
-local function GatherUncollectedNodes(node, out, keys, seen)
+local function GatherUncollectedNodes(nowRWP, node, out, keys, seen)
     if type(node) ~= "table" then TP(node); return end
 
     seen = seen or setmetatable({}, { __mode = "k" })
     if seen[node] then TP(seen[node]); return end
     seen[node] = true
 
-    local isAllowed, matched = IsAllowedLeaf(node, keys)
+    local isAllowed, matched = IsAllowedLeaf(node, keys, nowRWP)
     if isAllowed then
         out[#out + 1] = node
         passKeysByNode[node] = matched
@@ -646,7 +645,7 @@ local function GatherUncollectedNodes(node, out, keys, seen)
     if type(kids) == "table" then
         for i = 1, #kids do
             if type(kids[i]) == "table" and kids[i] ~= node.parent then
-                GatherUncollectedNodes(kids[i], out, keys, seen)
+                GatherUncollectedNodes(nowRWP, kids[i], out, keys, seen)
             end
         end
     end
@@ -661,7 +660,8 @@ local function BuildNodeList(root)
 
     -- Gather raw leaves per active filters
     local nodes = {}
-    GatherUncollectedNodes(root, nodes, activeKeys)
+    local nowRWP = Util.CurrentClientRWP()
+    GatherUncollectedNodes(nowRWP, root, nodes, activeKeys)
 
     -- Transformations (in order)
 --    nodes = DedupQuests(nodes)

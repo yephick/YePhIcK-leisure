@@ -153,15 +153,13 @@ function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZ
         insets = { left = 3, right = 3, top = 3, bottom = 3 }
     })
 
-    -- Instance icon in top-left if available
-    if GetSetting("showInstanceIconOnWidgets", true) and data.instanceID then
-        local instNode = ATT.SearchForField("instanceID", data.instanceID)[1]
-        if instNode then
-            local tex = f:CreateTexture(nil, "ARTWORK")
-            tex:SetSize(48, 48)
-            tex:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -6)
-            Util.ApplyNodeIcon(tex, instNode, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
-        end
+    -- Instance/Zone icon in top-left (same toggle)
+    if GetSetting("showInstanceIconOnWidgets", true) then
+        local node = data.instanceID and Util.ATTSearchOne("instanceID", data.instanceID) or Util.ATTSearchOne("mapID", data.mapID) or TP() or { icon = 134400 }
+        local tex = f:CreateTexture(nil, "ARTWORK")
+        tex:SetSize(48, 48)
+        tex:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -6)
+        Util.ApplyNodeIcon(tex, node, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
     end
 
     local collected, total, percent
@@ -225,6 +223,7 @@ end
 -- Prepare tab data based on type
 local function PrepareTabData(t, isZone, filterFunc, sortFunc)
     local entries = {}
+    local nowRWP = Util.CurrentClientRWP()
     if isZone then
         for i, child in pairs(t.node.g or {}) do
           local mid = tonumber(child and child.mapID)
@@ -232,7 +231,7 @@ local function PrepareTabData(t, isZone, filterFunc, sortFunc)
             local entry = {
               mapID   = mid,
               name    = child.text or child.name,
-              removed = Util.IsNodeRemoved(child),
+              removed = Util.IsNodeRemoved(child, nowRWP),
             }
             if (not filterFunc) or filterFunc(entry) then entries[#entries+1] = entry end
           end
