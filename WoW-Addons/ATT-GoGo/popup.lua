@@ -239,13 +239,23 @@ local function SetupNodeTooltip(btn, boundNode)
             local _, aName = GetAchievementInfo(aID)
             GameTooltip:AddLine(aName or ("Achievement " .. tostring(aID)), 1, 1, 1, true)
 
-            local any = false
-            local num = GetAchievementNumCriteria(aID) or 0
+            local num = GetAchievementNumCriteria(aID)
+
+            -- 1) Show meta-achievements (criteria type == ACHIEVEMENT(8)) with color by completion
             for i = 1, num do
-                local cName, _, cDone = GetAchievementCriteriaInfo(aID, i)
-                if not cDone and cName and cName ~= "" then
+                local cName, cType, _, _, _, _, _, assetID = GetAchievementCriteriaInfo(aID, i)
+                if cType == 8 and assetID then
+                    local _, subName, _, subCompleted = GetAchievementInfo(assetID)
+                    local r, g, b = (subCompleted and 0.25 or 0.65), (subCompleted and 1 or 0.65), (subCompleted and 0.25 or 0.65)
+                    GameTooltip:AddLine("• " .. (subName or cName or ("Achievement " .. assetID)), r, g, b, true)
+                end
+            end
+
+            -- 2) Also list any OTHER uncompleted criteria (non-meta) in plain white
+            for i = 1, num do
+                local cName, cType, cDone = GetAchievementCriteriaInfo(aID, i)
+                if cType ~= 8 and not cDone and cName and cName ~= "" then
                     GameTooltip:AddLine("• " .. cName, 1, 1, 1, true)
-                    any = true
                 end
             end
 
