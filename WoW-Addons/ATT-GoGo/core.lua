@@ -439,8 +439,8 @@ function Util.GetNodeIcon(node)
   -- Fallback: scan ONLY this node's fields for "*ID" and ask ATT for an icon
   for field, id in pairs(node) do
     if type(field) == "string" and field:sub(-2) == "ID" and id ~= nil then
-      local res = ATT.SearchForObject(field, id, "field")
-      if res.icon and res.icon ~= 0 and res.icon ~= "" then return res.icon end
+      local res = Util.ATTSearchOne(field, id)
+      if res.icon and res.icon ~= 0 and res.icon ~= "" then return res.icon else TP(res) end
     end
   end
 

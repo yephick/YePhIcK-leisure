@@ -63,15 +63,15 @@ local function NodeShortName(n)
     if t and t ~= "" and not IsPlaceholderTitle(t) then return t end
     if n.itemID  then return GetItemInfo(n.itemID) or "Item " .. tostring(n.itemID) end
     if n.spellID then return GetSpellInfo(n.spellID) or ("Spell " .. tostring(n.spellID)) end
-    if n.questID then return C_QuestLog.GetQuestInfo(n.questID) or TP(n.questID) or ("Quest " .. tostring(n.questID)) end
+    if n.questID then return C_QuestLog.GetQuestInfo(n.questID) or ("Quest " .. tostring(n.questID)) end
     if n.titleID then return "Title " .. tostring(n.titleID) end
     if n.achievementID then
         local _, nm = GetAchievementInfo(n.achievementID)
         return nm or ("Achievement " .. tostring(n.achievementID))
     end
     if n.creatureID then
-        local c = ATT.SearchForObject("creatureID", n.creatureID, "field")
-        return c and c.name or TP(n.creatureID) or C_CreatureInfo.GetCreatureInfo(n.creatureID).name or ("Creature " .. tostring(n.creatureID))
+        local c = Util.ATTSearchOne("creatureID", n.creatureID)
+        return c and c.name or TP(n.creatureID) or ("Creature " .. tostring(n.creatureID))
     end
     return "Collectible"
 end
@@ -179,7 +179,7 @@ end
 -- Returns a single-line compact description of quest objectives, or nil if unavailable.
 local function GetQuestObjectivesText(qid)
     local objs = C_QuestLog.GetQuestObjectives(qid)
-    if type(objs) ~= "table" then return ATT.SearchForObject("questID", qid, "field").name end
+    if type(objs) ~= "table" then return Util.ATTSearchOne("questID", qid).name end
     if #objs == 0 then return nil end
     local parts = {}
     for i = 1, #objs do
