@@ -129,6 +129,34 @@ function Util.ResolveMapProgress(mapID)
   return 0, 0, 0
 end
 
+-- === Favorites (account-wide) ===
+function Util.Favorites()
+  local t = GetSetting("favorites", nil)
+  if type(t) ~= "table" then t = {}; SetSetting("favorites", t) end
+  return t
+end
+
+function Util.IsFavoriteKey(key)
+  return Util.Favorites()[key] == true
+end
+
+function Util.ToggleFavoriteKey(key)
+  local t = Util.Favorites()
+  t[key] = not t[key] or nil
+  SetSetting("favorites", t)
+end
+
+-- Stable keys per widget
+function Util.FavKey(obj, isZone)
+  if isZone then
+    -- obj can be a tile/entry with mapID or a raw mapID
+    return "Z" .. tostring(obj.mapID or obj)
+  else
+    -- obj can be a tile data, entry with attNode, or an ATT node
+    return "I" .. tostring(Util.GetInstanceProgressKey(obj.attNode or obj))
+  end
+end
+
 -------------------------------------------------
 -- Progress resolution
 -------------------------------------------------

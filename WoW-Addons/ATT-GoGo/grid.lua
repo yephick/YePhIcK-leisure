@@ -141,7 +141,7 @@ local function AttachInfoIcon(parentFrame, eraNode)
 end
 
 -- Main: Create a progress widget for grid
-function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode)
+function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, onFavToggled)
     local f = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
     f:SetSize(widgetSize, 60)
     f:SetPoint("TOPLEFT", x * (widgetSize + padding), -y * (60 + padding))
@@ -178,6 +178,34 @@ function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZ
     if attNode.instanceID then
       AttachInfoIcon(f, attNode)
     end
+
+    -- bottom-right favorite toggle using Blizzard's Reputation star (2x2 atlas)
+    local favKey  = Util.FavKey(attNode or data, isZone)
+
+    local starBtn = CreateFrame("Button", nil, f)
+    starBtn:SetSize(16, 16)
+    starBtn:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 6)
+    starBtn:SetFrameLevel(f:GetFrameLevel() + 10)
+
+    local ICON_FAV = "Interface\\COMMON\\ReputationStar"
+    starBtn:SetNormalTexture(ICON_FAV)
+
+    local function paintStar()
+      local UV_ON  = {0,   0.5, 0,   0.5}  -- filled
+      local UV_OFF = {0.5, 1.0, 0,   0.5}  -- hollow
+      local on = Util.IsFavoriteKey(favKey)
+      local normal = starBtn:GetNormalTexture();
+      normal:SetAllPoints()
+      normal:SetTexCoord(unpack(on and UV_ON or UV_OFF))
+      normal:SetAlpha(on and 1 or 0.8)
+    end
+    paintStar()
+
+    starBtn:SetScript("OnClick", function()
+      Util.ToggleFavoriteKey(favKey)
+      paintStar()
+      onFavToggled()
+    end)
 
     return f
 end
@@ -246,15 +274,35 @@ local function PrepareTabData(t, isZone, filterFunc, sortFunc)
 end
 
 -- Create UI content for a tab
-local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, gridFunc)
+local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, gridFunc, sortFunc)
     local tabContent = CreateFrame("Frame", nil, mainFrame)
     tabContent:SetPoint("TOPLEFT", 5, contentY)
     tabContent:SetPoint("BOTTOMRIGHT", -5, 5)
     tabContent:Hide()
 
+    -- Favorites-first comparator (then fall back to caller sort, else name)
+    local function FavFirstSort(a, b)
+      local fa = Util.IsFavoriteKey(Util.FavKey(a, isZone))
+      local fb = Util.IsFavoriteKey(Util.FavKey(b, isZone))
+      if fa ~= fb then return fa end
+      if sortFunc then return sortFunc(a, b) end
+      return (a.name or "") < (b.name or "")
+    end
+
+    -- Initial favorites-first ordering
+    table.sort(entries, FavFirstSort)
+
+    -- Helper used by the star click to re-sort + refresh
+    local function ResortAndRefresh()
+      table.sort(entries, FavFirstSort)
+      if tabContent.scroll and tabContent.scroll.Refresh then
+        tabContent.scroll:Refresh()
+      end
+    end
+
     local tileFactory = function(content, data, x, y, widgetSize, padding)
-        local attNode = isZone and Util.GetMapRoot(data.mapID) or (data.attNode or data)
-        return Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode)
+      local attNode = isZone and Util.GetMapRoot(data.mapID) or (data.attNode or data)
+      return Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, ResortAndRefresh)
     end
 
     local scroll = gridFunc(tabContent, entries, tileFactory, 160, 10)
@@ -283,7 +331,7 @@ function Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, tabs, contentY,
             end
         end
 
-        CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, gridFunc)
+        CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, gridFunc, sortFunc)
     end
 end
 
