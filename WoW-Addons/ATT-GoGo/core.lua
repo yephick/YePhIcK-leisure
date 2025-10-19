@@ -138,8 +138,7 @@ function Util.ATTGetProgress(node)
   if node.collectible then
     return node.collected and 1 or 0, 1, node.collected and 100 or 0
   end
---  if node.progress == nil or node.total == nil then TP(node.name, node.text, node.progress, node.total, node.g, node.g[1]) end
---  if not node.progress or not node.total then TP(node.name, node.text, node.progress, node.total, node.g) end
+
   local c = node.progress or 0
   local t = node.total or 0
   if t > 0 then return c, t, (c / t) * 100 end
@@ -284,22 +283,9 @@ function Util.OpenAchievementByID(achievementID)
   end
 
   UIParentLoadAddOn("Blizzard_AchievementUI")
-  if OpenAchievementFrameToAchievement then
-    OpenAchievementFrameToAchievement(achievementID)
-    return
-  else
-    TP(OpenAchievementFrameToAchievement)
-  end
-  if AchievementFrame then
-    ShowUIPanel(AchievementFrame)
-    if AchievementFrame_SelectAchievement then
-      AchievementFrame_SelectAchievement(achievementID)
-    else
-      TP(AchievementFrame_SelectAchievement)
-    end
-  else
-    TP(AchievementFrame)
-  end
+  OpenAchievementFrameToAchievement(achievementID)
+  ShowUIPanel(AchievementFrame)
+  AchievementFrame_SelectAchievement(achievementID)
 end
 
 function Util.GetBestAchievementID(node)
@@ -381,7 +367,6 @@ end
 do
   local overlay
   function Util.HighlightWorldMapPulse()
-    if not WorldMapFrame then TP(); return end
     if not overlay then
       overlay = CreateFrame("Frame", nil, WorldMapFrame)
       overlay:SetAllPoints(WorldMapFrame)
@@ -467,7 +452,6 @@ function Util.GetNodeIcon(node)
   end
   TP(node, node.parent, p, hops)
 
-  TP()
   return nil
 end
 

@@ -716,7 +716,7 @@ local function AcquireRow(scrollContent, i)
             else
                 -- Fallback (may keep current gear)
                 TP(mdl, mdl.TryOn)
-                if DressUpItemLink and link then DressUpItemLink(link) else TP(DressUpItemLink, link) end
+                if link then DressUpItemLink(link) else TP(link) end
             end
             return
         end
@@ -939,7 +939,7 @@ local function PopulateUncollectedPopup(scrollContent, nodes)
 
     -- Preserve current scroll offset
     local scroll = scrollContent:GetParent()
-    local prevOffset = scroll:GetVerticalScroll() or TP() or 0
+    local prevOffset = scroll:GetVerticalScroll()
     scroll:UpdateScrollChildRect()
 
     local _, m = scroll.ScrollBar:GetMinMaxValues()
