@@ -99,6 +99,61 @@ local function SetupMinimapIcon()
     icon:Register(addonName, dataObj, ATTGoGoDB.minimap)
 end
 
+-- Trash-Combat 50s Warning (dungeons only, non-boss)
+local function SetupTrashCombatWarning()
+  local DELAY = 50
+  local f = CreateFrame("Frame")
+  local ticket = 0
+  local startedAt
+
+  local function InDungeon()
+    local inInst, typ = IsInInstance()
+    return inInst and typ == "party"
+  end
+
+  local function Cancel()
+    ticket = ticket + 1
+    startedAt = nil
+  end
+
+  local function Fire(myTicket)
+    if myTicket ~= ticket then return end
+    if InDungeon() and not IsEncounterInProgress() and UnitAffectingCombat("player") then
+      local elapsed = startedAt and (GetTime() - startedAt) or 0
+      RaidNotice_AddMessage(RaidWarningFrame, "Trash combat > 50s — empower at ~60s!", ChatTypeInfo.RAID_WARNING)
+      PlaySound(SOUNDKIT.RAID_WARNING, "Master")
+      print("|cffff7e40ATT-GoGo:|r Non-boss combat > 50s — finish or reset. (elapsed "..math.floor(elapsed).."s)")
+    end
+  end
+
+  local function Start()
+    if not InDungeon() or IsEncounterInProgress() then return end
+    startedAt = GetTime()
+    ticket = ticket + 1
+    local myTicket = ticket
+    C_Timer.After(DELAY, function() Fire(myTicket) end)
+  end
+
+  f:SetScript("OnEvent", function(_, e, ...)
+    if e == "PLAYER_REGEN_DISABLED" then
+      Start()
+    elseif e == "PLAYER_REGEN_ENABLED" or e == "ENCOUNTER_START" then
+      Cancel()
+    elseif e == "ENCOUNTER_END" then
+      if UnitAffectingCombat("player") then Start() end
+    elseif e == "PLAYER_ENTERING_WORLD" or e == "ZONE_CHANGED_NEW_AREA" then
+      Cancel()
+    end
+  end)
+
+  f:RegisterEvent("PLAYER_REGEN_DISABLED")
+  f:RegisterEvent("PLAYER_REGEN_ENABLED")
+  f:RegisterEvent("ENCOUNTER_START")
+  f:RegisterEvent("ENCOUNTER_END")
+  f:RegisterEvent("PLAYER_ENTERING_WORLD")
+  f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+end
+
 ----------------------------------------------------------------
 -- Batch ATT "OnThingCollected" updates (simple version)
 ----------------------------------------------------------------
@@ -212,6 +267,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         EnsurePopup()
         OptionsUI.Init()
         SetupSlashCmd()
+        SetupTrashCombatWarning()
 
         -- Auto-refresh Uncollected popup on zone/instance changes (if enabled)
         local zoneWatcher = CreateFrame("Frame")
