@@ -315,9 +315,9 @@ local function ResolveDisplayForNode(node, label, btn)
     local display = node.text or node.name
 
     if node.itemID then
-        local name = GetItemInfo(node.itemID)
-        if name then
-            display = display or name
+        local name, link = GetItemInfo(node.itemID)
+        if link or name then
+            display = link or display or name
             Util.ApplyNodeIcon(btn, node)
         else
             display = display or ("Item " .. tostring(node.itemID))
@@ -325,9 +325,9 @@ local function ResolveDisplayForNode(node, label, btn)
             PrimeItemInfo(node.itemID)
         end
     elseif node.achievementID then
-        local _, name = GetAchievementInfo(node.achievementID)
-        if name and name ~= "" then
-            display = display or name
+        local link, name = GetAchievementInfo(node.achievementID)
+        if link or name and name ~= "" then
+            display = link or display or name
             Util.ApplyNodeIcon(btn, node)
         else
             display = display or ("Achievement " .. tostring(node.achievementID))
@@ -335,9 +335,9 @@ local function ResolveDisplayForNode(node, label, btn)
             EnsureRetryTicker()
         end
     elseif node.spellID then
-        local name = GetSpellInfo(node.spellID)
-        if name then
-            display = display or name
+        local link = GetSpellInfo(node.spellID)
+        if link then
+            display = link or display
         else
             display = display or ("Spell " .. tostring(node.spellID))
             spellLabelsByID[node.spellID] = label
@@ -968,9 +968,9 @@ updater:SetScript("OnEvent", function(_, event, ...)
     local function SetItemLabel(itemID)
         local entry = itemLabelsByID[itemID]
         if not entry then return end
-        local name = GetItemInfo(itemID)
-        if name then
-            entry.label:SetText(name)
+        local name, link = GetItemInfo(itemID)
+        if link or name then
+            entry.label:SetText(link or name)
             if entry.btn then Util.ApplyNodeIcon(entry.btn, entry.btn.node) else TP() end
             itemLabelsByID[itemID] = nil
             requestedOnce[itemID] = nil
