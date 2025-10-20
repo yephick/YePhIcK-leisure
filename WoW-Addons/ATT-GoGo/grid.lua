@@ -17,18 +17,10 @@ function Tile.AttachClickAndHoverUX(f, data)
             ShowUncollectedPopup(data)
         end
     end)
-
-    -- Cache original border color once
-    local function cacheOriginals(self)
-        if not self.__origBorderColor then
-            local r, g, b, a = self:GetBackdropBorderColor()
-            self.__origBorderColor = { r, g, b, a }
-        end
-    end
+    f.__origBorderColor = { f:GetBackdropBorderColor() }
 
     -- Hover: gold border + hand cursor
     f:HookScript("OnEnter", function(self)
-        cacheOriginals(self)
         self:SetBackdropBorderColor(1, 0.82, 0, 1)   -- gold-ish
         SetCursor("Interface\\CURSOR\\Point")
     end)

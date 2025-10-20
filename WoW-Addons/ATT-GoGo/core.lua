@@ -291,24 +291,23 @@ function Util.SetTooltip(frame, anchor, title, ...)
 end
 
 -- Per-char popup id-filters (merge defaults)
-function Util.GetPopupIdFilters()
-  local t = ATTGoGoCharDB.popupIdFilters
-  if type(t) ~= "table" then TP(); t = {}; ATTGoGoCharDB.popupIdFilters = t end
+function Util.CanonicalizePopupIdFilters()
+    ATTGoGoCharDB.popupIdFilters = ATTGoGoCharDB.popupIdFilters or {}
+    local t = ATTGoGoCharDB.popupIdFilters
+    for k in pairs(t) do
+      if COLLECTIBLE_ID_FIELDS[k] == nil then t[k] = nil end
+    end
+    for k, def in pairs(COLLECTIBLE_ID_FIELDS) do
+      if t[k] == nil then t[k] = def and true or false end
+    end
+end
 
-  -- keep only known keys
-  for k in pairs(t) do
-    if COLLECTIBLE_ID_FIELDS[k] == nil then t[k] = nil end
-  end
-  -- merge defaults
-  for key, default in pairs(COLLECTIBLE_ID_FIELDS) do
-    if t[key] == nil then t[key] = bool(default) end
-  end
-  return t
+function Util.GetPopupIdFilters()
+  return ATTGoGoCharDB.popupIdFilters
 end
 
 function Util.SetPopupIdFilter(key, value)
-  local t = Util.GetPopupIdFilters()
-  t[key] = bool(value)
+  ATTGoGoCharDB.popupIdFilters[key] = bool(value)
 end
 
 -------------------------------------------------

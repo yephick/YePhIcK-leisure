@@ -261,6 +261,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
 
     -- === Wait for ATT ("All The Things") ===
     ATT.AddEventHandler("OnReady", function()
+        Util.CanonicalizePopupIdFilters()
         SetupMainUI()
         SetupMinimapIcon()
         EnsurePreviewDock() -- create the preview dock before the uncollected list popup that uses it

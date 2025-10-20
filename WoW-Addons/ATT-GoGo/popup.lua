@@ -516,7 +516,6 @@ local function CollectActiveKeys()
     local filters = Util.GetPopupIdFilters()
     local activeKeys = {}
     for k, enabled in pairs(filters) do
-    --for k, enabled in pairs(filters or {}) do
         if enabled then activeKeys[#activeKeys+1] = k end
     end
     return activeKeys
@@ -723,16 +722,10 @@ local function AcquireRow(scrollContent, i)
             ShowUIPanel(DressUpFrame) -- Bring up Blizzard's dressing room
 
             -- Model used by the dressing room across Classic/MoP UIs
-            local mdl = _G.DressUpModel or (DressUpFrame and (DressUpFrame.Model or DressUpFrame.DressUpModel))
-            if mdl and mdl.TryOn then
-                if mdl.SetUnit then mdl.SetUnit(mdl, "player") end
-                if GetSetting("dressUpNaked", true) and mdl.Undress then mdl.Undress(mdl) end
-                mdl.TryOn(mdl, link)
-            else
-                -- Fallback (may keep current gear)
-                TP(mdl, mdl.TryOn)
-                if link then DressUpItemLink(link) else TP(link) end
-            end
+            local mdl = DressUpFrame.DressUpModel
+            mdl.SetUnit(mdl, "player")
+            if GetSetting("dressUpNaked", true) then mdl.Undress(mdl) end
+            mdl.TryOn(mdl, link)
             return
         end
 
@@ -803,8 +796,7 @@ local function UpdateVirtualList()
     local content  = uncollectedPopup.scrollContent
 
     -- viewport
-    local viewH   = uncollectedPopup:GetHeight() - 45  -- header+padding
-    if viewH < ROW_HEIGHT then viewH = ROW_HEIGHT end
+    local viewH = math.max(uncollectedPopup:GetHeight() - 45, ROW_HEIGHT)
     local first   = math.floor(scroller:GetVerticalScroll() / ROW_HEIGHT) + 1
     local visible = math.ceil(viewH / ROW_HEIGHT) + ROW_BUFFER
 
