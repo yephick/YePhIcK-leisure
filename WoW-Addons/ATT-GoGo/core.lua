@@ -626,6 +626,15 @@ function Util.ResolveContextNode()
   return Util.ATTSearchOne("mapID", info.uiMapID) or TP(info) or sentinel, info
 end
 
+function Util.ResolvePopupTargetForCurrentContext()
+  local node, info = Util.ResolveContextNode()
+  if info.kind == "instance" then
+    return Util.SelectDifficultyChild(node, ATT.GetCurrentDifficultyID()) or node
+  else
+    return Util.GetMapRoot(info.uiMapID)
+  end
+end
+
 function IsInstanceLockedOut(instance)
   local sid
   if type(instance) == "table" then

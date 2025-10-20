@@ -14,25 +14,13 @@ local function PrintStartup()
 end
 
 local function OpenUncollectedForHere()
-    local node, info = Util.ResolveContextNode()
-
-    -- Always open for instances.
-    if info.kind == "instance" then
-        -- Prefer the current-difficulty child group when available
-        ShowUncollectedPopup(Util.SelectDifficultyChild(node, ATT.GetCurrentDifficultyID()))
-        return
+    local target = Util.ResolvePopupTargetForCurrentContext()
+    if target then
+        ShowUncollectedPopup(target)
+    else
+        TP(node, info)
+        print(CTITLE .. "Nothing to show for this location.")
     end
-
-    -- For zones: open the cached map package (/attmini equivalent).
-    local root = Util.GetMapRoot(info.uiMapID)
-    if root then
-        ShowUncollectedPopup(root)
-        return
-    end
-
-    -- No valid ATT zone for this map
-    TP(node, info)
-    print(CTITLE .. "Nothing to show for this location.")
 end
 
 -- Refresh the Uncollected popup to the *current* context, if visible and allowed.
@@ -43,15 +31,7 @@ local function RefreshUncollectedPopupForContextIfShown(force)
 
     if not (force or GetSetting("autoRefreshPopupOnZone", true)) then return end
 
-    local node, info = Util.ResolveContextNode()
-
-    local target
-    if info.kind == "instance" then
-        target = Util.SelectDifficultyChild(node, ATT.GetCurrentDifficultyID())
-    else
-        target = Util.GetMapRoot(info.uiMapID)
-    end
-
+    local target = Util.ResolvePopupTargetForCurrentContext()
     if target and (force or popup.currentData ~= target) then
       ShowUncollectedPopup(target)
     end
@@ -193,18 +173,10 @@ local function OnThingCollected(data, etype)
 end
 
 local function DumpCurrentCtx()
-  local node, info = Util.ResolveContextNode()
-
-  local target
-  if info.kind == "instance" then
-    target = Util.SelectDifficultyChild(node, ATT.GetCurrentDifficultyID()) or node
-  else
-    target = Util.GetMapRoot(info.uiMapID) or node
-  end
-
+  local target = Util.ResolvePopupTargetForCurrentContext()
   print(CTITLE .. "dump → " .. (Util.NodeDisplayName(target) or "?"))
   DebugPrintNodePath(target)
-  DebugRecursive(target, (info.kind or "node"), 0, 3, false)
+  DebugRecursive(target, target.name or target.text, 0, 3, false)
 end
 
 SLASH_ATTGOGO1 = "/attgogo"

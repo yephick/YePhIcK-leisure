@@ -226,7 +226,7 @@ local function PingMapAt(mapID, x, y)
   local child = WorldMapFrame.ScrollContainer
   if not PingFrame then
     PingFrame = CreateFrame("Frame", nil, child)
-    PingFrame:SetSize(16, 16)
+    PingFrame:SetSize(24, 24)
     local tex = PingFrame:CreateTexture(nil, "OVERLAY")
     tex:SetAllPoints()
     tex:SetTexture("Interface\\Buttons\\WHITE8X8")

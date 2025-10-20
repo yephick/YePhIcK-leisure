@@ -202,21 +202,7 @@ function OptionsUI.BuildAccountGroup(parent)
     { "TOPLEFT", nakedTryOnCheckbox, "BOTTOMLEFT", 0, -6 },
     function() return GetSetting("autoRefreshPopupOnZone", true) end,
     function(v) SetSetting("autoRefreshPopupOnZone", v) end,
-    function(v)
-      if v then
-        C_Timer.After(0.05, function()
-          local popup = _G.ATTGoGoUncollectedPopup
-          if popup:IsShown() then
-            local node, info = Util.ResolveContextNode()
-            if info.kind == "zone" then
-              local z = Util.GetMapRoot(info.uiMapID)
-              if z then ShowUncollectedPopup(z); return else TP(node, info) end
-            end
-            ShowUncollectedPopup(node)
-          end
-        end)
-      end
-    end,
+    nil,
     "If the Uncollected popup is open, retarget it when you change zone or enter an instance."
   )
   OptionsUI.controls.autoRefreshPopupCheckbox = autoRefreshPopupCheckbox
