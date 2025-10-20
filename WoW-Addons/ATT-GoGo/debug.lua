@@ -41,10 +41,11 @@ end
 -- Store per-callsite stats and first-hit stack
 -- TP_CACHE[site] = { count = <int>, stack = <string>, args = <string> }
 local TP_CACHE = {}
+local TP_EN = (GetSetting("TP_en", false) ~= true)
 
 -- test point
 function TP(...)
-  if GetSetting("TP_en", false) ~= true then return end
+  if not TP_EN then return end
   local level = 1 + 1               -- 1 = TP itself; +1 = its caller
   local s = debugstack(level, 1, 0) -- example stack line: Interface\AddOns\ATT-GoGo\util.lua:91: in function ...
   local file, line = s:match("([^\n]+):(%d+):")

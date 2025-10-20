@@ -254,7 +254,7 @@ local function SetupNodeTooltip(btn, boundNode)
 
         ShowPreviewForNode(node)
 
-        -- brief attention ping near coords (MVP, with minimal fallbacks like click)
+        -- brief attention ping on WorldMap near coords
         do
           local m,x,y = Util.ExtractMapAndCoords(node)
           if not m and node.instanceID then local inst = Util.ATTSearchOne("instanceID", node.instanceID); if inst then m,x,y=Util.ExtractMapAndCoords(inst) end end
@@ -290,23 +290,13 @@ local function SetupNodeTooltip(btn, boundNode)
             end
         elseif node.achievementID then
             local aID = node.achievementID
-            local _, aName = GetAchievementInfo(aID)
-            GameTooltip:AddLine(aName or ("Achievement " .. aID), 1, 1, 1, true)
-
-            local num = GetAchievementNumCriteria(aID)
-
-            local num = GetAchievementNumCriteria(aID)
-            for i = 1, num do
-                local cName, cType, cDone, _, _, _, _, assetID = GetAchievementCriteriaInfo(aID, i)
-                if cType == 8 and assetID then
-                    -- 1) Show meta-achievements (criteria type == ACHIEVEMENT(8)) with color by completion
-                    local _, subName, _, subCompleted = GetAchievementInfo(assetID)
-                    local r, g, b = (subCompleted and 0.25 or 0.65), (subCompleted and 1 or 0.65), (subCompleted and 0.25 or 0.65)
-                    GameTooltip:AddLine("• " .. (subName or cName or ("Achievement " .. assetID)), r, g, b, true)
-                elseif not cDone and cName and cName ~= "" then
-                    -- 2) Also list any OTHER uncompleted criteria (non-meta) in plain white
-                    GameTooltip:AddLine("• " .. cName, 1, 1, 1, true)
-                end
+            local link = GetAchievementLink(aID)
+            if link then
+                GameTooltip:SetHyperlink(link)
+            else
+                TP(aID)
+                local _, aName = GetAchievementInfo(aID)
+                GameTooltip:AddLine(aName or ("Achievement " .. aID), 1, 1, 1, true)
             end
 
             AddUncollectedChildrenToTooltip(node)
