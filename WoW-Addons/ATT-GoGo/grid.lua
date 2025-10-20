@@ -1,6 +1,7 @@
 ﻿local expansions = nil
 local tabButtons = {}
 local currentTab = nil
+local tabOrder = {}  -- tab ID lookup
 
 Tabs = {}
 Summary = {}
@@ -21,7 +22,7 @@ function Tile.AttachClickAndHoverUX(f, data)
     local function cacheOriginals(self)
         if not self.__origBorderColor then
             local r, g, b, a = self:GetBackdropBorderColor()
-            self.__origBorderColor = { r or 0, g or 0, b or 0, a or 1 }
+            self.__origBorderColor = { r, g, b, a }
         end
     end
 
@@ -52,8 +53,7 @@ function Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
   if not isZone then
     local isLocked, numDown, numBosses = IsInstanceLockedOut(data)
     if isLocked then
-      local allDead = numBosses and numBosses > 0 and numDown == numBosses
-      if allDead or numBosses == 0 then
+      if numBosses == 0 or numDown >= numBosses then
         f:SetBackdropColor(0.25, 0.25, 0.25, 0.35)
         f:SetBackdropBorderColor(0.22, 0.22, 0.22, 0.70)
         f:SetAlpha(0.40)
@@ -76,13 +76,11 @@ function Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, perce
     local isLocked, _, _, lockoutIndex = IsInstanceLockedOut(data)
     if isLocked then
       local reset = select(3, GetSavedInstanceInfo(lockoutIndex))
-      if reset > 0 then
-        local lockFS = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        lockFS:SetPoint("TOP", title, "BOTTOM", 0, -2)
-        lockFS:SetJustifyH("CENTER")
-        lockFS:SetWidth(widgetSize - 8)
-        lockFS:SetText("|cffffd200" .. Util.FormatTime(reset) .. "|r")
-      end
+      local lockFS = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      lockFS:SetPoint("TOP", title, "BOTTOM", 0, -2)
+      lockFS:SetJustifyH("CENTER")
+      lockFS:SetWidth(widgetSize - 8)
+      lockFS:SetText("|cffffd200" .. Util.FormatTime(reset) .. "|r")
     end
   end
   local stats = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -108,12 +106,10 @@ local DIFF_LABEL = {
 }
 
 local function AttachInfoIcon(parentFrame, eraNode)
-  if not (eraNode and eraNode.instanceID) then return end
-
   -- collect per-difficulty rows present in this era wrapper
   local diffs = {}
   for _, ch in ipairs(eraNode.g) do
-      local d = tonumber(ch.difficultyID)
+      local d = ch.difficultyID
       if d then
       local c, t = Util.ResolveProgress(ch)
       diffs[#diffs+1] = { d = d, c = c or 0, t = t or 0 }
@@ -254,7 +250,7 @@ local function PrepareTabData(t, isZone, filterFunc, sortFunc)
     local nowRWP = Util.CurrentClientRWP()
     if isZone then
         for i, child in pairs(t.node.g or {}) do
-          local mid = tonumber(child and child.mapID)
+          local mid = child and child.mapID
           if mid then
             local entry = {
               mapID   = mid,
@@ -363,11 +359,7 @@ function Tabs.InitialTabSelection(mainFrame, tabOrder, SelectTab)
     PanelTemplates_SetNumTabs(mainFrame, #tabOrder)
     local idxToSelect = ResolveSavedTabIndex(tabOrder)
     PanelTemplates_SetTab(mainFrame, idxToSelect)
-    if tabOrder[idxToSelect] then
-        SelectTab(tabOrder[idxToSelect])
-    else
-        TP(tabOrder, idxToSelect)
-    end
+    SelectTab(tabOrder[idxToSelect])
 end
 
 -- Create summary bar (background + text)
@@ -527,17 +519,14 @@ function ShowMainFrame()
     -- pick saved tab if available, else first
     local idxToSelect = ResolveSavedTabIndex(tabOrder)
     PanelTemplates_SetTab(mainFrame, idxToSelect)
-    if tabOrder[idxToSelect] then
-        SelectTab(tabOrder[idxToSelect])
-    end
+    SelectTab(tabOrder[idxToSelect])
 end
 
 -- Helper: Register mainFrame events for updates/redraws
 local function RegisterMainFrameEvents()
     mainFrame:RegisterEvent("UPDATE_INSTANCE_INFO")
     mainFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    mainFrame:RegisterEvent("PLAYER_LOGIN")
-    mainFrame:SetScript("OnEvent", function() RefreshActiveTab() end)
+    mainFrame:SetScript("OnEvent", RefreshActiveTab)
 end
 
 -- Public: refresh the currently-visible grid (used by Options)
@@ -546,8 +535,6 @@ function RefreshActiveTab()
 end
 
 function SetupMainUI()
-    tabOrder = {}  -- tab ID lookup
-
     RequestRaidInfo()
 
     CreateMainFrame()

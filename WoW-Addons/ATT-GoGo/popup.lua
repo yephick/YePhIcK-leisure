@@ -28,6 +28,10 @@ end
 local function IsAllowedLeaf(node, activeKeys)
     if type(node) ~= "table" then TP(node); return false end
 
+    if OPPOSITE_FACTION ~= 0 and node.r == OPPOSITE_FACTION then
+        return false, {}
+    end
+
     if not GetSetting("includeRemoved", false) then
         local nowRWP = Util.CurrentClientRWP()
         if Util.IsNodeRemoved(node, nowRWP) then
@@ -69,9 +73,9 @@ local function NodeShortName(n)
         local _, nm = GetAchievementInfo(n.achievementID)
         return nm or ("Achievement " .. tostring(n.achievementID))
     end
-    if n.creatureID then
-        local c = Util.ATTSearchOne("creatureID", n.creatureID)
-        return c and c.name or TP(n.creatureID) or ("Creature " .. tostring(n.creatureID))
+    if n.creatureID or n.npcID then
+        local c = Util.ATTSearchOne("creatureID", n.creatureID) or Util.ATTSearchOne("npcID", n.npcID)
+        return c and c.name or ("Creature " .. (tostring(n.creatureID) or tostring(n.npcID)))
     end
     return "Collectible"
 end
@@ -140,7 +144,7 @@ function EnsurePreviewDock()
 end
 
 local function ShowPreviewForNode(node)
-    if not (node and node.creatureID) then
+    if not (node and (node.creatureID or node.npcID)) then
         previewDock:Hide(); return
     end
     -- Only preview creatures on hover; items go to the Dressing Room via Ctrl+Click.
@@ -153,7 +157,7 @@ local function ShowPreviewForNode(node)
     dock:SetPoint("TOPRIGHT",    uncollectedPopup, "TOPLEFT",   -8, 0)
     dock:SetPoint("BOTTOMRIGHT", uncollectedPopup, "BOTTOMLEFT", -8, 0)
 
-    dock.model:SetCreature(node.creatureID)
+    dock.model:SetCreature(node.creatureID or node.npcID)
     dock:Show()
 end
 
@@ -200,7 +204,6 @@ local function RenderQuestTooltip(node, matched, owner)
 end
 
 -- === World Map ping (brief highlight at coords) ===
-    -- /run PingMapAt(WorldMapFrame:GetMapID(), 0.5, 0.5)
 local PingFrame
 function PingMapAt(mapID, x, y)
   if not (WorldMapFrame:IsShown() and WorldMapFrame:GetMapID() == mapID and x and y) then return end
@@ -258,7 +261,6 @@ local function SetupNodeTooltip(btn, boundNode)
                     C_Item.RequestLoadItemDataByID(id)
                 end
             end
---            GameTooltip:SetHyperlink("item:" .. node.itemID)
         elseif node.questID then
             local hadRealObjectives = RenderQuestTooltip(node, matched, self)
             if not hadRealObjectives then
@@ -297,7 +299,7 @@ local function SetupNodeTooltip(btn, boundNode)
 
             AddUncollectedChildrenToTooltip(node)
             AddMatchedIDLines(node, matched)
-        elseif node.creatureID then
+        elseif node.creatureID or node.npcID then
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
             AddUncollectedChildrenToTooltip(node)
             AddMatchedIDLines(node, matched)
@@ -400,7 +402,7 @@ end
 ------------------------------------------------------------
 local CATEGORY_ORDER = {
     "titleID","achievementID","flightpathID","explorationID","instanceID",
-    "visualID","creatureID","mapID","itemID","gearSetID","questID",
+    "visualID","creatureID","mapID","itemID","questID",
 }
 local CATEGORY_RANK = {}
 for i, key in ipairs(CATEGORY_ORDER) do CATEGORY_RANK[key] = i end
@@ -422,6 +424,7 @@ local function GetNodePrimaryKey(node)
     return "zz_fallback"
 end
 
+-- so far is only used in SortPopupNodes(nodes)
 local function GetNodeDisplayName(node)
     local display = node.text or node.name
     if display and display ~= "" then return display:lower() end
@@ -438,7 +441,6 @@ local function GetNodeDisplayName(node)
     if node.mapID then return ("map %d"):format(node.mapID) end
     if node.instanceID then return ("instance %d"):format(node.instanceID) end
     if node.visualID then return ("visual %d"):format(node.visualID) end
-    if node.gearSetID then return ("gear set %d"):format(node.gearSetID) end
     if node.flightpathID then return ("flight path %d"):format(node.flightpathID) end
     if node.explorationID then return ("exploration %d"):format(node.explorationID) end
     if node.titleID then return ("title %d"):format(node.titleID) end
@@ -453,19 +455,9 @@ local function GetNodeDisplayName(node)
     return (#ids > 0) and table.concat(ids, ", ") or TP(node.parent.parent, node.parent, node, node.g) or "zzz, item has no *ID fields"
 end
 
-local function QuestDedupKey(qid, node)
-    local title = node and node.name
-    if not title then TP(qid, node, node.name) end
-    if title and not IsPlaceholderTitle(title) then
-        return "title:" .. title:lower()
-    else
-        return "qid:" .. tostring(qid)
-    end
-end
-
 -- De-duplicate achievements by achievementID, preferring a richer "meta" node over stubs.
 local function DedupAchievements(nodes)
-    if type(nodes) ~= "table" or #nodes <= 1 then TP(nodes); return nodes end
+    if #nodes <= 1 then return nodes end
 
     local function richness(n)
         local r = 0
@@ -518,32 +510,10 @@ local function CollectActiveKeys()
     return activeKeys
 end
 
--- Quest de-duplication by stable title-or-qid key, keeping the highest qid when titles match
-local function DedupQuests(nodes)
-    if type(nodes) ~= "table" or #nodes <= 1 then return nodes end
-    local keep, byKey = {}, {}
-    for _, n in ipairs(nodes) do
-        if n.questID then
-            local key = QuestDedupKey(n.questID, n)
-            local prev = byKey[key]
-            if (not prev) or (tonumber(n.questID) or 0) > (tonumber(prev.questID) or 0) then
-                byKey[key] = n
-            end
-        else
-            keep[#keep+1] = n
-        end
-    end
-    for _, n in pairs(byKey) do keep[#keep+1] = n end
-    return keep
-end
-
 -- Collapse repeated achievement criteria into the parent achievement (controlled by per-character option)
 local function CollapseAchievementFamilies(root, nodes)
     local expandCriteria = GetCharSetting("expandAchievementCriteria", false)
-    if expandCriteria or type(nodes) ~= "table" or #nodes == 0 then
-        if type(nodes) ~= "table" then TP(root, nodes, #nodes) end
-        return nodes
-    end
+    if expandCriteria or #nodes == 0 then return nodes end
 
     -- 1) find families present in the leaf list
     local families, keep = {}, {}
@@ -587,22 +557,17 @@ end
 -- Map ATT/Item API qualities to a numeric rank (higher = better)
 local function QualityRank(node)
     -- Prefer ATT's 'q' (already numeric, 0..7). Fallback to GetItemInfo.
-    local q = tonumber(node and node.q)
-    if not q and node and node.itemID then
-        TP(node, node.g)
+    local q = node and node.q
+    if q == nil and node and node.itemID then
+        TP(node)
         q = select(3, GetItemInfo(node.itemID))
     end
-    q = tonumber(q) or 0
-    return q
+    return q or 0
 end
 
 -- Group items by visualID, keeping the first item among the highest-quality tier
 local function GroupItemsByVisualID(nodes)
-    local groupVisuals = GetCharSetting("groupByVisualID", true)
-    if (not groupVisuals) or type(nodes) ~= "table" or #nodes <= 1 then
-        if type(nodes) ~= "table" then TP(nodes) end
-        return nodes
-    end
+    if #nodes <= 1 or not GetCharSetting("groupByVisualID", true) then return nodes end
 
     local keep, byVid = {}, {}
     for _, n in ipairs(nodes) do
@@ -631,7 +596,7 @@ end
 
 -- De-duplicate items by itemID, keeping only the first seen.
 local function DedupItemsByItemID(nodes)
-    if type(nodes) ~= "table" or #nodes <= 1 then return nodes end
+    if #nodes <= 1 then return nodes end
     local seen, keep = {}, {}
     for i = 1, #nodes do
         local n = nodes[i]
@@ -651,14 +616,13 @@ end
 
 -- Final sort used by the popup
 local function SortPopupNodes(nodes)
-    local function getID(n) return tonumber(n.itemID or n.achievementID or n.questID or n.mapID or n.instanceID or n.visualID or n.gearSetID or n.titleID or 0) end
+    local function getID(n) return tonumber(n.itemID or n.achievementID or n.questID or n.mapID or n.instanceID or n.visualID or n.titleID or 0) end
     table.sort(nodes, function(a, b)
         local ak, bk = GetNodePrimaryKey(a), GetNodePrimaryKey(b)
         local ar, br = (CATEGORY_RANK[ak] or TP(ak) or 999), (CATEGORY_RANK[bk] or TP(bk) or 999)
         if ar ~= br then return ar < br end
-        if a.questID and b.questID then return a.name < b.name end
-        local an, bn = GetNodeDisplayName(a), GetNodeDisplayName(b)
-        if an ~= bn then return an < bn end
+--        local an, bn = GetNodeDisplayName(a), GetNodeDisplayName(b)
+--        if an ~= bn then return an < bn end
         return getID(a) < getID(b)
     end)
 end
@@ -689,9 +653,7 @@ end
 -- Build + filter list
 local function BuildNodeList(root)
     local activeKeys = CollectActiveKeys()
-    if #activeKeys == 0 then
-        return {}, activeKeys
-    end
+    if #activeKeys == 0 then return {}, activeKeys end
 
     -- Gather raw leaves per active filters
     local nodes = {}
@@ -699,7 +661,6 @@ local function BuildNodeList(root)
     GatherUncollectedNodes(nowRWP, root, nodes, activeKeys)
 
     -- Transformations (in order)
---    nodes = DedupQuests(nodes)
     nodes = CollapseAchievementFamilies(root, nodes)
     nodes = DedupItemsByItemID(nodes)
     nodes = GroupItemsByVisualID(nodes)
@@ -783,7 +744,7 @@ local function AcquireRow(scrollContent, i)
                 end
             end
             -- 3) POI rows that can focus the map
-            if node.mapID or node.explorationID or node.instanceID or node.flightpathID or node.questID or node.creatureID or node.itemID then
+            if node.mapID or node.explorationID or node.instanceID or node.flightpathID or node.questID or node.creatureID or node.npcID or node.itemID then
                 if Util.FocusMapForNode(node) then return end
             end
         end
@@ -962,8 +923,6 @@ end
 
 ------------------------------------------------------------
 -- Populate & refresh (virtualized)
-------------------------------------------------------------
--- Populate & refresh (virtualized)
 local function PopulateUncollectedPopup(scrollContent, nodes)
     -- Adjust content height / empty state
     if #nodes == 0 then
@@ -989,13 +948,6 @@ local function PopulateUncollectedPopup(scrollContent, nodes)
     scroll.ScrollBar:SetValue(prevOffset)
 
     UpdateVirtualList()
-end
-
-local function PopupLazyRefresh(self)
-    if not (self:IsShown() and self.currentData) then TP(self.currentData); return end
-    local nodes = BuildNodeList(self.currentData)
-    self.currentNodes = nodes or {}
-    PopulateUncollectedPopup(self.scrollContent, self.currentNodes)
 end
 
 ------------------------------------------------------------

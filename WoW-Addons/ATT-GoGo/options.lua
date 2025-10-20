@@ -13,8 +13,8 @@ OptionsUI = {
 local CreateGroup, AddCheckbox
 
 -- Frame factory --------------------------------------------------------------
-local function EnsureOptionsFrame()
-  if OptionsUI.frame then return OptionsUI.frame end
+local function SetupOptionsFrame()
+--  if OptionsUI.frame then return OptionsUI.frame end
   local f = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
   f:SetSize(300, 570)
   f:SetMovable(true)
@@ -260,7 +260,7 @@ function OptionsUI.BuildAccountGroup(parent)
       info.value = opt.value
       info.checked = (opt.value == Util.GetOtherToonsMode())
       info.func = function()
-        SetSetting("otherToonsInTooltips", tonumber(opt.value) or 1)
+        SetSetting("otherToonsInTooltips", opt.value or 1)
         SyncOtherToonsDropdown()
       end
       UIDropDownMenu_AddButton(info, level)
@@ -322,7 +322,7 @@ function OptionsUI.BuildFilterCheckboxes(group, anchor)
   filterLabel:SetText("Include in uncollected popup:")
 
   local ORDER = {
-    "achievementID", "creatureID", "explorationID", "flightpathID", "gearSetID",
+    "achievementID", "creatureID", "explorationID", "flightpathID",
     "itemID", "mapID", "questID", "titleID", "visualID",
   }
 
@@ -357,14 +357,14 @@ end
 
 -- Public entry points --------------------------------------------------------
 function OptionsUI.Init()
-  local f = EnsureOptionsFrame()
+  local f = SetupOptionsFrame()
   OptionsUI.BuildAccountGroup(f)
   OptionsUI.BuildPerCharGroup(f)
   return f
 end
 
 function OptionsUI.Show()
-  local f = EnsureOptionsFrame()
+  local f = OptionsUI.frame
   Util.LoadFramePosition(f, "optionsWindowPos", "LEFT", 92, 80)
   f:SetFrameStrata("DIALOG")
   f:Show()
