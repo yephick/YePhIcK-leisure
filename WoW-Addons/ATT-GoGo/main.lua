@@ -58,17 +58,13 @@ local function RefreshUncollectedPopupForContextIfShown(force)
 
 end
 
-local function AddTooltipHeader(tooltip)
+local function ShowMinimapTooltip(tooltip)
+    RequestRaidInfo()
     tooltip:AddLine(title, 0, 1, 0)
     tooltip:AddLine("Left-click: Open main grid window", 1, 1, 1)
     tooltip:AddLine("Right-click: Uncollected for current instance/zone", 1, 1, 1)
     tooltip:AddLine("Shift-click: Open options", 1, 1, 1)
     tooltip:AddLine("Left-drag: Move icon", 1, 1, 1)
-end
-
-local function ShowMinimapTooltip(tooltip)
-    RequestRaidInfo()
-    AddTooltipHeader(tooltip)
     Tooltip.AddContextProgressTo(tooltip)
 end
 
@@ -157,7 +153,7 @@ end
 ----------------------------------------------------------------
 -- Batch ATT "OnThingCollected" updates (simple version)
 ----------------------------------------------------------------
-local THRESHOLD   = 8
+local THRESHOLD   = 2
 local BATCH_DELAY = 0.40 -- wait this long after the *last* event
 
 local collectedBatch = { count = 0, timer = nil }
@@ -173,14 +169,15 @@ local function FlushCollectedBatch()
     else
         -- Small wave => do a delayed context snapshot + popup/active-tab refresh
         if smallWaveTimer then
-          smallWaveTimer:Cancel()
+            smallWaveTimer:Cancel()
         end
+        if not C_Map.GetBestMapForUnit("player") then TP("no *location* available for player") end
         local delay = C_Map.GetBestMapForUnit("player") and 0 or 2 -- extra settle time before context snapshot, if needed
         smallWaveTimer = C_Timer.NewTimer(delay, function()
-          smallWaveTimer = nil
-          Util.SaveCurrentContextProgress()
-          RefreshUncollectedPopupForContextIfShown(true)
-          RefreshActiveTab()
+            smallWaveTimer = nil
+            Util.SaveCurrentContextProgress()
+            RefreshUncollectedPopupForContextIfShown(true)
+            RefreshActiveTab()
         end)
     end
 end

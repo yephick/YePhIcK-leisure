@@ -26,12 +26,8 @@ function Tile.AttachClickAndHoverUX(f, data)
     end)
 
     f:HookScript("OnLeave", function(self)
-        if self.__origBorderColor then
-            self:SetBackdropBorderColor(
-                self.__origBorderColor[1], self.__origBorderColor[2],
-                self.__origBorderColor[3], self.__origBorderColor[4]
-            )
-        end
+        self:SetBackdropBorderColor( self.__origBorderColor[1], self.__origBorderColor[2],
+                                     self.__origBorderColor[3], self.__origBorderColor[4] )
         ResetCursor()
     end)
 end
@@ -86,7 +82,7 @@ end
 function Tile.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone, ownerNode)
   Tooltip.CreateTooltip(f, "ANCHOR_RIGHT", function()
     Tooltip.AddLine(Util.NodeDisplayName(data))
-    Tooltip.AddProgress(GameTooltip, data, collected, total, percent, isZone, ownerNode or data)
+    Tooltip.AddProgress(GameTooltip, data, collected, total, percent, isZone, ownerNode)
   end)
 end
 
@@ -103,8 +99,8 @@ local function AttachInfoIcon(parentFrame, eraNode)
   for _, ch in ipairs(eraNode.g) do
       local d = ch.difficultyID
       if d then
-      local c, t = Util.ResolveProgress(ch)
-      diffs[#diffs+1] = { d = d, c = c or 0, t = t or 0 }
+          local c, t = Util.ATTGetProgress(ch)
+          diffs[#diffs+1] = { d = d, c = c, t = t }
       end
   end
   if #diffs == 0 then return end
@@ -122,7 +118,7 @@ local function AttachInfoIcon(parentFrame, eraNode)
     table.sort(diffs, function(a,b) return (a.d or 0) < (b.d or 0) end)
     for _, r in ipairs(diffs) do
       local p = (r.t > 0) and (r.c / r.t * 100) or 0
-      local tag = DIFF_LABEL[r.d] or tostring(r.d)
+      local tag = DIFF_LABEL[r.d] or r.d
       GameTooltip:AddLine(string.format("• %s — %d/%d (%.1f%%)", tag, r.c, r.t, p), 0.9, 0.9, 0.9)
     end
   end)
@@ -154,7 +150,7 @@ function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZ
     if isZone then
       collected, total, percent = Util.ResolveMapProgress(data.mapID)
     else
-      collected, total, percent = Util.ResolveProgress(attNode or data)
+      collected, total, percent = Util.ATTGetProgress(attNode or data)
     end
     Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
     Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
@@ -239,7 +235,6 @@ end
 -- Prepare tab data based on type
 local function PrepareTabData(t, isZone, filterFunc, sortFunc)
     local entries = {}
-    local nowRWP = Util.CurrentClientRWP()
     if isZone then
         for i, child in pairs(t.node.g or {}) do
           local mid = child and child.mapID
@@ -247,7 +242,7 @@ local function PrepareTabData(t, isZone, filterFunc, sortFunc)
             local entry = {
               mapID   = mid,
               name    = child.text or child.name,
-              removed = Util.IsNodeRemoved(child, nowRWP),
+              removed = Util.IsNodeRemoved(child),
             }
             if (not filterFunc) or filterFunc(entry) then entries[#entries+1] = entry end
           end
@@ -283,9 +278,7 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
     -- Helper used by the star click to re-sort + refresh
     local function ResortAndRefresh()
       table.sort(entries, FavFirstSort)
-      if tabContent.scroll and tabContent.scroll.Refresh then
-        tabContent.scroll:Refresh()
-      end
+      tabContent.scroll:Refresh()
     end
 
     local tileFactory = function(content, data, x, y, widgetSize, padding)
@@ -390,7 +383,7 @@ end
 
 -- For zone tabs
 function Summary.UpdateZone(mainFrame, tab, tabButtons)
-    local collected, total = Util.ResolveProgress(tab.zoneData)
+    local collected, total = Util.ATTGetProgress(tab.zoneData)
     Summary.Update(mainFrame, collected, total)
 end
 
@@ -521,13 +514,14 @@ local function RegisterMainFrameEvents()
     mainFrame:SetScript("OnEvent", RefreshActiveTab)
 end
 
--- Public: refresh the currently-visible grid (used by Options)
+-- refresh the currently-visible grid
 function RefreshActiveTab()
     if currentTab and currentTab:IsShown() then currentTab:Refresh() end
 end
 
 function SetupMainUI()
     RequestRaidInfo()
+    Util.ClearATTSearchCache()
 
     CreateMainFrame()
     CreateOptionsButton()

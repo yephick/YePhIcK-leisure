@@ -335,7 +335,7 @@ function OptionsUI.BuildFilterCheckboxes(group, anchor)
     cb:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", col*colWidth, -6 - row*rowHeight)
     cb.Text:SetText(COLLECTIBLE_ID_LABELS[key] or key)
     cb.Text:SetPoint("LEFT", cb, "RIGHT", 4, 0)
-    cb:SetChecked(Util.GetPopupIdFilters()[key])
+    cb:SetChecked(ATTGoGoCharDB.popupIdFilters[key])
     cb:SetScript("OnClick", function(self)
       Util.SetPopupIdFilter(self.key, bool(self:GetChecked()))
       local popup = _G.ATTGoGoUncollectedPopup
@@ -349,7 +349,7 @@ function OptionsUI.BuildFilterCheckboxes(group, anchor)
 end
 
 function OptionsUI.UpdateFilterCheckboxes()
-  local effective = Util.GetPopupIdFilters()
+  local effective = ATTGoGoCharDB.popupIdFilters
   for key, cb in pairs(OptionsUI.filterCheckboxes) do
     cb:SetChecked(effective[key])
   end

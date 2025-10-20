@@ -25,6 +25,14 @@ local function SafeNodeName(n)
     return n.text or n.name or _G.UNKNOWN or "?"
 end
 
+-- cached faction result
+local FACTION = Util.PlayerFactionID()
+local OPPOSITE_FACTION = (FACTION == 1 and 2) or (FACTION == 2 and 1) or 0
+
+-- Cached player class ID (ATT uses: 1=Warrior, 2=Paladin, 3=Hunter, 4=Rogue, 5=Priest,
+-- 6=Death Knight, 7=Shaman, 8=Mage, 9=Warlock, 10=Monk, 11=Druid, 12=Demon Hunter, 13=Evoker)
+local CLASS_ID = select(3, UnitClass("player"))
+
 local function IsAllowedLeaf(node, activeKeys)
     if type(node) ~= "table" then TP(node); return false end
 
@@ -45,8 +53,7 @@ local function IsAllowedLeaf(node, activeKeys)
     end
 
     if not GetSetting("includeRemoved", false) then
-        local nowRWP = Util.CurrentClientRWP()
-        if Util.IsNodeRemoved(node, nowRWP) then
+        if Util.IsNodeRemoved(node) then
             return false, {}   -- filtered out as 'removed'
         end
     end
@@ -76,18 +83,18 @@ end
 -- Short display name for a collectible leaf
 local function NodeShortName(n)
     local t = n and (n.text or n.name)
-    if t and t ~= "" and not IsPlaceholderTitle(t) then return t end
-    if n.itemID  then return GetItemInfo(n.itemID) or "Item " .. tostring(n.itemID) end
-    if n.spellID then return GetSpellInfo(n.spellID) or ("Spell " .. tostring(n.spellID)) end
-    if n.questID then return C_QuestLog.GetQuestInfo(n.questID) or ("Quest " .. tostring(n.questID)) end
-    if n.titleID then return "Title " .. tostring(n.titleID) end
+    if not IsPlaceholderTitle(t) then return t end
+    if n.itemID  then return GetItemInfo(n.itemID) or "Item " .. n.itemID end
+    if n.spellID then return GetSpellInfo(n.spellID) or ("Spell " .. n.spellID) end
+    if n.questID then return C_QuestLog.GetQuestInfo(n.questID) or ("Quest " .. n.questID) end
+    if n.titleID then return "Title " .. n.titleID end
     if n.achievementID then
         local _, nm = GetAchievementInfo(n.achievementID)
-        return nm or ("Achievement " .. tostring(n.achievementID))
+        return nm or ("Achievement " .. n.achievementID)
     end
     if n.creatureID or n.npcID then
         local c = Util.ATTSearchOne("creatureID", n.creatureID) or Util.ATTSearchOne("npcID", n.npcID)
-        return c and c.name or ("Creature " .. (tostring(n.creatureID) or tostring(n.npcID)))
+        return c and c.name or ("Creature " .. (n.creatureID or n.npcID))
     end
     return "Collectible"
 end
@@ -101,7 +108,7 @@ local function AddMatchedIDLines(node, matchedKeys)
     for _, k in ipairs(matchedKeys) do
         local v = node[k]
         local label = COLLECTIBLE_ID_LABELS[k] or k
-        GameTooltip:AddLine(label .. " ID: " .. tostring(v), 1, 1, 1)
+        GameTooltip:AddLine(label .. " ID: " .. v, 1, 1, 1)
     end
     return true
 end
@@ -156,21 +163,18 @@ function EnsurePreviewDock()
 end
 
 local function ShowPreviewForNode(node)
-    if not (node and (node.creatureID or node.npcID)) then
-        previewDock:Hide(); return
-    end
     -- Only preview creatures on hover; items go to the Dressing Room via Ctrl+Click.
-    if not GetSetting("showHover3DPreview", true) then
+    if not (node and (node.creatureID or node.npcID)) or not GetSetting("showHover3DPreview", true) then
         previewDock:Hide(); return
     end
 
-    local dock = EnsurePreviewDock()
-    dock:ClearAllPoints()
-    dock:SetPoint("TOPRIGHT",    uncollectedPopup, "TOPLEFT",   -8, 0)
-    dock:SetPoint("BOTTOMRIGHT", uncollectedPopup, "BOTTOMLEFT", -8, 0)
+--    local dock = EnsurePreviewDock()
+    previewDock:ClearAllPoints()
+    previewDock:SetPoint("TOPRIGHT",    uncollectedPopup, "TOPLEFT",   -8, 0)
+    previewDock:SetPoint("BOTTOMRIGHT", uncollectedPopup, "BOTTOMLEFT", -8, 0)
 
-    dock.model:SetCreature(node.creatureID or node.npcID)
-    dock:Show()
+    previewDock.model:SetCreature(node.creatureID or node.npcID)
+    previewDock:Show()
 end
 
 -- List up to 31 dependent uncollected child collectibles on the tooltip (sub-achievements, item rewards, etc.)
@@ -287,24 +291,20 @@ local function SetupNodeTooltip(btn, boundNode)
         elseif node.achievementID then
             local aID = node.achievementID
             local _, aName = GetAchievementInfo(aID)
-            GameTooltip:AddLine(aName or ("Achievement " .. tostring(aID)), 1, 1, 1, true)
+            GameTooltip:AddLine(aName or ("Achievement " .. aID), 1, 1, 1, true)
 
             local num = GetAchievementNumCriteria(aID)
 
-            -- 1) Show meta-achievements (criteria type == ACHIEVEMENT(8)) with color by completion
+            local num = GetAchievementNumCriteria(aID)
             for i = 1, num do
-                local cName, cType, _, _, _, _, _, assetID = GetAchievementCriteriaInfo(aID, i)
+                local cName, cType, cDone, _, _, _, _, assetID = GetAchievementCriteriaInfo(aID, i)
                 if cType == 8 and assetID then
+                    -- 1) Show meta-achievements (criteria type == ACHIEVEMENT(8)) with color by completion
                     local _, subName, _, subCompleted = GetAchievementInfo(assetID)
                     local r, g, b = (subCompleted and 0.25 or 0.65), (subCompleted and 1 or 0.65), (subCompleted and 0.25 or 0.65)
                     GameTooltip:AddLine("• " .. (subName or cName or ("Achievement " .. assetID)), r, g, b, true)
-                end
-            end
-
-            -- 2) Also list any OTHER uncompleted criteria (non-meta) in plain white
-            for i = 1, num do
-                local cName, cType, cDone = GetAchievementCriteriaInfo(aID, i)
-                if cType ~= 8 and not cDone and cName and cName ~= "" then
+                elseif not cDone and cName and cName ~= "" then
+                    -- 2) Also list any OTHER uncompleted criteria (non-meta) in plain white
                     GameTooltip:AddLine("• " .. cName, 1, 1, 1, true)
                 end
             end
@@ -377,7 +377,7 @@ local function ResolveDisplayForNode(node, label, btn)
             display = link or display or name
             Util.ApplyNodeIcon(btn, node)
         else
-            display = display or ("Item " .. tostring(node.itemID))
+            display = display or ("Item " .. node.itemID)
             itemLabelsByID[node.itemID] = { label = label, btn = btn }
             PrimeItemInfo(node.itemID)
         end
@@ -387,7 +387,7 @@ local function ResolveDisplayForNode(node, label, btn)
             display = name
             Util.ApplyNodeIcon(btn, node)
         else
-            display = display or ("Achievement " .. tostring(node.achievementID))
+            display = display or ("Achievement " .. node.achievementID)
             achLabelsByID[node.achievementID] = label
             EnsureRetryTicker()
         end
@@ -396,13 +396,13 @@ local function ResolveDisplayForNode(node, label, btn)
         if link then
             display = link
         else
-            display = display or ("Spell " .. tostring(node.spellID))
+            display = display or ("Spell " .. node.spellID)
             spellLabelsByID[node.spellID] = label
             EnsureRetryTicker()
         end
     elseif node.questID then
         local qid = node.questID
-        local qname = (node.name and not IsPlaceholderTitle(node.name)) and node.name or C_QuestLog.GetQuestInfo(qid) or ("Quest " .. tostring(qid))
+        local qname = (node.name and not IsPlaceholderTitle(node.name)) and node.name or C_QuestLog.GetQuestInfo(qid) or ("Quest " .. qid)
         display = qname
     end
 
@@ -460,7 +460,7 @@ local function GetNodeDisplayName(node)
     local ids = {}
     for k, v in pairs(node) do
         if type(k) == "string" and k:match("ID$") and v ~= nil and v ~= "" then
-            ids[#ids+1] = k .. "=" .. tostring(v)
+            ids[#ids+1] = k .. "=" .. v
         end
     end
     table.sort(ids)
@@ -513,7 +513,7 @@ end
 
 -- Build active filter key list from current popup settings
 local function CollectActiveKeys()
-    local filters = Util.GetPopupIdFilters()
+    local filters = ATTGoGoCharDB.popupIdFilters
     local activeKeys = {}
     for k, enabled in pairs(filters) do
         if enabled then activeKeys[#activeKeys+1] = k end
@@ -638,14 +638,14 @@ local function SortPopupNodes(nodes)
     end)
 end
 
-local function GatherUncollectedNodes(nowRWP, node, out, keys, seen)
+local function GatherUncollectedNodes(node, out, keys, seen)
     if type(node) ~= "table" then TP(node); return end
 
     seen = seen or setmetatable({}, { __mode = "k" })
     if seen[node] then TP(seen[node]); return end
     seen[node] = true
 
-    local isAllowed, matched = IsAllowedLeaf(node, keys, nowRWP)
+    local isAllowed, matched = IsAllowedLeaf(node, keys)
     if isAllowed then
         out[#out + 1] = node
         passKeysByNode[node] = matched
@@ -655,7 +655,7 @@ local function GatherUncollectedNodes(nowRWP, node, out, keys, seen)
     if type(kids) == "table" then
         for i = 1, #kids do
             if type(kids[i]) == "table" and kids[i] ~= node.parent then
-                GatherUncollectedNodes(nowRWP, kids[i], out, keys, seen)
+                GatherUncollectedNodes(kids[i], out, keys, seen)
             end
         end
     end
@@ -668,8 +668,7 @@ local function BuildNodeList(root)
 
     -- Gather raw leaves per active filters
     local nodes = {}
-    local nowRWP = Util.CurrentClientRWP()
-    GatherUncollectedNodes(nowRWP, root, nodes, activeKeys)
+    GatherUncollectedNodes(root, nodes, activeKeys)
 
     -- Transformations (in order)
     nodes = CollapseAchievementFamilies(root, nodes)
@@ -717,15 +716,12 @@ local function AcquireRow(scrollContent, i)
 
         -- Ctrl+click: open Dressing Room; undress first if option is ON
         if IsModifiedClick("DRESSUP") and node and node.itemID then
-            local link = select(2, GetItemInfo(node.itemID)) or ("item:" .. tostring(node.itemID))
+            local link = select(2, GetItemInfo(node.itemID)) or ("item:" .. node.itemID)
 
-            ShowUIPanel(DressUpFrame) -- Bring up Blizzard's dressing room
-
-            -- Model used by the dressing room across Classic/MoP UIs
-            local mdl = DressUpFrame.DressUpModel
-            mdl.SetUnit(mdl, "player")
-            if GetSetting("dressUpNaked", true) then mdl.Undress(mdl) end
-            mdl.TryOn(mdl, link)
+            ShowUIPanel(DressUpFrame)
+            DressUpFrame.DressUpModel:SetUnit("player")
+            if GetSetting("dressUpNaked", true) then DressUpFrame.DressUpModel:Undress() end
+            DressUpFrame.DressUpModel:TryOn(link)
             return
         end
 
