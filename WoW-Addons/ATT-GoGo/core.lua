@@ -62,9 +62,9 @@ end
 -- Small helpers
 -------------------------------------------------
 function Util.PlayerFactionID()
-  local f = UnitFactionGroup and UnitFactionGroup("player")
-  if f == "Alliance" then return 1
-  elseif f == "Horde" then return 2
+  local f = UnitFactionGroup("player")
+  if f == "Alliance" then return 2
+  elseif f == "Horde" then return 1
   else return 0   -- Neutral / unknown
   end
 end
