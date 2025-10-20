@@ -32,6 +32,18 @@ local function IsAllowedLeaf(node, activeKeys)
         return false, {}
     end
 
+    -- Class gate (ATT 'c' field)
+    local nc = node.c
+    if nc ~= nil then
+        local ok = false
+        if type(nc) == "table" then
+            for i = 1, #nc do if nc[i] == CLASS_ID then ok = true; break end end
+        else
+            ok = (nc == CLASS_ID)
+        end
+        if not ok then return false, {} end
+    end
+
     if not GetSetting("includeRemoved", false) then
         local nowRWP = Util.CurrentClientRWP()
         if Util.IsNodeRemoved(node, nowRWP) then

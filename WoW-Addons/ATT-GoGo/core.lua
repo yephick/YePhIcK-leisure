@@ -69,8 +69,13 @@ function Util.PlayerFactionID()
   end
 end
 
+-- cached faction result
 FACTION = Util.PlayerFactionID()
 OPPOSITE_FACTION = (FACTION == 1 and 2) or (FACTION == 2 and 1) or 0
+
+-- Cached player class ID (ATT uses: 1=Warrior, 2=Paladin, 3=Hunter, 4=Rogue, 5=Priest,
+-- 6=Death Knight, 7=Shaman, 8=Mage, 9=Warlock, 10=Monk, 11=Druid, 12=Demon Hunter, 13=Evoker)
+CLASS_ID = select(3, UnitClass("player"))
 
 function Util.Debounce(fn, delay)
   local pending = false
