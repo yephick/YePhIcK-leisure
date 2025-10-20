@@ -1,7 +1,7 @@
 ﻿local addonName, addonTable = ...
-ICON_FILE = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga"
+local ICON_FILE = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga"
 title = GetAddOnMetadata(addonName, "Title") or "UNKNOWN"
-CTITLE = "|cff00ff00[" .. title .. "]|r "
+local CTITLE = "|cff00ff00[" .. title .. "]|r "
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")

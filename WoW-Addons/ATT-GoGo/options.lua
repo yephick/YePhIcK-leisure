@@ -17,15 +17,8 @@ local function SetupOptionsFrame()
 --  if OptionsUI.frame then return OptionsUI.frame end
   local f = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
   f:SetSize(300, 570)
-  f:SetMovable(true)
-  f:EnableMouse(true)
-  f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving)
-  f:SetScript("OnDragStop", function(self)
-    self:StopMovingOrSizing()
-    Util.SaveFramePosition(self, "optionsWindowPos")
-  end)
   f:Hide()
+  Util.EnableDragPersist(f, "optionsWindowPos")                                     -- replaces the custom drag code
 
   f.TitleText:SetText("ATT-GoGo Options")
 
@@ -54,7 +47,6 @@ local function SetupOptionsFrame()
     Util.LoadFramePosition(popup, "popupWindowPos", "RIGHT", -200, 64)
 
     -- Options defaults (self)
-    f:SetSize(300, 570)
     Util.LoadFramePosition(f, "optionsWindowPos", "LEFT", 92, 80)
 
     print("|cff00ff00[ATT-GoGo]|r Window sizes/positions reset to defaults.")

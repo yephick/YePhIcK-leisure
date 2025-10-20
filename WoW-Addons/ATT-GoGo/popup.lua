@@ -168,7 +168,6 @@ local function ShowPreviewForNode(node)
         previewDock:Hide(); return
     end
 
---    local dock = EnsurePreviewDock()
     previewDock:ClearAllPoints()
     previewDock:SetPoint("TOPRIGHT",    uncollectedPopup, "TOPLEFT",   -8, 0)
     previewDock:SetPoint("BOTTOMRIGHT", uncollectedPopup, "BOTTOMLEFT", -8, 0)
@@ -221,7 +220,7 @@ end
 
 -- === World Map ping (brief highlight at coords) ===
 local PingFrame
-function PingMapAt(mapID, x, y)
+local function PingMapAt(mapID, x, y)
   if not (WorldMapFrame:IsShown() and WorldMapFrame:GetMapID() == mapID and x and y) then return end
 
   local child = WorldMapFrame.ScrollContainer
@@ -804,16 +803,7 @@ function EnsurePopup()
     uncollectedPopup:SetClampedToScreen(true)
     uncollectedPopup:SetResizeBounds(180, 120, 800, 800)
     uncollectedPopup:SetResizable(true)
-    uncollectedPopup:SetMovable(true)
-    uncollectedPopup:EnableMouse(true)
-
-    -- allow dragging by grabbing the frame OR the scroll area
-    uncollectedPopup:RegisterForDrag("LeftButton")
-    uncollectedPopup:SetScript("OnDragStart", function(self) self:StartMoving() end)
-    uncollectedPopup:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        Util.SaveFramePosition(self, "popupWindowPos")
-    end)
+    Util.EnableDragPersist(uncollectedPopup, "popupWindowPos")
 
     -- look & strata
     uncollectedPopup:SetBackdrop({
@@ -846,13 +836,7 @@ function EnsurePopup()
     uncollectedPopup.scrollFrame   = scroll
     uncollectedPopup.scrollContent = content
 
-    -- allow dragging when grabbing inside the scroll area
-    scroll:RegisterForDrag("LeftButton")
-    scroll:SetScript("OnDragStart", function() uncollectedPopup:StartMoving() end)
-    scroll:SetScript("OnDragStop",  function()
-        uncollectedPopup:StopMovingOrSizing()
-        Util.SaveFramePosition(uncollectedPopup, "popupWindowPos")
-    end)
+    Util.EnableScrollDrag(uncollectedPopup.scrollFrame, uncollectedPopup, "popupWindowPos")
 
     -- scrollbar sync
     scroll:SetScript("OnScrollRangeChanged", function(self, _, yRange)
@@ -878,23 +862,9 @@ function EnsurePopup()
         UpdateVirtualList()
     end)
 
-    -- bottom-right resize grabber
-    local resizer = CreateFrame("Button", nil, uncollectedPopup)
-    resizer:SetSize(16, 16)
-    resizer:SetPoint("BOTTOMRIGHT", -6, 6)
-    resizer:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-    resizer:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
-    resizer:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-    resizer:SetScript("OnMouseDown", function() uncollectedPopup:StartSizing("BOTTOMRIGHT") end)
-    resizer:SetScript("OnMouseUp", function()
-        uncollectedPopup:StopMovingOrSizing()
-        Util.SaveFramePosition(uncollectedPopup, "popupWindowPos")
-        UpdateVirtualList()
-    end)
+    Util.AddResizerCorner(uncollectedPopup, "popupWindowPos", UpdateVirtualList)
 
-    -- persist pos/size + rerender on resize
-    uncollectedPopup:SetScript("OnSizeChanged", function(self, w, h)
-        Util.SaveFramePosition(self, "popupWindowPos")
+    Util.PersistOnSizeChanged(uncollectedPopup, "popupWindowPos", function()
         uncollectedPopup.scrollFrame:UpdateScrollChildRect()
         UpdateVirtualList()
     end)

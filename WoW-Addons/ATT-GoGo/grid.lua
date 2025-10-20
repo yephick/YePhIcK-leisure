@@ -3,10 +3,10 @@ local tabButtons = {}
 local currentTab = nil
 local tabOrder = {}  -- tab ID lookup
 
-Tabs = {}
-Summary = {}
-Grid = {}
-Tile = {}
+local Tabs = {}
+local Summary = {}
+local Grid = {}
+local Tile = {}
 
 -- Whole-widget click + hover border + hand cursor
 function Tile.AttachClickAndHoverUX(f, data)
@@ -439,31 +439,13 @@ local function CreateMainFrame()
     f:SetClampedToScreen(true)
     f:SetFrameStrata("MEDIUM")
     f:SetFrameLevel(10)
-    f:SetMovable(true)
+    Util.EnableDragPersist(f, "mainWindowPos")
     f:SetResizable(true)
-    f:EnableMouse(true)
 
     if f.SetResizeBounds then f:SetResizeBounds(700, 360, 1600, 1200) end
 
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        Util.SaveFramePosition(self, "mainWindowPos")
-    end)
-
-    -- bottom-right resize grabber
-    local resizer = CreateFrame("Button", nil, f)
-    resizer:SetSize(16, 16)
-    resizer:SetPoint("BOTTOMRIGHT", -6, 6)
-    resizer:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-    resizer:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
-    resizer:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-    resizer:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
-    resizer:SetScript("OnMouseUp", function() f:StopMovingOrSizing() end)
-
-    -- also persist when size changes (e.g. via code)
-    f:HookScript("OnSizeChanged", function(self) Util.SaveFramePosition(self, "mainWindowPos") end)
+    Util.AddResizerCorner(f, "mainWindowPos", function() end)
+    Util.PersistOnSizeChanged(f, "mainWindowPos", function() end)
 
     f:Hide()
     f.TitleText:SetText(title .. " - Progress summaries")

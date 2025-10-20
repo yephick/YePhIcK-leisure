@@ -41,11 +41,10 @@ end
 -- Store per-callsite stats and first-hit stack
 -- TP_CACHE[site] = { count = <int>, stack = <string>, args = <string> }
 local TP_CACHE = {}
-local TP_EN = (GetSetting("TP_en", false) ~= true)
 
 -- test point
 function TP(...)
-  if not TP_EN then return end
+  if GetSetting("TP_en", false) ~= true then return end
   local level = 1 + 1               -- 1 = TP itself; +1 = its caller
   local s = debugstack(level, 1, 0) -- example stack line: Interface\AddOns\ATT-GoGo\util.lua:91: in function ...
   local file, line = s:match("([^\n]+):(%d+):")
@@ -92,13 +91,13 @@ end
 
 function ldt_nk(node, key) ldt_nv(key, node[key]) end
 
-function log_ldt()
+local function log_ldt()
   for k, v in pairs(ldt_cache) do
     DebugLogf(v.count .. ": [".. k .. "], sample value: " .. v.v)
   end
 end
 
-function TP_summary()
+local function TP_summary()
   log_ldt()
   local entries = {}
   for k, v in pairs(TP_CACHE) do

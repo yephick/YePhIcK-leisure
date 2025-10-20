@@ -218,7 +218,7 @@ function Util.GetCollectionProgress(dataset)
 end
 
 -------------------------------------------------
--- Frame pos helpers
+-- Frame helpers
 -------------------------------------------------
 -- Save frame position (+size) to DB
 function Util.SaveFramePosition(frame, dbKey)
@@ -249,6 +249,52 @@ function Util.LoadFramePosition(frame, dbKey, defaultPoint, defaultX, defaultY)
         frame:SetPoint(defaultPoint or "CENTER", defaultX or 0, defaultY or 0)
     end
 end
+
+-- Make a frame draggable and persist its position
+function Util.EnableDragPersist(frame, dbKey)
+    frame:SetMovable(true); frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart", frame.StartMoving)
+    frame:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        Util.SaveFramePosition(self, dbKey)
+    end)
+end
+
+-- Let a ScrollFrame drag its owner window (and persist)
+function Util.EnableScrollDrag(scrollFrame, ownerFrame, dbKey)
+    scrollFrame:RegisterForDrag("LeftButton")
+    scrollFrame:SetScript("OnDragStart", function() ownerFrame:StartMoving() end)
+    scrollFrame:SetScript("OnDragStop",  function()
+        ownerFrame:StopMovingOrSizing()
+        Util.SaveFramePosition(ownerFrame, dbKey)
+    end)
+end
+
+-- Persist on any size change
+function Util.PersistOnSizeChanged(frame, dbKey, onSizeChanged)
+    frame:HookScript("OnSizeChanged", function(self, w, h)
+        Util.SaveFramePosition(self, dbKey)
+        onSizeChanged(self, w, h)
+    end)
+end
+
+-- Add the standard bottom-right resizer to a frame
+function Util.AddResizerCorner(frame, dbKey, onDone)
+    local grab = CreateFrame("Button", nil, frame)
+    grab:SetSize(16, 16)
+    grab:SetPoint("BOTTOMRIGHT", -6, 6)
+    grab:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grab:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grab:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grab:SetScript("OnMouseDown", function() frame:StartSizing("BOTTOMRIGHT") end)
+    grab:SetScript("OnMouseUp", function()
+        frame:StopMovingOrSizing()
+        Util.SaveFramePosition(frame, dbKey)
+        onDone()
+    end)
+end
+
 
 function Util.ClearChildrenOrTabs(arg)
   -- anything derived from Frame has a .GetChildren()
