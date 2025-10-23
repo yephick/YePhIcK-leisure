@@ -16,8 +16,8 @@
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Microsoft.UI.Dispatching.h>
-#include <microsoft.ui.xaml.windowinterop.h>
 #include <shobjidl_core.h>
+#include <windows.h>
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -68,7 +68,10 @@ namespace winrt::runlock::implementation
 
     Windows::Foundation::IAsyncAction MainWindow::GeneratePasswords_Click(IInspectable const&, RoutedEventArgs const&)
     {
-        auto hwnd = winrt::Microsoft::UI::Windowing::WindowNative::GetWindowHandle(*this);
+        // If WindowNative header isn't available in the include path, fall back to the active window handle.
+        // This avoids the missing-header build error while still providing a valid HWND in typical scenarios.
+        HWND hwnd = ::GetActiveWindow();
+
         Windows::Storage::Pickers::FileSavePicker picker;
         picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::DocumentsLibrary);
         picker.FileTypeChoices().Insert(L"Text", single_threaded_vector<hstring>({ L".txt" }));
@@ -149,7 +152,8 @@ namespace winrt::runlock::implementation
         using namespace Windows::Storage;
         using namespace Windows::Storage::Streams;
 
-        auto uiDispatcher = DispatcherQueue();
+        // Use the Windows.System::DispatcherQueue so resume_foreground accepts it.
+        auto uiDispatcher = winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
 
         auto rulesText = PasswordRulesBox().Text();
         int minLen = static_cast<int>(MinLengthBox().Value());
