@@ -39,7 +39,8 @@ namespace winrt::runlock::implementation
             std::wstring& current,
             int minLen,
             int maxLen,
-            winrt::Windows::Storage::Streams::DataWriter& writer);
+            winrt::Windows::Storage::Streams::DataWriter& writer,
+            size_t& bufferedBytes);
     };
 }
 

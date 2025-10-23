@@ -189,7 +189,8 @@ namespace winrt::runlock::implementation
         }
 
         std::wstring current;
-        GenerateRecursive(groups, 0, current, minLen, maxLen, writer);
+        size_t bufferedBytes = 0;
+        GenerateRecursive(groups, 0, current, minLen, maxLen, writer, bufferedBytes);
 
         co_await writer.StoreAsync();
         writer.DetachStream();
@@ -204,7 +205,8 @@ namespace winrt::runlock::implementation
         std::wstring& current,
         int minLen,
         int maxLen,
-        Windows::Storage::Streams::DataWriter& writer)
+        Windows::Storage::Streams::DataWriter& writer,
+        size_t& bufferedBytes)
     {
         if (m_cancelGenerate)
         {
@@ -217,6 +219,14 @@ namespace winrt::runlock::implementation
             {
                 auto toWrite = current + L"\n";
                 writer.WriteString(hstring(toWrite));
+                bufferedBytes += toWrite.size() * sizeof(std::wstring::value_type);
+
+                constexpr size_t flushThreshold = 2 * 1024 * 1024;
+                if (bufferedBytes >= flushThreshold)
+                {
+                    writer.StoreAsync().get();
+                    bufferedBytes = 0;
+                }
             }
             return;
         }
@@ -227,7 +237,7 @@ namespace winrt::runlock::implementation
             current += part;
             if (static_cast<int>(current.size()) <= maxLen)
             {
-                GenerateRecursive(groups, index + 1, current, minLen, maxLen, writer);
+                GenerateRecursive(groups, index + 1, current, minLen, maxLen, writer, bufferedBytes);
             }
             current.resize(prevLen);
             if (m_cancelGenerate)
