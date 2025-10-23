@@ -13,19 +13,12 @@ OptionsUI = {
 local CreateGroup, AddCheckbox
 
 -- Frame factory --------------------------------------------------------------
-local function EnsureOptionsFrame()
-  if OptionsUI.frame then return OptionsUI.frame end
+local function SetupOptionsFrame()
+--  if OptionsUI.frame then return OptionsUI.frame end
   local f = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
   f:SetSize(300, 570)
-  f:SetMovable(true)
-  f:EnableMouse(true)
-  f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving)
-  f:SetScript("OnDragStop", function(self)
-    self:StopMovingOrSizing()
-    Util.SaveFramePosition(self, "optionsWindowPos")
-  end)
   f:Hide()
+  Util.EnableDragPersist(f, "optionsWindowPos")                                     -- replaces the custom drag code
 
   f.TitleText:SetText("ATT-GoGo Options")
 
@@ -54,7 +47,6 @@ local function EnsureOptionsFrame()
     Util.LoadFramePosition(popup, "popupWindowPos", "RIGHT", -200, 64)
 
     -- Options defaults (self)
-    f:SetSize(300, 570)
     Util.LoadFramePosition(f, "optionsWindowPos", "LEFT", 92, 80)
 
     print("|cff00ff00[ATT-GoGo]|r Window sizes/positions reset to defaults.")
@@ -210,21 +202,7 @@ function OptionsUI.BuildAccountGroup(parent)
     { "TOPLEFT", nakedTryOnCheckbox, "BOTTOMLEFT", 0, -6 },
     function() return GetSetting("autoRefreshPopupOnZone", true) end,
     function(v) SetSetting("autoRefreshPopupOnZone", v) end,
-    function(v)
-      if v then
-        C_Timer.After(0.05, function()
-          local popup = _G.ATTGoGoUncollectedPopup
-          if popup:IsShown() then
-            local node, info = Util.ResolveContextNode()
-            if info.kind == "zone" then
-              local z = Util.GetMapRoot(info.uiMapID)
-              if z then ShowUncollectedPopup(z); return else TP(node, info) end
-            end
-            ShowUncollectedPopup(node)
-          end
-        end)
-      end
-    end,
+    nil,
     "If the Uncollected popup is open, retarget it when you change zone or enter an instance."
   )
   OptionsUI.controls.autoRefreshPopupCheckbox = autoRefreshPopupCheckbox
@@ -260,7 +238,7 @@ function OptionsUI.BuildAccountGroup(parent)
       info.value = opt.value
       info.checked = (opt.value == Util.GetOtherToonsMode())
       info.func = function()
-        SetSetting("otherToonsInTooltips", tonumber(opt.value) or 1)
+        SetSetting("otherToonsInTooltips", opt.value or 1)
         SyncOtherToonsDropdown()
       end
       UIDropDownMenu_AddButton(info, level)
@@ -322,7 +300,7 @@ function OptionsUI.BuildFilterCheckboxes(group, anchor)
   filterLabel:SetText("Include in uncollected popup:")
 
   local ORDER = {
-    "achievementID", "creatureID", "explorationID", "flightpathID", "gearSetID",
+    "achievementID", "creatureID", "explorationID", "flightpathID",
     "itemID", "mapID", "questID", "titleID", "visualID",
   }
 
@@ -335,7 +313,7 @@ function OptionsUI.BuildFilterCheckboxes(group, anchor)
     cb:SetPoint("TOPLEFT", filterLabel, "BOTTOMLEFT", col*colWidth, -6 - row*rowHeight)
     cb.Text:SetText(COLLECTIBLE_ID_LABELS[key] or key)
     cb.Text:SetPoint("LEFT", cb, "RIGHT", 4, 0)
-    cb:SetChecked(Util.GetPopupIdFilters()[key])
+    cb:SetChecked(ATTGoGoCharDB.popupIdFilters[key])
     cb:SetScript("OnClick", function(self)
       Util.SetPopupIdFilter(self.key, bool(self:GetChecked()))
       local popup = _G.ATTGoGoUncollectedPopup
@@ -349,7 +327,7 @@ function OptionsUI.BuildFilterCheckboxes(group, anchor)
 end
 
 function OptionsUI.UpdateFilterCheckboxes()
-  local effective = Util.GetPopupIdFilters()
+  local effective = ATTGoGoCharDB.popupIdFilters
   for key, cb in pairs(OptionsUI.filterCheckboxes) do
     cb:SetChecked(effective[key])
   end
@@ -357,14 +335,14 @@ end
 
 -- Public entry points --------------------------------------------------------
 function OptionsUI.Init()
-  local f = EnsureOptionsFrame()
+  local f = SetupOptionsFrame()
   OptionsUI.BuildAccountGroup(f)
   OptionsUI.BuildPerCharGroup(f)
   return f
 end
 
 function OptionsUI.Show()
-  local f = EnsureOptionsFrame()
+  local f = OptionsUI.frame
   Util.LoadFramePosition(f, "optionsWindowPos", "LEFT", 92, 80)
   f:SetFrameStrata("DIALOG")
   f:Show()

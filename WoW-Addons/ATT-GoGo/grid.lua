@@ -1,11 +1,12 @@
 ﻿local expansions = nil
 local tabButtons = {}
 local currentTab = nil
+local tabOrder = {}  -- tab ID lookup
 
-Tabs = {}
-Summary = {}
-Grid = {}
-Tile = {}
+local Tabs = {}
+local Summary = {}
+local Grid = {}
+local Tile = {}
 
 -- Whole-widget click + hover border + hand cursor
 function Tile.AttachClickAndHoverUX(f, data)
@@ -16,29 +17,17 @@ function Tile.AttachClickAndHoverUX(f, data)
             ShowUncollectedPopup(data)
         end
     end)
-
-    -- Cache original border color once
-    local function cacheOriginals(self)
-        if not self.__origBorderColor then
-            local r, g, b, a = self:GetBackdropBorderColor()
-            self.__origBorderColor = { r or 0, g or 0, b or 0, a or 1 }
-        end
-    end
+    f.__origBorderColor = { f:GetBackdropBorderColor() }
 
     -- Hover: gold border + hand cursor
     f:HookScript("OnEnter", function(self)
-        cacheOriginals(self)
         self:SetBackdropBorderColor(1, 0.82, 0, 1)   -- gold-ish
         SetCursor("Interface\\CURSOR\\Point")
     end)
 
     f:HookScript("OnLeave", function(self)
-        if self.__origBorderColor then
-            self:SetBackdropBorderColor(
-                self.__origBorderColor[1], self.__origBorderColor[2],
-                self.__origBorderColor[3], self.__origBorderColor[4]
-            )
-        end
+        self:SetBackdropBorderColor( self.__origBorderColor[1], self.__origBorderColor[2],
+                                     self.__origBorderColor[3], self.__origBorderColor[4] )
         ResetCursor()
     end)
 end
@@ -52,8 +41,7 @@ function Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
   if not isZone then
     local isLocked, numDown, numBosses = IsInstanceLockedOut(data)
     if isLocked then
-      local allDead = numBosses and numBosses > 0 and numDown == numBosses
-      if allDead or numBosses == 0 then
+      if numBosses == 0 or numDown >= numBosses then
         f:SetBackdropColor(0.25, 0.25, 0.25, 0.35)
         f:SetBackdropBorderColor(0.22, 0.22, 0.22, 0.70)
         f:SetAlpha(0.40)
@@ -76,13 +64,11 @@ function Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, perce
     local isLocked, _, _, lockoutIndex = IsInstanceLockedOut(data)
     if isLocked then
       local reset = select(3, GetSavedInstanceInfo(lockoutIndex))
-      if reset > 0 then
-        local lockFS = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        lockFS:SetPoint("TOP", title, "BOTTOM", 0, -2)
-        lockFS:SetJustifyH("CENTER")
-        lockFS:SetWidth(widgetSize - 8)
-        lockFS:SetText("|cffffd200" .. Util.FormatTime(reset) .. "|r")
-      end
+      local lockFS = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      lockFS:SetPoint("TOP", title, "BOTTOM", 0, -2)
+      lockFS:SetJustifyH("CENTER")
+      lockFS:SetWidth(widgetSize - 8)
+      lockFS:SetText("|cffffd200" .. Util.FormatTime(reset) .. "|r")
     end
   end
   local stats = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -96,7 +82,7 @@ end
 function Tile.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone, ownerNode)
   Tooltip.CreateTooltip(f, "ANCHOR_RIGHT", function()
     Tooltip.AddLine(Util.NodeDisplayName(data))
-    Tooltip.AddProgress(GameTooltip, data, collected, total, percent, isZone, ownerNode or data)
+    Tooltip.AddProgress(GameTooltip, data, collected, total, percent, isZone, ownerNode)
   end)
 end
 
@@ -108,15 +94,13 @@ local DIFF_LABEL = {
 }
 
 local function AttachInfoIcon(parentFrame, eraNode)
-  if not (eraNode and eraNode.instanceID) then return end
-
   -- collect per-difficulty rows present in this era wrapper
   local diffs = {}
   for _, ch in ipairs(eraNode.g) do
-      local d = tonumber(ch.difficultyID)
+      local d = ch.difficultyID
       if d then
-      local c, t = Util.ResolveProgress(ch)
-      diffs[#diffs+1] = { d = d, c = c or 0, t = t or 0 }
+          local c, t = Util.ATTGetProgress(ch)
+          diffs[#diffs+1] = { d = d, c = c, t = t }
       end
   end
   if #diffs == 0 then return end
@@ -134,7 +118,7 @@ local function AttachInfoIcon(parentFrame, eraNode)
     table.sort(diffs, function(a,b) return (a.d or 0) < (b.d or 0) end)
     for _, r in ipairs(diffs) do
       local p = (r.t > 0) and (r.c / r.t * 100) or 0
-      local tag = DIFF_LABEL[r.d] or tostring(r.d)
+      local tag = DIFF_LABEL[r.d] or r.d
       GameTooltip:AddLine(string.format("• %s — %d/%d (%.1f%%)", tag, r.c, r.t, p), 0.9, 0.9, 0.9)
     end
   end)
@@ -166,7 +150,7 @@ function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZ
     if isZone then
       collected, total, percent = Util.ResolveMapProgress(data.mapID)
     else
-      collected, total, percent = Util.ResolveProgress(attNode or data)
+      collected, total, percent = Util.ATTGetProgress(attNode or data)
     end
     Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
     Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
@@ -251,15 +235,14 @@ end
 -- Prepare tab data based on type
 local function PrepareTabData(t, isZone, filterFunc, sortFunc)
     local entries = {}
-    local nowRWP = Util.CurrentClientRWP()
     if isZone then
         for i, child in pairs(t.node.g or {}) do
-          local mid = tonumber(child and child.mapID)
+          local mid = child and child.mapID
           if mid then
             local entry = {
               mapID   = mid,
               name    = child.text or child.name,
-              removed = Util.IsNodeRemoved(child, nowRWP),
+              removed = Util.IsNodeRemoved(child),
             }
             if (not filterFunc) or filterFunc(entry) then entries[#entries+1] = entry end
           end
@@ -295,9 +278,7 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
     -- Helper used by the star click to re-sort + refresh
     local function ResortAndRefresh()
       table.sort(entries, FavFirstSort)
-      if tabContent.scroll and tabContent.scroll.Refresh then
-        tabContent.scroll:Refresh()
-      end
+      tabContent.scroll:Refresh()
     end
 
     local tileFactory = function(content, data, x, y, widgetSize, padding)
@@ -363,11 +344,7 @@ function Tabs.InitialTabSelection(mainFrame, tabOrder, SelectTab)
     PanelTemplates_SetNumTabs(mainFrame, #tabOrder)
     local idxToSelect = ResolveSavedTabIndex(tabOrder)
     PanelTemplates_SetTab(mainFrame, idxToSelect)
-    if tabOrder[idxToSelect] then
-        SelectTab(tabOrder[idxToSelect])
-    else
-        TP(tabOrder, idxToSelect)
-    end
+    SelectTab(tabOrder[idxToSelect])
 end
 
 -- Create summary bar (background + text)
@@ -406,7 +383,7 @@ end
 
 -- For zone tabs
 function Summary.UpdateZone(mainFrame, tab, tabButtons)
-    local collected, total = Util.ResolveProgress(tab.zoneData)
+    local collected, total = Util.ATTGetProgress(tab.zoneData)
     Summary.Update(mainFrame, collected, total)
 end
 
@@ -462,31 +439,13 @@ local function CreateMainFrame()
     f:SetClampedToScreen(true)
     f:SetFrameStrata("MEDIUM")
     f:SetFrameLevel(10)
-    f:SetMovable(true)
+    Util.EnableDragPersist(f, "mainWindowPos")
     f:SetResizable(true)
-    f:EnableMouse(true)
 
     if f.SetResizeBounds then f:SetResizeBounds(700, 360, 1600, 1200) end
 
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        Util.SaveFramePosition(self, "mainWindowPos")
-    end)
-
-    -- bottom-right resize grabber
-    local resizer = CreateFrame("Button", nil, f)
-    resizer:SetSize(16, 16)
-    resizer:SetPoint("BOTTOMRIGHT", -6, 6)
-    resizer:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-    resizer:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
-    resizer:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-    resizer:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
-    resizer:SetScript("OnMouseUp", function() f:StopMovingOrSizing() end)
-
-    -- also persist when size changes (e.g. via code)
-    f:HookScript("OnSizeChanged", function(self) Util.SaveFramePosition(self, "mainWindowPos") end)
+    Util.AddResizerCorner(f, "mainWindowPos", function() end)
+    Util.PersistOnSizeChanged(f, "mainWindowPos", function() end)
 
     f:Hide()
     f.TitleText:SetText(title .. " - Progress summaries")
@@ -527,28 +486,24 @@ function ShowMainFrame()
     -- pick saved tab if available, else first
     local idxToSelect = ResolveSavedTabIndex(tabOrder)
     PanelTemplates_SetTab(mainFrame, idxToSelect)
-    if tabOrder[idxToSelect] then
-        SelectTab(tabOrder[idxToSelect])
-    end
+    SelectTab(tabOrder[idxToSelect])
 end
 
 -- Helper: Register mainFrame events for updates/redraws
 local function RegisterMainFrameEvents()
     mainFrame:RegisterEvent("UPDATE_INSTANCE_INFO")
     mainFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    mainFrame:RegisterEvent("PLAYER_LOGIN")
-    mainFrame:SetScript("OnEvent", function() RefreshActiveTab() end)
+    mainFrame:SetScript("OnEvent", RefreshActiveTab)
 end
 
--- Public: refresh the currently-visible grid (used by Options)
+-- refresh the currently-visible grid
 function RefreshActiveTab()
     if currentTab and currentTab:IsShown() then currentTab:Refresh() end
 end
 
 function SetupMainUI()
-    tabOrder = {}  -- tab ID lookup
-
     RequestRaidInfo()
+    Util.ClearATTSearchCache()
 
     CreateMainFrame()
     CreateOptionsButton()

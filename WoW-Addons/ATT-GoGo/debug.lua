@@ -1,40 +1,5 @@
 ﻿-- debug.lua
 
--- Store per-callsite stats and first-hit stack
--- TP_CACHE[site] = { count = <int>, stack = <string>, args = <string> }
-local TP_CACHE = {}
-
--- test point
-function TP(...)
-  if GetSetting("TP_en", false) ~= true then return end
-  local level = 1 + 1               -- 1 = TP itself; +1 = its caller
-  local s = debugstack(level, 1, 0) -- example stack line: Interface\AddOns\ATT-GoGo\util.lua:91: in function ...
-  local file, line = s:match("([^\n]+):(%d+):")
-  local msg = ("%s:%d"):format((file or "?"), (tonumber(line) or -1))
-  if TP_CACHE[msg] then
-    TP_CACHE[msg].count = TP_CACHE[msg].count + 1
-  else
-    local n = select('#', ...)
-    local args = {...}
-    args.n = n -- preserve exact arg count (including trailing nils)
-    TP_CACHE[msg] = {
-      count = 1,
-      stack = debugstack(level, 12, 0),
-      args = args,
-    }
-
-    for i = 1, n do
-      local v = select(i, ...)
-      if type(v) == "table" then
-        DebugRecursive(v, msg .. " - " .. tostring(v) .. " " .. tostring(i) .. ")", 0, 2, false)
-      end
-    end
-
-    print("|cff00ff00[ATT-GoGo]|r " .. msg)
-    DebugLog(msg, "trace")
-  end
-end
-
 local function fmt_tbl(t)
   local function val_str(v)
     local tv = type(v)
@@ -73,7 +38,67 @@ local function fmt_arg(a)
   end
 end
 
-function TP_summary()
+-- Store per-callsite stats and first-hit stack
+-- TP_CACHE[site] = { count = <int>, stack = <string>, args = <string> }
+local TP_CACHE = {}
+
+-- test point
+function TP(...)
+  if GetSetting("TP_en", false) ~= true then return end
+  local level = 1 + 1               -- 1 = TP itself; +1 = its caller
+  local s = debugstack(level, 1, 0) -- example stack line: Interface\AddOns\ATT-GoGo\util.lua:91: in function ...
+  local file, line = s:match("([^\n]+):(%d+):")
+  local msg = ("%s:%d"):format((file or "?"), (tonumber(line) or -1))
+  if TP_CACHE[msg] then
+    TP_CACHE[msg].count = TP_CACHE[msg].count + 1
+  else
+    local n = select('#', ...)
+    local args = {...}
+    args.n = n -- preserve exact arg count (including trailing nils)
+    TP_CACHE[msg] = {
+      count = 1,
+      stack = debugstack(level, 12, 0),
+      args = args,
+    }
+
+    for i = 1, n do
+      local v = select(i, ...)
+      if type(v) == "table" then
+        DebugRecursive(v, msg .. " - " .. tostring(v) .. " " .. tostring(i) .. ")", 0, 2, false)
+      end
+    end
+
+    DebugLog(msg, "trace")
+    print("|cff00ff00[ATT-GoGo]|r " .. msg)
+
+    if n > 0 then
+      print("args:")
+      for ai = 1, n do print(tostring(ai) .. ") " .. fmt_arg(args[ai])) end
+    end
+  end
+end
+
+---- log data types for fields
+-- "achID", "achievementID", "awp", "collected", "coords", "creatureID", "eventID", "expansionID", "explorationID", "file", "flightpathID", "icon", "instanceID", "itemID",
+-- "link", "mapID", "name", "nmc", "nmr", "npcID", "q", "questID", "r", "rwp", "spellID", "text", "titleID", "title", "visualID", "u"
+local ldt_cache = {}
+function ldt_nv(name, val)
+    local t = type(val)
+    local hkey = "<" .. t .. ">" .. name
+    if ldt_cache[hkey] then ldt_cache[hkey].count = ldt_cache[hkey].count + 1; return end
+    ldt_cache[hkey] = { v = tostring(val), count = 0 }
+end
+
+function ldt_nk(node, key) ldt_nv(key, node[key]) end
+
+local function log_ldt()
+  for k, v in pairs(ldt_cache) do
+    DebugLogf(v.count .. ": [".. k .. "], sample value: " .. v.v)
+  end
+end
+
+local function TP_summary()
+  log_ldt()
   local entries = {}
   for k, v in pairs(TP_CACHE) do
     entries[#entries + 1] = { k, v } -- { site, { count=..., stack=... } }
@@ -177,15 +202,8 @@ local SKIP_FIELDS = {
   -- long/unhelpful prose
   lore = true, description = true,
 
-  -- perf/visual/no-coding
-  visible = true, nmr = true, nmc = true,
-  --awp = true,
-
-  -- flags rarely needed for structure
-  u = true, lvl = true, text = true,
-
-  -- bulky coords we don't need line-by-line
-  coords = true,
+  -- bulky, often with extra codes for colors and links
+  text = true,
 }
 
 local ONE_LINE_FIELDS = {
@@ -283,14 +301,14 @@ end
 
 local function tagList(n)
   local tags = {}
-  if n.instanceID     then tags[#tags+1] = "inst:" .. tostring(n.instanceID) end
-  if n.mapID          then tags[#tags+1] = "map:"  .. tostring(n.mapID) end
-  if n.achievementID  then tags[#tags+1] = "ach:"  .. tostring(n.achievementID) end
-  if n.itemID         then tags[#tags+1] = "item:" .. tostring(n.itemID) end
-  if n.spellID        then tags[#tags+1] = "spell:".. tostring(n.spellID) end
-  if n.questID        then tags[#tags+1] = "quest:".. tostring(n.questID) end
-  if n.npcID          then tags[#tags+1] = "npc:"  .. tostring(n.npcID) end
-  if n.expansionID    then tags[#tags+1] = "exp:"  .. tostring(n.expansionID) end
+  if n.instanceID     then tags[#tags+1] = "inst:" .. n.instanceID end
+  if n.mapID          then tags[#tags+1] = "map:"  .. n.mapID end
+  if n.achievementID  then tags[#tags+1] = "ach:"  .. n.achievementID end
+  if n.itemID         then tags[#tags+1] = "item:" .. n.itemID end
+  if n.spellID        then tags[#tags+1] = "spell:".. n.spellID end
+  if n.questID        then tags[#tags+1] = "quest:".. n.questID end
+  if n.npcID          then tags[#tags+1] = "npc:"  .. n.npcID end
+  if n.expansionID    then tags[#tags+1] = "exp:"  .. n.expansionID end
   return (#tags > 0) and (" [" .. table.concat(tags, ",") .. "]") or ""
 end
 

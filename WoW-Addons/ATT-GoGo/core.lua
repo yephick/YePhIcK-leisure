@@ -13,7 +13,6 @@ COLLECTIBLE_ID_FIELDS = {
     creatureID = true,
     explorationID = true,
     flightpathID = true,
-    gearSetID = false,
     itemID = true,
     mapID = false,
     questID = false,
@@ -26,7 +25,6 @@ COLLECTIBLE_ID_LABELS = {
     creatureID = "creature",
     explorationID = "exploration",
     flightpathID = "flight path",
-    gearSetID = "gear set",
     itemID = "item",
     mapID = "map",
     questID = "quest",
@@ -63,6 +61,14 @@ end
 -------------------------------------------------
 -- Small helpers
 -------------------------------------------------
+function Util.PlayerFactionID()
+  local f = UnitFactionGroup("player")
+  if f == "Alliance" then return 2
+  elseif f == "Horde" then return 1
+  else return 0   -- Neutral / unknown
+  end
+end
+
 function Util.Debounce(fn, delay)
   local pending = false
   delay = delay or 0.05
@@ -89,33 +95,39 @@ function Util.InsertNodeChatLink(node)
   elseif node.spellID       then link = GetSpellLink(node.spellID)
   elseif node.questID       then link = GetQuestLink(node.questID)
   end
-  if not link then return end
-  if not ChatEdit_InsertLink(link) then ChatFrame_OpenChat(link) end
+  if link and not ChatEdit_InsertLink(link) then ChatFrame_OpenChat(link) end
 end
 
 function Util.NodeDisplayName(n)
-  if not n or type(n) ~= "table" then TP(n); return "?" end
   return n.text or n.name
-      or (n.mapID and ("Map " .. tostring(n.mapID)))
-      or (n.instanceID and ("Instance " .. tostring(n.instanceID)))
+      or (n.mapID and ("Map " .. n.mapID))
+      or (n.instanceID and ("Instance " .. n.instanceID))
       or "?"
 end
 
+local _ATT_ONE_CACHE = setmetatable({}, { __mode = "v" })  -- weak values
+
+function Util.ClearATTSearchCache() wipe(_ATT_ONE_CACHE) end
+
 function Util.ATTSearchOne(field, id)
-  return ATT.SearchForObject(field, id, "field")  -- strict search
-      or ATT.SearchForObject(field, id)           -- less strict alternative
-      or (ATT.SearchForField(field, id))[1]       -- least strict fallback
+  local k = field .. ":" .. id
+  local hit = _ATT_ONE_CACHE[k]
+  if hit ~= nil then return hit end
+  hit = ATT.SearchForObject(field, id, "field")  -- strict search
+     or ATT.SearchForObject(field, id)           -- less strict alternative
+     or (ATT.SearchForField(field, id))[1]       -- least strict fallback
+  if hit ~= nil then _ATT_ONE_CACHE[k] = hit end
+  return hit
 end
 
 -- Wrap a map package in a simple root so our popup can recurse it like any ATT node
 function Util.GetMapRoot(mapID)
-  local mid = tonumber(mapID); if not mid then TP(mapID, mid); return nil end
-  local pkg = ATT.GetCachedDataForMapID(mid)
+  local pkg = ATT.GetCachedDataForMapID(mapID)
   if type(pkg) ~= "table" or not next(pkg) then TP(pkg, next(pkg)); return nil end
-  local info = C_Map.GetMapInfo(mid)
-  local name = (info and info.name) or ("Map " .. mid)
+  local info = C_Map.GetMapInfo(mapID)
+  local name = (info and info.name) or ("Map " .. mapID)
   local kids = (type(pkg.g) == "table" and pkg.g) or pkg
-  return { text = name, name = name, mapID = mid, g = kids }
+  return { text = name, name = name, mapID = mapID, g = kids }
 end
 
 -- Progress straight from the map package (matches /attmini totals)
@@ -150,10 +162,10 @@ end
 function Util.FavKey(obj, isZone)
   if isZone then
     -- obj can be a tile/entry with mapID or a raw mapID
-    return "Z" .. tostring(obj.mapID or obj)
+    return "Z" .. (obj.mapID or obj)
   else
     -- obj can be a tile data, entry with attNode, or an ATT node
-    return "I" .. tostring(Util.GetInstanceProgressKey(obj.attNode or obj))
+    return "I" .. Util.GetInstanceProgressKey(obj.attNode or obj)
   end
 end
 
@@ -183,10 +195,6 @@ function Util.ATTGetProgress(node)
   return 0, 0, 0
 end
 
-function Util.ResolveProgress(node)
-  return Util.ATTGetProgress(node)
-end
-
 function Util.GetCollectionProgress(dataset)
   local c, t = 0, 0
   if type(dataset) ~= "table" then TP(dataset); return 0, 0, 0 end
@@ -210,7 +218,7 @@ function Util.GetCollectionProgress(dataset)
 end
 
 -------------------------------------------------
--- Frame pos helpers
+-- Frame helpers
 -------------------------------------------------
 -- Save frame position (+size) to DB
 function Util.SaveFramePosition(frame, dbKey)
@@ -241,6 +249,52 @@ function Util.LoadFramePosition(frame, dbKey, defaultPoint, defaultX, defaultY)
         frame:SetPoint(defaultPoint or "CENTER", defaultX or 0, defaultY or 0)
     end
 end
+
+-- Make a frame draggable and persist its position
+function Util.EnableDragPersist(frame, dbKey)
+    frame:SetMovable(true); frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart", frame.StartMoving)
+    frame:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        Util.SaveFramePosition(self, dbKey)
+    end)
+end
+
+-- Let a ScrollFrame drag its owner window (and persist)
+function Util.EnableScrollDrag(scrollFrame, ownerFrame, dbKey)
+    scrollFrame:RegisterForDrag("LeftButton")
+    scrollFrame:SetScript("OnDragStart", function() ownerFrame:StartMoving() end)
+    scrollFrame:SetScript("OnDragStop",  function()
+        ownerFrame:StopMovingOrSizing()
+        Util.SaveFramePosition(ownerFrame, dbKey)
+    end)
+end
+
+-- Persist on any size change
+function Util.PersistOnSizeChanged(frame, dbKey, onSizeChanged)
+    frame:HookScript("OnSizeChanged", function(self, w, h)
+        Util.SaveFramePosition(self, dbKey)
+        onSizeChanged(self, w, h)
+    end)
+end
+
+-- Add the standard bottom-right resizer to a frame
+function Util.AddResizerCorner(frame, dbKey, onDone)
+    local grab = CreateFrame("Button", nil, frame)
+    grab:SetSize(16, 16)
+    grab:SetPoint("BOTTOMRIGHT", -6, 6)
+    grab:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grab:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grab:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grab:SetScript("OnMouseDown", function() frame:StartSizing("BOTTOMRIGHT") end)
+    grab:SetScript("OnMouseUp", function()
+        frame:StopMovingOrSizing()
+        Util.SaveFramePosition(frame, dbKey)
+        onDone()
+    end)
+end
+
 
 function Util.ClearChildrenOrTabs(arg)
   -- anything derived from Frame has a .GetChildren()
@@ -278,24 +332,19 @@ function Util.SetTooltip(frame, anchor, title, ...)
 end
 
 -- Per-char popup id-filters (merge defaults)
-function Util.GetPopupIdFilters()
+function Util.CanonicalizePopupIdFilters()
+  ATTGoGoCharDB.popupIdFilters = ATTGoGoCharDB.popupIdFilters or {}
   local t = ATTGoGoCharDB.popupIdFilters
-  if type(t) ~= "table" then TP(); t = {}; ATTGoGoCharDB.popupIdFilters = t end
-
-  -- keep only known keys
   for k in pairs(t) do
     if COLLECTIBLE_ID_FIELDS[k] == nil then t[k] = nil end
   end
-  -- merge defaults
-  for key, default in pairs(COLLECTIBLE_ID_FIELDS) do
-    if t[key] == nil then t[key] = bool(default) end
+  for k, def in pairs(COLLECTIBLE_ID_FIELDS) do
+    if t[k] == nil then t[k] = def end
   end
-  return t
 end
 
 function Util.SetPopupIdFilter(key, value)
-  local t = Util.GetPopupIdFilters()
-  t[key] = bool(value)
+  ATTGoGoCharDB.popupIdFilters[key] = value
 end
 
 -------------------------------------------------
@@ -306,27 +355,13 @@ function Util.OpenAchievementByID(achievementID)
 
   if IsModifiedClick("CHATLINK") then
     local link = GetAchievementLink(achievementID)
-    if link then ChatEdit_InsertLink(link) return end
-    TP(link)
+    if link then ChatEdit_InsertLink(link) return else TP(link) end
   end
 
   UIParentLoadAddOn("Blizzard_AchievementUI")
   OpenAchievementFrameToAchievement(achievementID)
   ShowUIPanel(AchievementFrame)
   AchievementFrame_SelectAchievement(achievementID)
-end
-
-function Util.GetBestAchievementID(node)
-  if not node then TP(node); return nil end
-  local function firstUncollectedLeafWithAch(n)
-    if type(n) ~= "table" then return nil end
-    local ach, hasKids = n.achievementID, (n.g and #n.g > 0)
-    if ach and not hasKids and n.collected ~= true then return ach end
-    if n.g then for i = 1, #n.g do local id = firstUncollectedLeafWithAch(n.g[i]); if id then return id end end end
-    if ach and n.collected ~= true then return ach end
-    return nil
-  end
-  return firstUncollectedLeafWithAch(node) or node.achievementID
 end
 
 -- Given a node (often a Title leaf), try to find the achievement that awards it.
@@ -347,9 +382,8 @@ function Util.FindAchievementForTitleNode(node)
   if up then return up end
 
   -- If we have a titleID, ask ATT for that leaf and walk *its* parents.
-  local tid = tonumber(node.titleID)
-  if tid and Util.ATTSearchOne then
-    local hit = Util.ATTSearchOne("titleID", tid)
+  if node.titleID and Util.ATTSearchOne then
+    local hit = Util.ATTSearchOne("titleID", node.titleID)
     if type(hit) == "table" then
       local via = ascend_for_achievement(hit)
       if via then return via end
@@ -358,7 +392,7 @@ function Util.FindAchievementForTitleNode(node)
   end
 
   -- No luck.
-  TP(node, node.name, node.parent, node.parent.name, node.achievementID, node.titleID, up, tid)
+  TP(node, node.name, node.parent, node.parent.name, node.achievementID, node.titleID, up)
   return nil
 end
 
@@ -369,17 +403,16 @@ function Util.ExtractMapAndCoords(node)
   if not node or type(node) ~= "table" then TP(node); return nil end
 
   local c = node.coords
-  if type(c) == "table" and type(c[1]) == "table" then
-    local x = tonumber(c[1][1])
-    local y = tonumber(c[1][2])
-    local m = tonumber(c[1][3])
+  if c then
+    local x = c[1][1]
+    local y = c[1][2]
+    local m = c[1][3]
     if x and y then
       if x > 1 then x = x / 100 end
       if y > 1 then y = y / 100 end
       if x < 0 then x = 0 elseif x > 1 then x = 1 end
       if y < 0 then y = 0 elseif y > 1 then y = 1 end
-      local mapID = type(node.mapID) == "number" and node.mapID or nil
-      mapID = m or mapID
+      local mapID = m or node.mapID
       if mapID then return mapID, x, y else TP(m, x, y, mapID) end
     end
   end
@@ -387,37 +420,8 @@ function Util.ExtractMapAndCoords(node)
   return nil
 end
 
-function Util.OpenWorldMapTo(mapID)
-  ShowUIPanel(WorldMapFrame)
-  WorldMapFrame:SetMapID(mapID)
-end
-
-do
-  local overlay
-  function Util.HighlightWorldMapPulse()
-    if not overlay then
-      overlay = CreateFrame("Frame", nil, WorldMapFrame)
-      overlay:SetAllPoints(WorldMapFrame)
-      overlay.tex = overlay:CreateTexture(nil, "OVERLAY")
-      overlay.tex:SetAllPoints(overlay)
-      overlay.tex:SetColorTexture(0, 1, 1, 0.20)
-      overlay:Hide()
-    end
-    overlay:Show()
-    overlay:SetAlpha(0.0)
-    local t, dur, dir = 0, 0.8, 1
-    overlay:SetScript("OnUpdate", function(self, elapsed)
-      t = t + elapsed * dir
-      if t >= dur then dir = -1 end
-      if t <= 0 then self:SetScript("OnUpdate", nil); self:Hide(); return end
-      self:SetAlpha((t/dur) * 0.55)
-    end)
-  end
-end
-
 function Util.TryTomTomWaypoint(mapID, x, y, title)
   if not (mapID and C_Map.GetMapInfo(mapID)) then TP(mapID, title); return false end
-  if not (type(x)=="number" and type(y)=="number") then TP(title, x, y); return false end
   if not title then TP(mapID, x, y, title) end
   title = title or "ATT-GoGo"
   if TomTom and TomTom.AddWaypoint then
@@ -436,14 +440,14 @@ function Util.FocusMapForNode(node)
   if not mapID and node.flightpathID and node.g then
     for _, ch in ipairs(node.g) do mapID, x, y = Util.ExtractMapAndCoords(ch); if mapID then break end end
   end
-  if not mapID then
+  if not mapID and node.parent then
     mapID, x, y = Util.ExtractMapAndCoords(node.parent)
   end
 
   if not mapID then return false end
 
-  Util.OpenWorldMapTo(mapID)
-  C_Timer.After(0, Util.HighlightWorldMapPulse)
+  ShowUIPanel(WorldMapFrame); WorldMapFrame:SetMapID(mapID) -- open WorldMap for the `mapID`'s zone
+
   if x and y then Util.TryTomTomWaypoint(mapID, x, y, node.text or node.name or "Waypoint") end
   return true
 end
@@ -468,7 +472,7 @@ function Util.GetNodeIcon(node)
   for field, id in pairs(node) do
     if type(field) == "string" and field:sub(-2) == "ID" and id ~= nil then
       local res = Util.ATTSearchOne(field, id)
-      if res.icon and res.icon ~= 0 and res.icon ~= "" then return res.icon else TP(res) end
+      if res.icon and res.icon ~= 0 and res.icon ~= "" then return res.icon else TP(field, id, res) end
     end
   end
 
@@ -500,10 +504,10 @@ function Util.ApplyNodeIcon(target, node, opts)
   end
 
   local function clear_icon()
-    if icon and icon.SetAtlas     then icon:SetAtlas(nil) end
-    if icon and icon.SetTexture   then icon:SetTexture(nil) end
-    if icon and icon.SetTexCoord  then icon:SetTexCoord(0, 1, 0, 1) end
-    if icon and icon.SetDesaturated then icon:SetDesaturated(false) end
+    if icon then icon:SetAtlas(nil) end
+    if icon then icon:SetTexture(nil) end
+    if icon then icon:SetTexCoord(0, 1, 0, 1) end
+    if icon then icon:SetDesaturated(false) end
   end
   local function normalize_path(s)
     s = s:gsub("\\", "/")
@@ -515,8 +519,8 @@ function Util.ApplyNodeIcon(target, node, opts)
   local function apply_file(file_or_id, coords)
     clear_icon()
     -- If we have a Texture, set it directly; otherwise try ItemButton texture path.
-    if icon and not icon.GetObjectType then TP(file_or_id, coords) end
-    if icon and not icon.SetTexture then TP(file_or_id, coords) end
+    if icon and not icon.GetObjectType then TP(icon) end
+    if icon and not icon.SetTexture then TP(icon) end
     if icon and icon.GetObjectType and icon:GetObjectType() == "Texture" then
       icon:SetTexture(file_or_id or 134400)
     elseif SetItemButtonTexture and target then
@@ -535,28 +539,11 @@ function Util.ApplyNodeIcon(target, node, opts)
     if icon and icon.SetAtlas then
       clear_icon()
       icon:SetAtlas(atlas, false)
-      icon:SetDesaturated(bool(desat))
+      icon:SetDesaturated(desat)
       return true
     end
     TP(atlas, desat)
     return false
-  end
-
-  -- Handle table format from ATT or callers
-  if type(tex) == "table" then
-    if tex.atlas or tex.a then
-      if not apply_atlas(tex.atlas or tex.a, tex.desaturated or tex.desat) then
-        apply_file(134400)
-      end
-      return
-    else
-      local file   = tex.texture or tex.file or tex.path
-      local id     = tex.id
-      local coords = tex.coords or tex.t or (tex.t0 and { tex.t0, tex.t1, tex.t2, tex.t3 })
-      if type(file) == "string" then file = normalize_path(file) end
-      apply_file(file or id, coords)
-      return
-    end
   end
 
   -- String: atlas name (no slash/dot) OR file path
@@ -585,61 +572,27 @@ function Util.ApplyNodeIcon(target, node, opts)
 end
 
 -- === Removed/retired detection ===
--- Convert "major.minor.patch" into ATT-style RWP integer (e.g. "5.5.0" -> 50500, "1.15.3" -> 11503)
-function Util.CurrentClientRWP()
-  local ver = (GetBuildInfo())
-  local maj, min, pat = ver:match("^(%d+)%.(%d+)%.?(%d*)")
-  maj, min, pat = tonumber(maj), tonumber(min), tonumber(pat) or 0
-  if not (maj and min) then TP(maj, min, pat); return nil end
-  return (maj * 10000) + (min * 100) + pat
-end
+local BUILD_NO = select(4, GetBuildInfo())
 
--- Return true if a node should be considered 'removed from game' relative to current client.
--- Heuristics:
---   - ATT nodes often carry 'rwp' (removed-with-patch) as ATT-style int.
---   - Some nodes carry unobtainable flag 'u == 2' in ATT, treat as removed.
---   - If neither is present, treat as not removed.
-function Util.IsNodeRemoved(n, nowRWP)
-  if type(n) ~= "table" then TP(n, nowRWP); return false end
-  if not nowRWP then TP() end
-
-  -- ATT unobtainable flag for removed content
-  if n.u == 2 then return true end
-
-  -- rwp: removed with patch <= client build
-  local r = tonumber(n.rwp)
-  if r and nowRWP then return r <= nowRWP end
-
-  -- awp: added with patch > client build
-  local a = tonumber(n.awp)
-  if a and nowRWP then return a > nowRWP end
-
+-- return true if a node should be considered 'removed from game' relative to current client
+function Util.IsNodeRemoved(n)
+  if n.u == 2 then return true end           -- ATT unobtainable flag for removed content
+  if n.rwp then return n.rwp <= BUILD_NO end -- rwp: removed with patch
+  if n.awp then return n.awp > BUILD_NO end  -- awp: added with patch
   return false
 end
 
 -------------------------------------------------
 -- ATT instance resolvers & zone helper
 -------------------------------------------------
-local function _Root()
-  if type(ATT.GetDataCache) ~= "function" then TP(); return nil end
-  return ATT:GetDataCache()
-end
 
--- From an Instance node, pick the child Group which matches a difficultyID
+-- from an Instance node, pick the child Group which matches a difficultyID
 function Util.SelectDifficultyChild(instanceNode, difficultyID)
-  local id = tonumber(difficultyID)
-  if not (instanceNode and instanceNode.g) then TP(instanceNode, difficultyID, id); return nil end
-  local hadDifficultyChildren = false
-  local seen = {}
+  if not (instanceNode and instanceNode.g) then TP(instanceNode, difficultyID); return nil end
 
   for _, child in ipairs(instanceNode.g) do
-    local d = tonumber(child.difficultyID)
-    if d then
-      hadDifficultyChildren = true
-      seen[#seen+1] = d
-      if d == id then
+    if child.difficultyID == difficultyID then
         return child
-      end
     end
   end
 
@@ -671,6 +624,15 @@ function Util.ResolveContextNode()
   info.kind = "zone"
   info.uiMapID = C_Map.GetBestMapForUnit("player")
   return Util.ATTSearchOne("mapID", info.uiMapID) or TP(info) or sentinel, info
+end
+
+function Util.ResolvePopupTargetForCurrentContext()
+  local node, info = Util.ResolveContextNode()
+  if info.kind == "instance" then
+    return Util.SelectDifficultyChild(node, ATT.GetCurrentDifficultyID()) or node
+  else
+    return Util.GetMapRoot(info.uiMapID)
+  end
 end
 
 function IsInstanceLockedOut(instance)
@@ -743,7 +705,7 @@ local function BuildLockoutFromSavedInstances(attInstanceNode)
   local bosses = {}
   for i = 1, (numBosses or 0) do
     local bossName, _, killed = GetSavedInstanceEncounterInfo(lockoutIndex, i)
-    bosses[#bosses+1] = { name = bossName or ("Boss " .. i), down = bool(killed) }
+    bosses[#bosses+1] = { name = bossName or ("Boss " .. i), down = killed }
   end
 
   return { expiresAt = expiresAt, bosses = bosses }
@@ -751,10 +713,10 @@ end
 
 function Util.SaveInstanceProgressByNode(attInstanceNode)
   if type(attInstanceNode) ~= "table" then TP(attInstanceNode); return end
-  local instanceID = tonumber(attInstanceNode.instanceID); if not instanceID then return end
+  local instanceID = attInstanceNode.instanceID; if not instanceID then return end
 
   local key = Util.GetInstanceProgressKey(attInstanceNode) or instanceID
-  local c, t = Util.ResolveProgress(attInstanceNode)
+  local c, t = Util.ATTGetProgress(attInstanceNode)
   local lock = BuildLockoutFromSavedInstances(attInstanceNode)
 
   local me = Util.EnsureProgressDB()
@@ -774,9 +736,9 @@ end
 
 -- Save zone progress for an ATT zone node
 function Util.SaveZoneProgressByMapID(mapID)
-  local mid = tonumber(mapID); if not mid then TP(mapID, mid); return end
-  local c, t = Util.ResolveMapProgress(mid)
-  Util.EnsureProgressDB().zones[mid] = { c or 0, t or 0 }
+  if not mapID then TP(mapID); return end
+  local c, t = Util.ResolveMapProgress(mapID)
+  Util.EnsureProgressDB().zones[mapID] = { c or 0, t or 0 }
 end
 
 -- Convenience: snapshot whatever the current context is
@@ -816,8 +778,7 @@ end
 
 function BuildExpansionList()
   local list, seen = {}, {}
-  local root = _Root()
-  if not (root and type(root.g) == "table") then TP(root, root.g); return list end
+  local root = ATT:GetDataCache()
 
   local function scanContainer(cat)
     if type(cat.g) ~= "table" then return end
@@ -828,7 +789,7 @@ function BuildExpansionList()
         for _, c in pairs(exp.g) do if c and c.instanceID then hasInstance = true break end end
         if hasInstance then
           seen[id] = true
-          list[#list+1] = { id = id, name = exp.text or ("Expansion " .. tostring(id)), node = exp }
+          list[#list+1] = { id = id, name = exp.text or ("Expansion " .. id), node = exp }
         end
       end
     end
@@ -841,9 +802,8 @@ end
 
 -- === Era helpers ===
 local function EraFromAwp(awp)
-  local a = tonumber(awp)
-  if not a then return nil end
-  local era = math.floor(a / 10000)
+  if not awp then return nil end
+  local era = math.floor(awp / 10000)
   if era <= 0 then return 1 end
   if era >= 11 then return nil end
   return era
@@ -855,7 +815,7 @@ local function EraForChild(instanceNode, child)
   if child and child.difficultyID then
     return EraFromAwp(child.awp)
         or EraFromAwp(instanceNode.awp)
-        or tonumber(instanceNode.expansionID)
+        or instanceNode.expansionID
         or 1
   end
   return nil
@@ -867,8 +827,7 @@ local function BuildEraBuckets(instanceNode)
   local kids = type(instanceNode.g) == "table" and instanceNode.g or nil
   if kids then
     for _, ch in pairs(kids) do
-      local d = tonumber(ch.difficultyID)
-      if d then
+      if ch.difficultyID then
         hasDiff = true
         local era = EraForChild(instanceNode, ch)
         if era then
@@ -876,7 +835,7 @@ local function BuildEraBuckets(instanceNode)
           t[#t+1] = ch
           buckets[era] = t
         else
-          TP(instanceNode, instanceNode.g, kids, ch, ch.difficultyID, d, era, hasDiff)
+          TP(instanceNode, instanceNode.g, kids, ch, era)
         end
       end
     end
@@ -886,7 +845,7 @@ local function BuildEraBuckets(instanceNode)
 
   if not hasDiff then
     -- no difficulty children -> one bucket (non-split)
-    local era = EraFromAwp(instanceNode.awp) or tonumber(instanceNode.expansionID) or 1
+    local era = EraFromAwp(instanceNode.awp) or instanceNode.expansionID or 1
     buckets[era] = {}
   end
   return buckets
@@ -905,13 +864,13 @@ local function MakeEraWrapper(instanceNode, era, diffs, isSplit)
     g = (type(diffs)=="table" and #diffs>0) and diffs or instanceNode.g,
     awp = instanceNode.awp,
     rwp = instanceNode.rwp,
-    eraKey = tonumber(era),
+    eraKey = era,
   }
   -- progressKey: for non-split keep numeric instanceID (back-compat); for split include era
-  local id = tonumber(instanceNode.instanceID)
+  local id = instanceNode.instanceID
   if isSplit then
     wrap.__eraSplit = true
-    wrap.progressKey = tostring(id) .. ":" .. tostring(era)
+    wrap.progressKey = id .. ":" .. era
   else
     wrap.progressKey = id
   end
@@ -921,18 +880,17 @@ end
 function Util.GetInstanceProgressKey(node)
   if type(node) ~= "table" then TP(node); return nil end
   if node.progressKey ~= nil then return node.progressKey end
-  local id = tonumber(node.instanceID); if not id then TP(node.instanceID, id); return nil end
-  local era = tonumber(node.eraKey)
+  local id = node.instanceID; if not id then TP(id); return nil end
+  local era = node.eraKey
   -- if we don’t know whether it’s split, default to legacy (numeric)
-  node.progressKey = (node.__eraSplit and era) and (tostring(id) .. ":" .. tostring(era)) or id
+  node.progressKey = (node.__eraSplit and era) and (id .. ":" .. era) or id
   return node.progressKey
 end
 
 function GetInstancesForExpansion(expansionID)
-  local root = _Root()
+  local root = ATT:GetDataCache()
   if not (root and root.g) then TP(expansionID, root, root.g); return {} end
   local out = {}
-  local nowRWP = Util.CurrentClientRWP()
 
   local function scanContainer(cat)
     if type(cat.g) ~= "table" then return end
@@ -943,12 +901,12 @@ function GetInstancesForExpansion(expansionID)
             local buckets = BuildEraBuckets(inst)
             -- is this instance era-split? (more than one bucket)
             local first = next(buckets)
-            local isSplit = bool((first and next(buckets, first)))
+            local isSplit = bool(first and next(buckets, first))
 
             for era, diffs in pairs(buckets) do
               if era == expansionID then
                 local wrap = MakeEraWrapper(inst, era, diffs, isSplit)
-                local removed = Util.IsNodeRemoved(inst, nowRWP)  -- instance-level gate
+                local removed = Util.IsNodeRemoved(inst)  -- instance-level gate
                 out[#out+1] = {
                   name = Util.NodeDisplayName(inst),
                   instanceID = inst.instanceID,
@@ -972,7 +930,7 @@ function GetInstancesForExpansion(expansionID)
 end
 
 function BuildZoneList()
-  local root = _Root(); if not (root and root.g) then return {} end
+  local root = ATT:GetDataCache()
 
   local zones, seen = {}, {}
 
@@ -993,7 +951,7 @@ function BuildZoneList()
           local mid = n.mapID
           if not seen[mid] then
             seen[mid] = true
-            zones[#zones+1] = { id = "zone_" .. tostring(mid), name = Util.NodeDisplayName(n), node = n }
+            zones[#zones+1] = { id = "zone_" .. mid, name = Util.NodeDisplayName(n), node = n }
           end
         end
         if type(n.g) == "table" then scan(n.g) end
@@ -1107,7 +1065,7 @@ function Tooltip.AddProgress(tooltip, data, collected, total, percent, isZone, o
     Tooltip.AddInstanceLockoutTo(tooltip, lockoutData or data or ownerNode)
   end
 
-  AddOtherToonsSection(tooltip, ownerNode or data, isZone)
+  AddOtherToonsSection(tooltip, ownerNode, isZone)
 end
 
 function Tooltip.AddContextProgressTo(tooltip)
@@ -1116,7 +1074,7 @@ function Tooltip.AddContextProgressTo(tooltip)
   if info.kind == "instance" then
     local curDiff = ATT.GetCurrentDifficultyID()
     local child   = Util.SelectDifficultyChild(node, curDiff) or node
-    local c, t, p = Util.ResolveProgress(child)
+    local c, t, p = Util.ATTGetProgress(child)
     tooltip:AddLine("|cffffd200" .. Util.NodeDisplayName(node) .. "|r")
     Tooltip.AddProgress(tooltip, child, c, t, p, false, node, node)
   else
@@ -1126,7 +1084,7 @@ function Tooltip.AddContextProgressTo(tooltip)
     tooltip:AddLine("|cffffd200" .. zoneDisplay .. "|r")
 
     local c, t, p = Util.ResolveMapProgress(info.uiMapID)
-    if (t or 0) <= 0 then
+    if t <= 0 then
       tooltip:AddLine("Nothing to show for this location.", 0.7, 0.7, 0.7)
       return
     end
