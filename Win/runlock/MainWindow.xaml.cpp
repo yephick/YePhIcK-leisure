@@ -14,6 +14,8 @@
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.Storage.Streams.h>
+#include <microsoft.ui.xaml.windowinterop.h>
+#include <shobjidl_core.h>
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -64,9 +66,16 @@ namespace winrt::runlock::implementation
 
     Windows::Foundation::IAsyncAction MainWindow::GeneratePasswords_Click(IInspectable const&, RoutedEventArgs const&)
     {
+        auto hwnd = winrt::Microsoft::UI::Windowing::WindowNative::GetWindowHandle(*this);
         Windows::Storage::Pickers::FileSavePicker picker;
         picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::DocumentsLibrary);
         picker.FileTypeChoices().Insert(L"Text", single_threaded_vector<hstring>({ L".txt" }));
+
+        auto initialize = picker.as<::IInitializeWithWindow>();
+        if (initialize)
+        {
+            initialize->Initialize(hwnd);
+        }
 
         auto file = co_await picker.PickSaveFileAsync();
         if (!file)
