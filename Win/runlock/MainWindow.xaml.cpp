@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "MainWindow.xaml.h"
 #if __has_include("MainWindow.g.cpp")
 #include "MainWindow.g.cpp"
@@ -14,6 +14,8 @@
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.Storage.Streams.h>
+#include <winrt/Windows.System.h>
+#include <winrt/Microsoft.UI.Dispatching.h>
 #include <microsoft.ui.xaml.windowinterop.h>
 #include <shobjidl_core.h>
 
@@ -147,11 +149,19 @@ namespace winrt::runlock::implementation
         using namespace Windows::Storage;
         using namespace Windows::Storage::Streams;
 
+        auto uiDispatcher = DispatcherQueue();
+
+        auto rulesText = PasswordRulesBox().Text();
+        int minLen = static_cast<int>(MinLengthBox().Value());
+        int maxLen = static_cast<int>(MaxLengthBox().Value());
+
+        co_await winrt::resume_background();
+
         auto stream = co_await file.OpenAsync(FileAccessMode::ReadWrite);
         DataWriter writer(stream);
 
         std::vector<std::vector<std::wstring>> groups;
-        std::wstring rules = PasswordRulesBox().Text().c_str();
+        std::wstring rules = rulesText.c_str();
         std::wstringstream ss(rules);
         std::wstring line;
         while (std::getline(ss, line))
@@ -178,14 +188,14 @@ namespace winrt::runlock::implementation
             groups.push_back(std::move(options));
         }
 
-        int minLen = static_cast<int>(MinLengthBox().Value());
-        int maxLen = static_cast<int>(MaxLengthBox().Value());
         std::wstring current;
         GenerateRecursive(groups, 0, current, minLen, maxLen, writer);
 
         co_await writer.StoreAsync();
         writer.DetachStream();
         stream.Close();
+
+        co_await winrt::resume_foreground(uiDispatcher);
     }
 
     void MainWindow::GenerateRecursive(
