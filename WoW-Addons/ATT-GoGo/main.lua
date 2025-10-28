@@ -87,6 +87,8 @@ local function SetupTrashCombatWarning()
     return inInst and typ == "party"
   end
 
+  local function IsSolo() return GetNumGroupMembers() == 0 end
+
   local function Cancel()
     ticket = ticket + 1
     startedAt = nil
@@ -94,16 +96,16 @@ local function SetupTrashCombatWarning()
 
   local function Fire(myTicket)
     if myTicket ~= ticket then return end
-    if InDungeon() and not IsEncounterInProgress() and UnitAffectingCombat("player") then
+    if InDungeon() and IsSolo() and not IsEncounterInProgress() and UnitAffectingCombat("player") then
       local elapsed = startedAt and (GetTime() - startedAt) or 0
       RaidNotice_AddMessage(RaidWarningFrame, "Trash combat > 50s — empower at ~60s!", ChatTypeInfo.RAID_WARNING)
       PlaySound(SOUNDKIT.RAID_WARNING, "Master")
-      print("|cffff7e40ATT-GoGo:|r Non-boss combat > 50s — finish or reset. (elapsed "..math.floor(elapsed).."s)")
+      print("|cffff7e40ATT-GoGo:|r Non-boss combat > 50s — finish or reset. (elapsed " .. math.floor(elapsed) .. "s)")
     end
   end
 
   local function Start()
-    if not InDungeon() or IsEncounterInProgress() then return end
+    if not InDungeon() or not IsSolo() or IsEncounterInProgress() then return end
     startedAt = GetTime()
     ticket = ticket + 1
     local myTicket = ticket
