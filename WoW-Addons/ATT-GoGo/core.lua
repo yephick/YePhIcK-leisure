@@ -113,28 +113,51 @@ function Util.ATTSearchOne(field, id)
   local k = field .. ":" .. id
   local hit = _ATT_ONE_CACHE[k]
   if hit ~= nil then return hit end
-  hit = ATT.SearchForObject(field, id, "field")  -- strict search
-     or ATT.SearchForObject(field, id)           -- less strict alternative
-     or (ATT.SearchForField(field, id))[1]       -- least strict fallback
+--  hit = ATT.SearchForObject(field, id, "field")  -- strict search
+--     or ATT.SearchForObject(field, id)           -- less strict alternative
+--     or (ATT.SearchForField(field, id))[1]       -- least strict fallback
+  hit = ATTPerf.wrap("SearchForObject 1", function() return ATT.SearchForObject(field, id, "field") end)
+     or ATTPerf.wrap("SearchForObject 2", function() return ATT.SearchForObject(field, id) end)
+     or ATTPerf.wrap("SearchForObject 3", function() return (ATT.SearchForField(field, id))[1] end)
   if hit ~= nil then _ATT_ONE_CACHE[k] = hit end
   return hit
 end
 
+local _MAP_ROOT_CACHE     = {}
+local _MAP_PROG_CACHE = {}
+
+function Util.InvalidateMapProgress(mapID)
+  if mapID then _MAP_PROG_CACHE[mapID] = nil
+  else wipe(_MAP_PROG_CACHE) end
+end
+
 -- Wrap a map package in a simple root so our popup can recurse it like any ATT node
 function Util.GetMapRoot(mapID)
-  local pkg = ATT.GetCachedDataForMapID(mapID)
-  if type(pkg) ~= "table" or not next(pkg) then TP(pkg, next(pkg)); return nil end
+  local hit = _MAP_ROOT_CACHE[mapID]
+  if hit ~= nil then return hit or nil end        -- false sentinel means "known empty"
+  local pkg = ATTPerf.wrap("GetCachedDataForMapID", function() return ATT.GetCachedDataForMapID(mapID) end)
+  if type(pkg) ~= "table" or not next(pkg) then
+    TP(pkg, next(pkg))
+    _MAP_ROOT_CACHE[mapID] = false                -- remember "no data" to avoid repeated work
+    return nil
+  end
   local info = C_Map.GetMapInfo(mapID)
   local name = (info and info.name) or ("Map " .. mapID)
   local kids = (type(pkg.g) == "table" and pkg.g) or pkg
-  return { text = name, name = name, mapID = mapID, g = kids }
+  local root = { text = name, name = name, mapID = mapID, g = kids }
+  _MAP_ROOT_CACHE[mapID] = root
+  return root
 end
 
 -- Progress straight from the map package (matches /attmini totals)
 function Util.ResolveMapProgress(mapID)
-  local root = Util.GetMapRoot(mapID)
+  local hit = _MAP_PROG_CACHE[mapID]
+  if hit then return hit[1], hit[2], hit[3] end
+  local root = ATTPerf.wrap("GetMapRoot", Util.GetMapRoot, mapID)
   if type(root) == "table" then
-    return Util.ATTGetProgress(root)
+    local c, t, p = ATTPerf.wrap("ATTGetProgress", Util.ATTGetProgress, root)
+    _MAP_PROG_CACHE[mapID] = {c, t, p}
+    return c, t, p
   else
     TP(mapID, root)
   end
@@ -172,8 +195,27 @@ end
 -------------------------------------------------
 -- Progress resolution
 -------------------------------------------------
+local _PROG_CACHE = setmetatable({}, { __mode = "k" })
+function Util.InvalidateProgressCache(node)
+  -- no arg => nuke all (use for BIG wave / full rebuild)
+  if not node then
+    for k in pairs(_PROG_CACHE) do _PROG_CACHE[k] = nil end
+    return
+  end
+  -- targeted: clear this node and bubble to parents so rollups recompute
+  local p = node
+  while type(p) == "table" do
+    _PROG_CACHE[p] = nil
+    p = rawget(p, "parent")
+  end
+end
+
 function Util.ATTGetProgress(node)
   if not node then TP(node, node.g); return 0, 0, 0 end
+
+  local hit = _PROG_CACHE[node]
+  if hit then return hit[1], hit[2], hit[3] end
+
   if type(node.g) ~= "table" then return 0, 0, 0 end
   if node.collectible then
     return node.collected and 1 or 0, 1, node.collected and 100 or 0
@@ -188,7 +230,11 @@ function Util.ATTGetProgress(node)
       local c1, t1 = Util.ATTGetProgress(child)
       ac, at = ac + c1, at + t1
     end
-    if at > 0 then return ac, at, (ac / at) * 100 end
+    if at > 0 then
+      local ap = (ac / at) * 100
+      _PROG_CACHE[node] = { ac, at, ap }
+      return ac, at, ap
+    end
   else
     TP(node, node.g, next(node.g))
   end
@@ -297,6 +343,7 @@ end
 
 
 function Util.ClearChildrenOrTabs(arg)
+  local done = ATTPerf.auto("Util.ClearChildrenOrTabs")
   -- anything derived from Frame has a .GetChildren()
   if arg and type(arg) ~= "string" and arg.GetChildren then
     for _, child in ipairs({ arg:GetChildren() }) do
@@ -314,6 +361,7 @@ function Util.ClearChildrenOrTabs(arg)
   else
     TP(arg)
   end
+  done()
 end
 
 function Util.GetGridCols(scrollWidth, widgetSize, padding)
@@ -576,10 +624,12 @@ local BUILD_NO = select(4, GetBuildInfo())
 
 -- return true if a node should be considered 'removed from game' relative to current client
 function Util.IsNodeRemoved(n)
+return ATTPerf.wrap("Util.IsNodeRemoved", function()
   if n.u == 2 then return true end           -- ATT unobtainable flag for removed content
   if n.rwp then return n.rwp <= BUILD_NO end -- rwp: removed with patch
   if n.awp then return n.awp > BUILD_NO end  -- awp: added with patch
   return false
+end)
 end
 
 -------------------------------------------------
@@ -602,6 +652,7 @@ end
 -- Unified context resolver: returns the ATT node for current instance or zone.
 -- Returns: node, info  where info={kind="instance"|"zone", uiMapID=?}
 function Util.ResolveContextNode()
+return ATTPerf.wrap("Util.ResolveContextNode", function()
   local info = {}
   local sentinel = { text = "Unknown instance", name = "Unknown instance", g = {} }
 
@@ -624,6 +675,7 @@ function Util.ResolveContextNode()
   info.kind = "zone"
   info.uiMapID = C_Map.GetBestMapForUnit("player")
   return Util.ATTSearchOne("mapID", info.uiMapID) or TP(info) or sentinel, info
+end)
 end
 
 function Util.ResolvePopupTargetForCurrentContext()
@@ -777,6 +829,7 @@ function GetCompletionColor(percent)
 end
 
 function BuildExpansionList()
+return ATTPerf.wrap("BuildExpansionList", function()
   local list, seen = {}, {}
   local root = ATT:GetDataCache()
 
@@ -798,6 +851,7 @@ function BuildExpansionList()
   for _, cat in pairs(root.g) do scanContainer(cat) end
   table.sort(list, function(a,b) return (a.id or 0) < (b.id or 0) end)
   return list
+end)
 end
 
 -- === Era helpers ===
@@ -888,6 +942,7 @@ function Util.GetInstanceProgressKey(node)
 end
 
 function GetInstancesForExpansion(expansionID)
+return ATTPerf.wrap("GetInstancesForExpansion", function()
   local root = ATT:GetDataCache()
   if not (root and root.g) then TP(expansionID, root, root.g); return {} end
   local out = {}
@@ -927,9 +982,11 @@ function GetInstancesForExpansion(expansionID)
   for _, cat in pairs(root.g) do scanContainer(cat) end
   table.sort(out, function(a,b) return (a.name or "") < (b.name or "") end)
   return out
+end)
 end
 
 function BuildZoneList()
+local done = ATTPerf.auto("BuildZoneList")
   local root = ATT:GetDataCache()
 
   local zones, seen = {}, {}
@@ -961,6 +1018,7 @@ function BuildZoneList()
 
   scan(root.g)
   table.sort(zones, function(a,b) return (a.name or "") < (b.name or "") end)
+done()
   return zones
 end
 

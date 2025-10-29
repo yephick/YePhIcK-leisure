@@ -1,4 +1,4 @@
-﻿## Interface: 50500, 50501
+﻿## Interface: 50502
 ## Title: ATT-GoGo
 ## Notes: Companion addon for 'AllTheThings' to show instance farming status in a grid.
 ## Author: YePhIcK

@@ -657,13 +657,13 @@ local function BuildNodeList(root)
 
     -- Gather raw leaves per active filters
     local nodes = {}
-    GatherUncollectedNodes(root, nodes, activeKeys)
+    ATTPerf.wrap("GatherUncollectedNodes", function() GatherUncollectedNodes(root, nodes, activeKeys) end)
 
     -- Transformations (in order)
-    nodes = CollapseAchievementFamilies(root, nodes)
-    nodes = DedupItemsByItemID(nodes)
-    nodes = GroupItemsByVisualID(nodes)
-    SortPopupNodes(nodes)
+    nodes = ATTPerf.wrap("CollapseAchievementFamilies", function() return CollapseAchievementFamilies(root, nodes) end)
+    nodes = ATTPerf.wrap("DedupItemsByItemID", DedupItemsByItemID, nodes)
+    nodes = ATTPerf.wrap("GroupItemsByVisualID", GroupItemsByVisualID, nodes)
+    ATTPerf.wrap("SortPopupNodes", SortPopupNodes, nodes)
 
   return nodes, activeKeys
 end
@@ -769,13 +769,14 @@ local function RenderRowAt(scrollContent, row, dataIndex, nodes)
     -- Fill visuals (fast path: icon + name)
     row.btn.node = node
     Util.ApplyNodeIcon(row.btn, node)
-    ResolveDisplayForNode(node, row.label, row.btn)
+    ATTPerf.wrap("ResolveDisplayForNode", function() ResolveDisplayForNode(node, row.label, row.btn) end)
 
     row.btn:Show()
     row.label:Show()
 end
 
 local function UpdateVirtualList()
+local done = ATTPerf.auto("UpdateVirtualList")
     local nodes = uncollectedPopup.currentNodes or {}
     local scroller = uncollectedPopup.scrollFrame
     local content  = uncollectedPopup.scrollContent
@@ -790,6 +791,7 @@ local function UpdateVirtualList()
         local row = AcquireRow(content, i)
         RenderRowAt(content, row, first + (i - 1), nodes)
     end
+done()
 end
 
 ------------------------------------------------------------
@@ -947,7 +949,7 @@ end)
 local function RefreshPopup(data)
     uncollectedPopup.currentData = data
 
-    local nodes, activeKeys = BuildNodeList(data)
+    local nodes, activeKeys = ATTPerf.wrap("BuildNodeList", BuildNodeList, data)
     uncollectedPopup.currentNodes = nodes
     PopulateUncollectedPopup(uncollectedPopup.scrollContent, nodes)
 

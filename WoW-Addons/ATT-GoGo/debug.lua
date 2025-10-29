@@ -137,9 +137,9 @@ local function TP_summary()
   end
 end
 
-local plof = CreateFrame("Frame")
-plof:RegisterEvent("PLAYER_LOGOUT")
-plof:SetScript("OnEvent", TP_summary)
+local tp_sum_lof = CreateFrame("Frame")
+tp_sum_lof:RegisterEvent("PLAYER_LOGOUT")
+tp_sum_lof:SetScript("OnEvent", TP_summary)
 
 
 -- Ensure debug table
@@ -371,3 +371,167 @@ function Debug_Init()
   wipe(ensure("trace"))
   DebugDump()
 end
+
+
+-- perf.lua — lightweight profiling for WoW Lua 5.1 (MoP Classic)
+
+local Perf = {}
+local now_ms = function() return GetTimePreciseSec()*1000 end
+
+local SITES, ACTIVE, NEXT_ID = {}, {}, 0
+local SAMPLE_N = 128
+
+local function callsite(level)
+  level = (level or 1) + 1
+  local s = debugstack(level, 1, 0)
+  local file, line = s:match("([^\n]+):(%d+):")
+  return ((file or "?") .. ":" .. (line or "?")), s
+end
+
+local function add_sample(st, dt)
+  st.count = st.count + 1
+  st.total = st.total + dt
+  if dt < st.min then st.min = dt end
+  if dt > st.max then st.max = dt end
+  -- Welford variance
+  local delta = dt - st.mean
+  st.mean = st.mean + delta / st.count
+  st.M2   = st.M2   + delta * (dt - st.mean)
+  -- ring buffer
+  local si = st.si + 1; if si > SAMPLE_N then si = 1 end
+  st.samples[si] = dt; st.si = si
+end
+
+local function ensure_site(label, site, stack)
+  local key = site .. "|" .. (label or "")
+  local st = SITES[key]
+  if not st then
+    st = { label=label or "", site=site, stack=stack,
+           count=0, total=0, min=math.huge, max=0, mean=0, M2=0,
+           samples={}, si=0 }
+    SITES[key] = st
+  end
+  return key, st
+end
+
+function Perf.begin(label)
+  NEXT_ID = NEXT_ID + 1
+  local id = NEXT_ID
+  local site, stack = callsite(1)
+  local key = ensure_site(label, site, stack)
+  ACTIVE[id] = { key = key, t0 = now_ms() }
+  return id
+end
+
+function Perf.finish(id)
+  local a = ACTIVE[id]; if not a then print("not a: " .. tostring(id)); return end
+  ACTIVE[id] = nil
+  local dt = now_ms() - a.t0
+  local st = SITES[a.key]
+  add_sample(st, dt)
+  return dt
+end
+
+-- RAII-ish guard: call the returned function at scope exit
+function Perf.auto(label)
+  local id = Perf.begin(label)
+  return function() return Perf.finish(id) end
+end
+
+-- Wrap a function body with profiling, preserving errors
+function Perf.wrap(label, fn, ...)
+  local done = Perf.auto(label)
+
+  local function _trace(err)
+    -- WoW's global stack function is available in live
+    return tostring(err) .. "\n" .. debugstack(2, 12, 0)
+  end
+
+  local ok, r1, r2, r3, r4, r5 = xpcall(fn, _trace, ...)
+  local dt = done()
+  if not ok then
+    DebugLogf("[Perf][%s] errored after %.2f ms:\n%s", label or "", dt, r1)
+    error(r1, 2)
+  end
+  return r1, r2, r3, r4, r5
+end
+
+-- Directly add an externally measured duration (ms) to current callsite
+function Perf.mark(label, dt_ms)
+  local site, stack = callsite(1)
+  local key, st = ensure_site(label, site, stack)
+  add_sample(st, dt_ms)
+end
+
+local function pct_from_samples(samples, count, p)
+  if count == 0 then return 0 end
+  local arr, n = {}, 0
+  for _,v in pairs(samples) do n=n+1; arr[n]=v end
+  table.sort(arr)
+  local idx = math.max(1, math.min(n, math.floor((p/100)*n + 0.5)))
+  return arr[idx]
+end
+
+local function summary_lines()
+  local entries = {}
+  for _,st in pairs(SITES) do entries[#entries+1] = st end
+  table.sort(entries, function(a,b)
+    if a.total ~= b.total then return a.total > b.total end
+    return a.site < b.site
+  end)
+
+  local lines = {}
+  lines[#lines+1] = ("%-7s  %-6s  %-6s  %-6s  %-6s  %-6s  %s")
+                    :format("count","avg","p95","max","std","total","site|label")
+  for _,st in ipairs(entries) do
+    local std = (st.count>1) and math.sqrt(st.M2/(st.count-1)) or 0
+    local p95 = pct_from_samples(st.samples, st.count, 95)
+    local avg = st.total / st.count
+    lines[#lines+1] = ("%7d  %6.1f  %6.1f  %6.1f  %6.1f  %6.1f  %s|%s")
+                      :format(st.count, avg, p95, st.max, std, st.total, st.site, st.label)
+  end
+  return lines, entries
+end
+
+local function log_summary()
+  local lines, entries = summary_lines()
+  DebugLog("Perf summary:", "trace")
+  for _,ln in ipairs(lines) do DebugLog(ln, "trace") end
+  DebugLog("Perf first-hit stacks:", "trace")
+  for _,st in ipairs(entries) do
+    DebugLog(("---- %7d  %s|%s ----"):format(st.count, st.site, st.label), "trace")
+    for line in (st.stack or ""):gmatch("(.-)\n") do DebugLog(line, "trace") end
+  end
+end
+
+-- Auto summary on logout (same pattern as your TP_summary)
+local perf_lof = CreateFrame("Frame")
+perf_lof:RegisterEvent("PLAYER_LOGOUT")
+perf_lof:SetScript("OnEvent", log_summary)
+
+-- Export global
+_G.ATTPerf = Perf
+
+--------------------------------------------------
+---------------    U S A G E  --------------------
+--------------------------------------------------
+-- 1) Auto-guard (closest to RAII):
+-- local done = ATTPerf.auto("BuildGrid")
+-- -- ... the code you want to measure ...
+-- done()
+--------------------------------------------------
+-- 2) Wrapper:
+-- ATTPerf.wrap("RebuildUI", function()
+--   BuildTabs()
+--   BuildGrid()
+-- end)
+--------------------------------------------------
+-- 3) Begin/End pair (IDs handle recursion safely):
+-- local id = ATTPerf.begin("ScanNode")
+-- -- ... work ...
+-- ATTPerf.finish(id)
+--------------------------------------------------
+-- 4) Add your own measured duration:
+-- -- If you time with something else and want to record it:
+-- ATTPerf.mark("ExternalTimer", duration_ms)
+--------------------------------------------------

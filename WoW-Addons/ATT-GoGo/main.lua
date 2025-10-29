@@ -84,12 +84,12 @@ local function SetupTrashCombatWarning()
 
   local function InDungeon()
     local inInst, typ = IsInInstance()
-    return inInst and typ == "party"
+    return inInst and (typ == "party" or typ == "raid")
   end
 
   local function IsSolo() return GetNumGroupMembers() == 0 end
 
-  local function Cancel()
+  local function Finish()
     ticket = ticket + 1
     startedAt = nil
   end
@@ -100,7 +100,7 @@ local function SetupTrashCombatWarning()
       local elapsed = startedAt and (GetTime() - startedAt) or 0
       RaidNotice_AddMessage(RaidWarningFrame, "Trash combat > 50s — empower at ~60s!", ChatTypeInfo.RAID_WARNING)
       PlaySound(SOUNDKIT.RAID_WARNING, "Master")
-      print("|cffff7e40ATT-GoGo:|r Non-boss combat > 50s — finish or reset. (elapsed " .. math.floor(elapsed) .. "s)")
+      print(CTITLE .. "Non-boss combat > 50s — finish or reset. (elapsed " .. math.floor(elapsed) .. "s)")
     end
   end
 
@@ -116,11 +116,11 @@ local function SetupTrashCombatWarning()
     if e == "PLAYER_REGEN_DISABLED" then
       Start()
     elseif e == "PLAYER_REGEN_ENABLED" or e == "ENCOUNTER_START" then
-      Cancel()
+      Finish()
     elseif e == "ENCOUNTER_END" then
       if UnitAffectingCombat("player") then Start() end
     elseif e == "PLAYER_ENTERING_WORLD" or e == "ZONE_CHANGED_NEW_AREA" then
-      Cancel()
+      Finish()
     end
   end)
 
@@ -135,7 +135,7 @@ end
 ----------------------------------------------------------------
 -- Batch ATT "OnThingCollected" updates (simple version)
 ----------------------------------------------------------------
-local THRESHOLD   = 2
+local THRESHOLD   = 50
 local BATCH_DELAY = 0.40 -- wait this long after the *last* event
 
 local collectedBatch = { count = 0, timer = nil }
@@ -147,6 +147,9 @@ local function FlushCollectedBatch()
 
     if cnt >= THRESHOLD then
         -- Big wave => assume whole-DB refresh; rebuild everything
+        print("BIG wave, cnt = " .. cnt)
+        Util.InvalidateProgressCache()
+        Util.InvalidateMapProgress()
         SetupMainUI()           -- full rebuild of main frame widgets (also refreshes data)
     else
         -- Small wave => do a delayed context snapshot + popup/active-tab refresh
@@ -157,9 +160,23 @@ local function FlushCollectedBatch()
         local delay = C_Map.GetBestMapForUnit("player") and 0 or 2 -- extra settle time before context snapshot, if needed
         smallWaveTimer = C_Timer.NewTimer(delay, function()
             smallWaveTimer = nil
+            local done = ATTPerf.auto("smallWave")
+
+            local node, info = Util.ResolveContextNode()
+            if info.kind == "instance" then
+              -- Invalidate the currently relevant difficulty child (and parents)
+              local curDiff = ATT.GetCurrentDifficultyID()
+              local child = Util.SelectDifficultyChild(node, curDiff) or node
+              Util.InvalidateProgressCache(child)
+            else
+              -- Zone context: just nuke this map’s memo row
+              if info.uiMapID then Util.InvalidateMapProgress(info.uiMapID) else TP(node, info) end
+            end
+
             Util.SaveCurrentContextProgress()
             RefreshUncollectedPopupForContextIfShown(true)
             RefreshActiveTab()
+            done()
         end)
     end
 end

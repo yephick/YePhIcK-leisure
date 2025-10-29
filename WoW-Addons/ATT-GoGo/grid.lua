@@ -237,21 +237,21 @@ local function PrepareTabData(t, isZone, filterFunc, sortFunc)
     local entries = {}
     if isZone then
         for i, child in pairs(t.node.g or {}) do
-          local mid = child and child.mapID
-          if mid then
-            local entry = {
-              mapID   = mid,
-              name    = child.text or child.name,
-              removed = Util.IsNodeRemoved(child),
-            }
-            if (not filterFunc) or filterFunc(entry) then entries[#entries+1] = entry end
-          end
+            local mid = child and child.mapID
+            if mid then
+                local entry = {
+                    mapID   = mid,
+                    name    = child.text or child.name,
+                    removed = Util.IsNodeRemoved(child),
+                }
+                if (not filterFunc) or filterFunc(entry) then entries[#entries+1] = entry end
+            end
         end
     else
-        entries = GetInstancesForExpansion(t.id)
+          entries = GetInstancesForExpansion(t.id)
     end
     if sortFunc then
-        table.sort(entries, sortFunc)
+          table.sort(entries, sortFunc)
     end
     return entries
 end
@@ -283,7 +283,7 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
 
     local tileFactory = function(content, data, x, y, widgetSize, padding)
       local attNode = isZone and Util.GetMapRoot(data.mapID) or (data.attNode or data)
-      return Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, ResortAndRefresh)
+      return ATTPerf.wrap("Tile.CreateProgressWidget", function() return Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, ResortAndRefresh) end)
     end
 
     local scroll = gridFunc(tabContent, entries, tileFactory, 160, 10)
@@ -376,9 +376,13 @@ end
 
 -- For expansion tabs
 function Summary.UpdateExpansion(mainFrame, expID)
+local done = ATTPerf.auto("Summary.UpdateExpansion")
     local instances = GetInstancesForExpansion(expID)
+    local id = ATTPerf.begin("Util.GetCollectionProgress(instances)")
     local collected, total, percent = Util.GetCollectionProgress(instances)
+    ATTPerf.finish(id)
     Summary.Update(mainFrame, collected, total)
+done()
 end
 
 -- For zone tabs
@@ -421,7 +425,7 @@ function Grid.Create(parent, dataset, tileFactory, widgetSize, padding)
     local widgets = {}
 
     local function Populate()
-        Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll)
+        ATTPerf.wrap("Grid.Populate", function() Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll) end)
     end
     local Debounced = Util.Debounce(Populate, 0.08)
 
@@ -502,6 +506,7 @@ function RefreshActiveTab()
 end
 
 function SetupMainUI()
+local done = ATTPerf.auto("SetupMainUI")
     RequestRaidInfo()
     Util.ClearATTSearchCache()
 
@@ -524,4 +529,5 @@ function SetupMainUI()
 
     Tabs.InitialTabSelection(mainFrame, tabOrder, SelectTab)
     RegisterMainFrameEvents()
+done()
 end
