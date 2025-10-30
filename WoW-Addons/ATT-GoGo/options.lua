@@ -49,7 +49,7 @@ local function SetupOptionsFrame()
     -- Options defaults (self)
     Util.LoadFramePosition(f, "optionsWindowPos", "LEFT", 92, 80)
 
-    print("|cff00ff00[ATT-GoGo]|r Window sizes/positions reset to defaults.")
+    print(CTITLE .. "Window sizes/positions reset to defaults.")
   end)
 
   -- When the window opens, sync controls from DB

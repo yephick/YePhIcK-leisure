@@ -1,7 +1,7 @@
-﻿local addonName, addonTable = ...
+﻿local addonName = ...
 local ICON_FILE = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga"
 title = GetAddOnMetadata(addonName, "Title") or "UNKNOWN"
-local CTITLE = "|cff00ff00[" .. title .. "]|r "
+CTITLE = "|cff00ff00[" .. title .. "]|r "
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
@@ -100,7 +100,7 @@ local function SetupTrashCombatWarning()
       local elapsed = startedAt and (GetTime() - startedAt) or 0
       RaidNotice_AddMessage(RaidWarningFrame, "Trash combat > 50s — empower at ~60s!", ChatTypeInfo.RAID_WARNING)
       PlaySound(SOUNDKIT.RAID_WARNING, "Master")
-      print(CTITLE .. "Non-boss combat > 50s — finish or reset. (elapsed " .. math.floor(elapsed) .. "s)")
+      print(CTITLE .. "Non-boss combat > 50s — finish or reset")
     end
   end
 
@@ -147,7 +147,7 @@ local function FlushCollectedBatch()
 
     if cnt >= THRESHOLD then
         -- Big wave => assume whole-DB refresh; rebuild everything
-        print("BIG wave, cnt = " .. cnt)
+        DebugLog("BIG wave, cnt = " .. cnt)
         Util.InvalidateProgressCache()
         Util.InvalidateMapProgress()
         SetupMainUI()           -- full rebuild of main frame widgets (also refreshes data)

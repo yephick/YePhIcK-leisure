@@ -368,6 +368,7 @@ end
 -- Call this on ADDON_LOADED or manually to start a new debug session
 function Debug_Init()
   wipe(ensure("log"))
+  wipe(ensure("perf"))
   wipe(ensure("trace"))
   DebugDump()
 end
@@ -495,12 +496,12 @@ end
 
 local function log_summary()
   local lines, entries = summary_lines()
-  DebugLog("Perf summary:", "trace")
-  for _,ln in ipairs(lines) do DebugLog(ln, "trace") end
-  DebugLog("Perf first-hit stacks:", "trace")
+  DebugLog("Perf summary:", "perf")
+  for _,ln in ipairs(lines) do DebugLog(ln, "perf") end
+  DebugLog("Perf first-hit stacks:", "perf")
   for _,st in ipairs(entries) do
-    DebugLog(("---- %7d  %s|%s ----"):format(st.count, st.site, st.label), "trace")
-    for line in (st.stack or ""):gmatch("(.-)\n") do DebugLog(line, "trace") end
+    DebugLog(("---- %7d  %s|%s ----"):format(st.count, st.site, st.label), "perf")
+    for line in (st.stack or ""):gmatch("(.-)\n") do DebugLog(line, "perf") end
   end
 end
 

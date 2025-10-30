@@ -113,9 +113,11 @@ function Util.ATTSearchOne(field, id)
   local k = field .. ":" .. id
   local hit = _ATT_ONE_CACHE[k]
   if hit ~= nil then return hit end
+--  local done = ATTPerf.auto("ATT.SearchForObject/Field")
 --  hit = ATT.SearchForObject(field, id, "field")  -- strict search
 --     or ATT.SearchForObject(field, id)           -- less strict alternative
 --     or (ATT.SearchForField(field, id))[1]       -- least strict fallback
+--  done()
   hit = ATTPerf.wrap("SearchForObject 1", function() return ATT.SearchForObject(field, id, "field") end)
      or ATTPerf.wrap("SearchForObject 2", function() return ATT.SearchForObject(field, id) end)
      or ATTPerf.wrap("SearchForObject 3", function() return (ATT.SearchForField(field, id))[1] end)
@@ -632,6 +634,83 @@ return ATTPerf.wrap("Util.IsNodeRemoved", function()
 end)
 end
 
+-- === Era helpers ===
+local function EraFromAwp(awp)
+  if not awp then return nil end
+  local era = math.floor(awp / 10000)
+  if era <= 0 then return 1 end
+  if era >= 11 then return nil end
+  return era
+end
+
+-- Return era for a difficulty child (prefer child.awp, then instance.awp, then instance.expansionID, else Classic)
+local function EraForChild(instanceNode, child)
+  if not child then TP(instanceNode, child) end
+  if child and child.difficultyID then
+    return EraFromAwp(child.awp)
+        or EraFromAwp(instanceNode.awp)
+        or instanceNode.expansionID
+        or 1
+  end
+  return nil
+end
+
+-- Build { [era] = {difficultyChildren...} } ignoring non-difficulty headers
+local function BuildEraBuckets(instanceNode)
+  local buckets, hasDiff = {}, false
+  local kids = type(instanceNode.g) == "table" and instanceNode.g or nil
+  if kids then
+    for _, ch in pairs(kids) do
+      if ch.difficultyID then
+        hasDiff = true
+        local era = EraForChild(instanceNode, ch)
+        if era then
+          local t = buckets[era] or {}
+          t[#t+1] = ch
+          buckets[era] = t
+        else
+          TP(instanceNode, instanceNode.g, kids, ch, era)
+        end
+      end
+    end
+  else
+    TP(instanceNode, instanceNode.g, kids)
+  end
+
+  if not hasDiff then
+    -- no difficulty children -> one bucket (non-split)
+    local era = EraFromAwp(instanceNode.awp) or instanceNode.expansionID or 1
+    buckets[era] = {}
+  end
+  return buckets
+end
+
+-- Wrapper limited to era; also decide and *store once* a stable progress key
+local function MakeEraWrapper(instanceNode, era, diffs, isSplit)
+  local name = instanceNode.text or instanceNode.name
+  local wrap = {
+    text = name, name = name,
+    instanceID = instanceNode.instanceID,
+    mapID = instanceNode.mapID,
+    savedInstanceID = instanceNode.savedInstanceID,  -- keep lock-match key on the wrapper
+    icon = instanceNode.icon,
+    parent = instanceNode.parent,
+    g = (type(diffs)=="table" and #diffs>0) and diffs or instanceNode.g,
+    awp = instanceNode.awp,
+    rwp = instanceNode.rwp,
+    eraKey = era,
+  }
+  -- progressKey: for non-split keep numeric instanceID (back-compat); for split include era
+  local id = instanceNode.instanceID
+  if isSplit then
+    wrap.__eraSplit = true
+    wrap.progressKey = id .. ":" .. era
+  else
+    wrap.progressKey = id
+  end
+  return wrap
+end
+
 -------------------------------------------------
 -- ATT instance resolvers & zone helper
 -------------------------------------------------
@@ -660,14 +739,33 @@ return ATTPerf.wrap("Util.ResolveContextNode", function()
     local _, instType,_,_,_,_,_, instID = GetInstanceInfo()
     if instType == "party" or instType == "raid" then
       info.kind = "instance"
+      -- 1) Find the raw instance node by instanceID (fallback to mapID)
       -- some ATT nodes, like Kara, are not found by `instID == 532` but is found by `mapID == 350` (or Temple of Jade Serpent 464/429)
       local node = Util.ATTSearchOne("instanceID", instID)
       if not node then
           local mapID = C_Map.GetBestMapForUnit("player")
           node = Util.ATTSearchOne("mapID", mapID) or TP("no node by instance or map ID", GetInstanceInfo(), mapID)
       end
-      -- Util.SelectDifficultyChild(node, ATT.GetCurrentDifficultyID()) TODO: change this API to return the cooked ATT node so it can be used directly at call sites
-      return node or sentinel, info
+      if not node then return sentinel, info end
+
+      -- 2) Narrow to the current difficulty
+      local curDiff = ATT.GetCurrentDifficultyID()
+      local child   = Util.SelectDifficultyChild(node, curDiff) or node  -- returns diff child, or the node itself. 
+
+      -- 3) Determine current era + whether the instance is era-split, then wrap
+      local buckets = BuildEraBuckets(node)                               -- { [era] = {diff-children...} } 
+      local first   = next(buckets)
+      local isSplit = bool(first and next(buckets, first))
+      -- Prefer child’s era; fall back to the first bucket / expansionID / Classic
+      local era     = (child.difficultyID and (EraFromAwp(child.awp) or EraFromAwp(node.awp) or node.expansionID or 1))
+                      or first
+                      or node.expansionID
+                      or 1
+      -- we want the *current difficulty branch* in the returned node
+      local diffs   = { child }      -- hand the wrapper a single diff-branch
+
+      local cooked  = MakeEraWrapper(node, era, diffs, isSplit)
+      return cooked, info
     end
   end
 
@@ -751,24 +849,27 @@ local function BuildLockoutFromSavedInstances(attInstanceNode)
   local isLocked, _, numBosses, lockoutIndex = IsInstanceLockedOut(attInstanceNode)
   if not isLocked then return nil end
 
-  local resetSeconds = select(3, GetSavedInstanceInfo(lockoutIndex)) or 0
-  local expiresAt = time() + resetSeconds
+  local _, _, reset, _, _, _, _, _, _, _, _, _, _, sid = GetSavedInstanceInfo(lockoutIndex)
+  local expiresAt = time() + reset
 
   local bosses = {}
-  for i = 1, (numBosses or 0) do
+  for i = 1, numBosses do
     local bossName, _, killed = GetSavedInstanceEncounterInfo(lockoutIndex, i)
     bosses[#bosses+1] = { name = bossName or ("Boss " .. i), down = killed }
   end
 
-  return { expiresAt = expiresAt, bosses = bosses }
+  return { expiresAt = expiresAt, bosses = bosses, sid = sid }
 end
 
 function Util.SaveInstanceProgressByNode(attInstanceNode)
   if type(attInstanceNode) ~= "table" then TP(attInstanceNode); return end
-  local instanceID = attInstanceNode.instanceID; if not instanceID then return end
+  local instanceID = attInstanceNode.instanceID; if not instanceID then TP(attInstanceNode); return end
 
-  local key = Util.GetInstanceProgressKey(attInstanceNode) or instanceID
+  local key = Util.GetInstanceProgressKey(attInstanceNode) or TP(attInstanceNode) or instanceID
   local c, t = Util.ATTGetProgress(attInstanceNode)
+  if not t then
+    TP(attInstanceNode, instanceID, key, c, t)
+  end
   local lock = BuildLockoutFromSavedInstances(attInstanceNode)
 
   local me = Util.EnsureProgressDB()
@@ -776,12 +877,13 @@ function Util.SaveInstanceProgressByNode(attInstanceNode)
 
   if key == instanceID then
     -- non-split: progress + lock under numeric key
-    me.instances[instanceID] = { c or 0, t or 0, lock = lock }
+    me.instances[instanceID] = { c, t, lock = lock }
   else
     -- split: store progress under composite key; keep lock under numeric ID
-    me.instances[key] = { c or 0, t or 0 }
+    DebugLogf("saving era-split instance progress with instanceID, key, c, t = ", instanceID, key, c, t)
+    me.instances[key] = { c, t }
     local base = me.instances[instanceID] or {}
-    base.lock = lock
+    base = { c, t, lock = lock }
     me.instances[instanceID] = base
   end
 end
@@ -798,12 +900,9 @@ function Util.SaveCurrentContextProgress()
   local node, info = Util.ResolveContextNode()
 
   if info.kind == "instance" then
-    -- persist only the current difficulty branch for this instance
-    local curDiff = ATT.GetCurrentDifficultyID()
-    local child   = Util.SelectDifficultyChild(node, curDiff) or node
-    Util.SaveInstanceProgressByNode(child)
+    Util.SaveInstanceProgressByNode(node)
   else
-    if info.uiMapID then Util.SaveZoneProgressByMapID(info.uiMapID) end
+    if info.uiMapID then Util.SaveZoneProgressByMapID(info.uiMapID) else TP(node, info) end
   end
 end
 
@@ -826,6 +925,13 @@ function GetCompletionColor(percent)
   else
     local r = (100 - percent) / 50; return r * intensity, intensity, 0
   end
+end
+
+local function CompletionHex(percent, boost)
+  local r, g, b = GetCompletionColor(percent)
+  boost = boost or 4.0                      -- punch it up for text
+  r, g, b = math.min(r*boost,1), math.min(g*boost,1), math.min(b*boost,1)
+  return string.format("|cff%02x%02x%02x", r*255, g*255, b*255)
 end
 
 function BuildExpansionList()
@@ -852,83 +958,6 @@ return ATTPerf.wrap("BuildExpansionList", function()
   table.sort(list, function(a,b) return (a.id or 0) < (b.id or 0) end)
   return list
 end)
-end
-
--- === Era helpers ===
-local function EraFromAwp(awp)
-  if not awp then return nil end
-  local era = math.floor(awp / 10000)
-  if era <= 0 then return 1 end
-  if era >= 11 then return nil end
-  return era
-end
-
--- Return era for a difficulty child (prefer child.awp, then instance.awp, then instance.expansionID, else Classic)
-local function EraForChild(instanceNode, child)
-  if not child then TP(instanceNode, child) end
-  if child and child.difficultyID then
-    return EraFromAwp(child.awp)
-        or EraFromAwp(instanceNode.awp)
-        or instanceNode.expansionID
-        or 1
-  end
-  return nil
-end
-
--- Build { [era] = {difficultyChildren...} } ignoring non-difficulty headers
-local function BuildEraBuckets(instanceNode)
-  local buckets, hasDiff = {}, false
-  local kids = type(instanceNode.g) == "table" and instanceNode.g or nil
-  if kids then
-    for _, ch in pairs(kids) do
-      if ch.difficultyID then
-        hasDiff = true
-        local era = EraForChild(instanceNode, ch)
-        if era then
-          local t = buckets[era] or {}
-          t[#t+1] = ch
-          buckets[era] = t
-        else
-          TP(instanceNode, instanceNode.g, kids, ch, era)
-        end
-      end
-    end
-  else
-    TP(instanceNode, instanceNode.g, kids)
-  end
-
-  if not hasDiff then
-    -- no difficulty children -> one bucket (non-split)
-    local era = EraFromAwp(instanceNode.awp) or instanceNode.expansionID or 1
-    buckets[era] = {}
-  end
-  return buckets
-end
-
--- Wrapper limited to era; also decide and *store once* a stable progress key
-local function MakeEraWrapper(instanceNode, era, diffs, isSplit)
-  local name = instanceNode.text or instanceNode.name
-  local wrap = {
-    text = name, name = name,
-    instanceID = instanceNode.instanceID,
-    mapID = instanceNode.mapID,
-    savedInstanceID = instanceNode.savedInstanceID,  -- keep lock-match key on the wrapper
-    icon = instanceNode.icon,
-    parent = instanceNode.parent,
-    g = (type(diffs)=="table" and #diffs>0) and diffs or instanceNode.g,
-    awp = instanceNode.awp,
-    rwp = instanceNode.rwp,
-    eraKey = era,
-  }
-  -- progressKey: for non-split keep numeric instanceID (back-compat); for split include era
-  local id = instanceNode.instanceID
-  if isSplit then
-    wrap.__eraSplit = true
-    wrap.progressKey = id .. ":" .. era
-  else
-    wrap.progressKey = id
-  end
-  return wrap
 end
 
 function Util.GetInstanceProgressKey(node)
@@ -1123,6 +1152,7 @@ function Tooltip.AddProgress(tooltip, data, collected, total, percent, isZone, o
     Tooltip.AddInstanceLockoutTo(tooltip, lockoutData or data or ownerNode)
   end
 
+  Tooltip.AddMyLockouts(tooltip)
   AddOtherToonsSection(tooltip, ownerNode, isZone)
 end
 
@@ -1148,5 +1178,41 @@ function Tooltip.AddContextProgressTo(tooltip)
     end
     -- owner stub only needs mapID for “other toons” section
     Tooltip.AddProgress(tooltip, nil, c, t, p, true, { mapID = info.uiMapID }, nil)
+  end
+end
+
+function Tooltip.AddMyLockouts(tooltip)
+  local me = Util.EnsureProgressDB()
+  local rows, now = {}, time()
+  local instances = me.instances
+
+  for id, entry in pairs(instances) do
+    if type(id) == "number" then   -- only numeric instanceID rows
+      local lock = entry.lock
+      if lock and (lock.expiresAt - now) > 0 then
+        local total = (lock.bosses and #lock.bosses) or TP(lock) or 0
+        local down = 0; for i = 1, total do if lock.bosses[i].down then down = down + 1 end end
+        local node = Util.ATTSearchOne("instanceID", id)
+        local name = Util.NodeDisplayName(node)
+        local c, t, p = entry[1], entry[2], 0
+        if t then
+          p = (t > 0) and (c / t * 100) or 0
+        else
+          TP(id, entry[1], entry[2])
+          c, t, p = Util.ATTGetProgress(node)
+        end
+--        if c == nil then print("id, name, c, t = ", id, name, entry[1], entry[2]) end
+        local hex = CompletionHex(p, 6.7)
+
+        rows[#rows+1] = string.format("• %s%s (%d/%d) — %d/%d (%.1f%%)|r", hex, name, down, total, c, t, p)
+      end
+    end
+  end
+
+  if #rows > 0 then
+    table.sort(rows)
+    tooltip:AddLine(" ")
+    tooltip:AddLine("Locked instances:", 0.9, 0.9, 0.9)
+    for _, line in ipairs(rows) do tooltip:AddLine(line, 1, 1, 1, false) end
   end
 end
