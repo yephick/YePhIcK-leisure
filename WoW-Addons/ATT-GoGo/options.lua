@@ -20,7 +20,7 @@ local function SetupOptionsFrame()
   f:Hide()
   Util.EnableDragPersist(f, "optionsWindowPos")                                     -- replaces the custom drag code
 
-  f.TitleText:SetText("ATT-GoGo Options")
+  f.TitleText:SetText(TITLE .. " options")
 
   -- Reset window sizes/positions button
   local resetBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
@@ -132,7 +132,7 @@ function OptionsUI.BuildAccountGroup(parent)
     function(v)
       ATTGoGoDB.minimap.hide = (not v)
       local icon = LibStub:GetLibrary("LibDBIcon-1.0", true)
-      if v then icon:Show(title) else icon:Hide(title) end
+      if v then icon:Show(TITLE) else icon:Hide(TITLE) end
     end,
     nil,
     "Shows a movable launcher icon near the minimap."

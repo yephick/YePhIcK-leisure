@@ -1,7 +1,7 @@
 ﻿local addonName = ...
 local ICON_FILE = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga"
-title = GetAddOnMetadata(addonName, "Title") or "UNKNOWN"
-CTITLE = "|cff00ff00[" .. title .. "]|r "
+TITLE = GetAddOnMetadata(addonName, "Title") or "UNKNOWN"
+CTITLE = "|cff00ff00[" .. TITLE .. "]|r "
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
@@ -10,7 +10,7 @@ local function PrintStartup()
     local version = GetAddOnMetadata(addonName, "Version")
     local author = GetAddOnMetadata(addonName, "Author")
     local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor")
-    print(CTITLE .. version .. " |cffffff00Vibed by:|r " .. author .. " & " .. coauthor)
+    print(CTITLE .. "v" .. version .. ", vibed by:|cffffff40 " .. author .. "|r & " .. coauthor)
 end
 
 local function OpenUncollectedForHere()
@@ -40,7 +40,7 @@ end
 
 local function ShowMinimapTooltip(tooltip)
     RequestRaidInfo()
-    tooltip:AddLine(title, 0, 1, 0)
+    tooltip:AddLine(CTITLE, 0, 1, 0)
     tooltip:AddLine("Left-click: Open main grid window", 1, 1, 1)
     tooltip:AddLine("Right-click: Uncollected for current instance/zone", 1, 1, 1)
     tooltip:AddLine("Shift-click: Open options", 1, 1, 1)
@@ -53,7 +53,7 @@ local function SetupMinimapIcon()
     local icon = LibStub:GetLibrary("LibDBIcon-1.0", true)
     local dataObj = ldb:NewDataObject(addonName, {
         type = "data source",
-        text = title,
+        text = TITLE,
         icon = ICON_FILE,
         OnClick = function(self, button)
             if button == "LeftButton" then
@@ -61,7 +61,7 @@ local function SetupMinimapIcon()
                     OptionsUI.Show()
                 elseif IsAltKeyDown() then -- toggle LUA errors' window
                     local en = GetCVarBool("scriptErrors") and "0" or "1"
-                    print(CTITLE .. "Setting scriptErrors to " .. en)
+                    print(CTITLE .. "setting scriptErrors to " .. en)
                     SetCVar("scriptErrors", en)
                 else
                     ShowMainFrame()
@@ -75,7 +75,7 @@ local function SetupMinimapIcon()
     icon:Register(addonName, dataObj, ATTGoGoDB.minimap)
 end
 
--- Trash-Combat 50s Warning (dungeons only, non-boss)
+-- Prolonged trash-combat warning (dungeons/raids, solo only, non-boss)
 local function SetupTrashCombatWarning()
   local DELAY = 50
   local f = CreateFrame("Frame")
@@ -98,7 +98,7 @@ local function SetupTrashCombatWarning()
     if myTicket ~= ticket then return end
     if InDungeon() and IsSolo() and not IsEncounterInProgress() and UnitAffectingCombat("player") then
       local elapsed = startedAt and (GetTime() - startedAt) or 0
-      RaidNotice_AddMessage(RaidWarningFrame, "Trash combat > 50s — empower at ~60s!", ChatTypeInfo.RAID_WARNING)
+      RaidNotice_AddMessage(RaidWarningFrame, "Trash combat > 50s — empower in ~10s!", ChatTypeInfo.RAID_WARNING)
       PlaySound(SOUNDKIT.RAID_WARNING, "Master")
       print(CTITLE .. "Non-boss combat > 50s — finish or reset")
     end
@@ -210,7 +210,7 @@ local function PrintSlashCmdHelp()
     print("/gogo list        - Open Uncollected for current instance/zone")
 --    print("/gogo dump        - Debug: path + recursive dump for current context")
 --    print("/gogo add <text>  - Append <text> into ATT-GoGo debug log")
-    print("alternatively you can use /attgogo")
+    print("alternatively you can use /agg or /attgogo")
 end
 
 local function SetupSlashCmd()
@@ -232,7 +232,7 @@ local function SetupSlashCmd()
         if DUMP[cmd]    then DumpCurrentCtx()           return end
         if cmd == "add" then DebugLog(rest)             return end
 
-        print(CTITLE .. "Unknown command. Type '/attgogo help' for options.")
+        print(CTITLE .. "Unknown command. Type '/gogo help' for options.")
     end
 end
 
@@ -244,7 +244,6 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     ATTGoGoDB = ATTGoGoDB or {}
     ATTGoGoDB.minimap = ATTGoGoDB.minimap or { minimapPos = 128, hide = false }
 
-    PrintStartup()
     Debug_Init()
 
     -- === Wait for ATT ("All The Things") ===
@@ -252,8 +251,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         Util.CanonicalizePopupIdFilters()
         SetupMainUI()
         SetupMinimapIcon()
-        EnsurePreviewDock() -- create the preview dock before the uncollected list popup that uses it
-        EnsurePopup()
+        EnsurePreviewDock(); EnsurePopup() -- create the preview dock before the uncollected list popup that uses it
         OptionsUI.Init()
         SetupSlashCmd()
         SetupTrashCombatWarning()
@@ -281,7 +279,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
 
         ATT.AddEventHandler("OnThingCollected", OnThingCollected)
 
-        print(CTITLE .. "is ready")
+        PrintStartup()
     end)
 end)
 

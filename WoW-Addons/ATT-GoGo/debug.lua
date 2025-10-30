@@ -69,7 +69,7 @@ function TP(...)
     end
 
     DebugLog(msg, "trace")
-    print("|cff00ff00[ATT-GoGo]|r " .. msg)
+    print(CTITLE .. msg)
 
     if n > 0 then
       print("args:")

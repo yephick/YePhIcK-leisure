@@ -452,7 +452,7 @@ local function CreateMainFrame()
     Util.PersistOnSizeChanged(f, "mainWindowPos", function() end)
 
     f:Hide()
-    f.TitleText:SetText(title .. " - Progress summaries")
+    f.TitleText:SetText(TITLE .. " - Progress summaries")
 end
 
 -- Helper: Create gear icon button for options
@@ -462,7 +462,7 @@ local function CreateOptionsButton()
     optionsBtn:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -30, -3)
     optionsBtn:SetNormalTexture("Interface\\Icons\\INV_Misc_Gear_01")
     optionsBtn:SetHighlightTexture("Interface\\Icons\\INV_Misc_Gear_01", "ADD")
-    Util.SetTooltip(optionsBtn, "ANCHOR_LEFT", "Options", "Open " .. title .. " Options")
+    Util.SetTooltip(optionsBtn, "ANCHOR_LEFT", "Options", "Open " .. TITLE .. " options")
     optionsBtn:SetScript("OnClick", function() OptionsUI.Show() end)
 end
 

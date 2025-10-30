@@ -472,8 +472,6 @@ end
 
 function Util.TryTomTomWaypoint(mapID, x, y, title)
   if not (mapID and C_Map.GetMapInfo(mapID)) then TP(mapID, title); return false end
-  if not title then TP(mapID, x, y, title) end
-  title = title or "ATT-GoGo"
   if TomTom and TomTom.AddWaypoint then
     TomTom:AddWaypoint(mapID, x, y, { title = title, persistent = false })
     return true
@@ -498,7 +496,7 @@ function Util.FocusMapForNode(node)
 
   ShowUIPanel(WorldMapFrame); WorldMapFrame:SetMapID(mapID) -- open WorldMap for the `mapID`'s zone
 
-  if x and y then Util.TryTomTomWaypoint(mapID, x, y, node.text or node.name or "Waypoint") end
+  if x and y then Util.TryTomTomWaypoint(mapID, x, y, node.text or node.name or (TITLE .. " waypoint")) end
   return true
 end
 
@@ -880,7 +878,7 @@ function Util.SaveInstanceProgressByNode(attInstanceNode)
     me.instances[instanceID] = { c, t, lock = lock }
   else
     -- split: store progress under composite key; keep lock under numeric ID
-    DebugLogf("saving era-split instance progress with instanceID, key, c, t = ", instanceID, key, c, t)
+    DebugLogf("saving era-split instance progress with instanceID %d, key %s, c %d, t %d", instanceID, key, c, t)
     me.instances[key] = { c, t }
     local base = me.instances[instanceID] or {}
     base = { c, t, lock = lock }
