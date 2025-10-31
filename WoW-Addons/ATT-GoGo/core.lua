@@ -726,6 +726,27 @@ function Util.SelectDifficultyChild(instanceNode, difficultyID)
   return instanceNode
 end
 
+-- Returns the instance container for a given map by walking hits up to an ancestor with instanceID.
+local function FindInstanceFromMap(mapID)
+  local pick
+  local function try(field)
+      local hits = ATT.SearchForField(field, mapID)
+      if type(hits) ~= "table" then return end
+      for i = 1, #hits do
+      local p = hits[i]
+      while p and not p.instanceID do p = p.parent end
+      if p and p.instanceID then
+          pick = p
+          return
+      end
+      end
+  end
+  -- prefer 'maps' matches (instances commonly use it), then 'mapID'
+  try("maps")
+  if not pick then try("mapID") end
+  return pick
+end
+
 -- Unified context resolver: returns the ATT node for current instance or zone.
 -- Returns: node, info  where info={kind="instance"|"zone", uiMapID=?}
 function Util.ResolveContextNode()
@@ -741,8 +762,8 @@ return ATTPerf.wrap("Util.ResolveContextNode", function()
       -- some ATT nodes, like Kara, are not found by `instID == 532` but is found by `mapID == 350` (or Temple of Jade Serpent 464/429)
       local node = Util.ATTSearchOne("instanceID", instID)
       if not node then
-          local mapID = C_Map.GetBestMapForUnit("player")
-          node = Util.ATTSearchOne("mapID", mapID) or TP("no node by instance or map ID", GetInstanceInfo(), mapID)
+        info.uiMapID = C_Map.GetBestMapForUnit("player")
+        node = FindInstanceFromMap(info.uiMapID)
       end
       if not node then return sentinel, info end
 
@@ -1190,6 +1211,7 @@ function Tooltip.AddMyLockouts(tooltip)
       if lock and (lock.expiresAt - now) > 0 then
         local total = (lock.bosses and #lock.bosses) or TP(lock) or 0
         local down = 0; for i = 1, total do if lock.bosses[i].down then down = down + 1 end end
+        local bossTxt = (total > 0 and string.format("(%d/%d) ", down, total) or "")
         local node = Util.ATTSearchOne("instanceID", id)
         local name = Util.NodeDisplayName(node)
         local c, t, p = entry[1], entry[2], 0
@@ -1202,7 +1224,7 @@ function Tooltip.AddMyLockouts(tooltip)
 --        if c == nil then print("id, name, c, t = ", id, name, entry[1], entry[2]) end
         local hex = CompletionHex(p, 6.7)
 
-        rows[#rows+1] = string.format("• %s%s (%d/%d) — %d/%d (%.1f%%)|r", hex, name, down, total, c, t, p)
+        rows[#rows+1] = string.format("• %s%s %s— %d/%d (%.1f%%)|r", hex, name, bossTxt, c, t, p)
       end
     end
   end

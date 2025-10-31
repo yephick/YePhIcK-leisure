@@ -1,7 +1,7 @@
 ﻿local addonName = ...
 local ICON_FILE = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga"
 TITLE = GetAddOnMetadata(addonName, "Title") or "UNKNOWN"
-CTITLE = "|cff00ff00[" .. TITLE .. "]|r "
+CTITLE = "|cff00ff00" .. TITLE .. "|r "
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
@@ -75,7 +75,7 @@ local function SetupMinimapIcon()
     icon:Register(addonName, dataObj, ATTGoGoDB.minimap)
 end
 
--- Prolonged trash-combat warning (dungeons/raids, solo only, non-boss)
+-- prolonged trash-combat warning (dungeons/raids, solo only, non-boss)
 local function SetupTrashCombatWarning()
   local DELAY = 50
   local f = CreateFrame("Frame")
