@@ -113,14 +113,9 @@ function Util.ATTSearchOne(field, id)
   local k = field .. ":" .. id
   local hit = _ATT_ONE_CACHE[k]
   if hit ~= nil then return hit end
---  local done = ATTPerf.auto("ATT.SearchForObject/Field")
---  hit = ATT.SearchForObject(field, id, "field")  -- strict search
---     or ATT.SearchForObject(field, id)           -- less strict alternative
---     or (ATT.SearchForField(field, id))[1]       -- least strict fallback
---  done()
-  hit = ATTPerf.wrap("SearchForObject 1", function() return ATT.SearchForObject(field, id, "field") end)
-     or ATTPerf.wrap("SearchForObject 2", function() return ATT.SearchForObject(field, id) end)
-     or ATTPerf.wrap("SearchForObject 3", function() return (ATT.SearchForField(field, id))[1] end)
+  hit = ATT.SearchForObject(field, id, "field")  -- strict search
+     or ATT.SearchForObject(field, id)           -- less strict alternative
+     or (ATT.SearchForField(field, id))[1]       -- least strict fallback
   if hit ~= nil then _ATT_ONE_CACHE[k] = hit end
   return hit
 end
@@ -213,7 +208,7 @@ function Util.InvalidateProgressCache(node)
 end
 
 function Util.ATTGetProgress(node)
-  if not node then TP(node, node.g); return 0, 0, 0 end
+  if not node then TP(); return 0, 0, 0 end
 
   local hit = _PROG_CACHE[node]
   if hit then return hit[1], hit[2], hit[3] end
@@ -345,7 +340,6 @@ end
 
 
 function Util.ClearChildrenOrTabs(arg)
-  local done = ATTPerf.auto("Util.ClearChildrenOrTabs")
   -- anything derived from Frame has a .GetChildren()
   if arg and type(arg) ~= "string" and arg.GetChildren then
     for _, child in ipairs({ arg:GetChildren() }) do
@@ -363,7 +357,6 @@ function Util.ClearChildrenOrTabs(arg)
   else
     TP(arg)
   end
-  done()
 end
 
 function Util.GetGridCols(scrollWidth, widgetSize, padding)
@@ -774,7 +767,7 @@ return ATTPerf.wrap("Util.ResolveContextNode", function()
       -- 3) Determine current era + whether the instance is era-split, then wrap
       local buckets = BuildEraBuckets(node)                               -- { [era] = {diff-children...} } 
       local first   = next(buckets)
-      local isSplit = bool(first and next(buckets, first))
+      local isSplit = first and next(buckets, first)
       -- Prefer child’s era; fall back to the first bucket / expansionID / Classic
       local era     = (child.difficultyID and (EraFromAwp(child.awp) or EraFromAwp(node.awp) or node.expansionID or 1))
                       or first
@@ -832,7 +825,7 @@ end
 --   ATTGoGoDB.progress[<realm>][<char>].zones[mapID] = { [1]=c, [2]=t }
 -- ============================================================
 
--- Cached DB bucket (immutable after first build for this session)
+-- Cached DB bucket (immutable after first build for this session) (XXX: even though we do mutate it to add `instanceID`...)
 local _AGG_ProgressCache -- { me=<table>, realm=<string>, char=<string> }
 
 function Util.EnsureProgressDB()
@@ -843,14 +836,10 @@ function Util.EnsureProgressDB()
   local prog = ATTGoGoDB.progress
   if type(prog) ~= "table" then prog = {}; ATTGoGoDB.progress = prog end
 
-  --local realm = GetRealmName() or "?"
   local realm = GetRealmName()
-  if not realm then TP(realm); realm = "?" end
   prog[realm] = prog[realm] or {}
 
-  --local charName = UnitName("player") or "?"
   local charName = UnitName("player")
-  if not charName then TP(charName); charName = "?" end
   local byChar = prog[realm]
   -- always reset this toon’s layout (new schema every load)
   byChar[charName] = {
@@ -899,7 +888,7 @@ function Util.SaveInstanceProgressByNode(attInstanceNode)
     me.instances[instanceID] = { c, t, lock = lock }
   else
     -- split: store progress under composite key; keep lock under numeric ID
-    DebugLogf("saving era-split instance progress with instanceID %d, key %s, c %d, t %d", instanceID, key, c, t)
+--    DebugLogf("saving era-split instance progress with instanceID %d, key %s, c %d, t %d", instanceID, key, c, t)
     me.instances[key] = { c, t }
     local base = me.instances[instanceID] or {}
     base = { c, t, lock = lock }
@@ -1004,7 +993,7 @@ return ATTPerf.wrap("GetInstancesForExpansion", function()
             local buckets = BuildEraBuckets(inst)
             -- is this instance era-split? (more than one bucket)
             local first = next(buckets)
-            local isSplit = bool(first and next(buckets, first))
+            local isSplit = first and next(buckets, first)
 
             for era, diffs in pairs(buckets) do
               if era == expansionID then
@@ -1039,17 +1028,19 @@ local done = ATTPerf.auto("BuildZoneList")
 
   local zones, seen = {}, {}
 
-  -- continent containers only; exclude instances & holiday/event categories
+  -- continent containers only
   local function isGoodContainer(n)
     return type(n) == "table"
        and type(n.mapID) == "number"
        and type(n.g) == "table" and next(n.g) ~= nil
        and not n.instanceID
-       and not n.e and not n.isHolidayCategory and not n.eventID and not n.categoryID
        and C_Map.GetMapInfo(n.mapID).mapType == Enum.UIMapType.Continent
   end
 
+  local depth = 0 -- "Continents" are right under "Outdoor zones" and no deeper than that
   local function scan(t)
+    if depth > 2 then return end
+    depth = depth + 1
     for _, n in pairs(t) do
       if type(n) == "table" then
         if isGoodContainer(n) then
@@ -1062,10 +1053,10 @@ local done = ATTPerf.auto("BuildZoneList")
         if type(n.g) == "table" then scan(n.g) end
       end
     end
+    depth = depth - 1
   end
 
   scan(root.g)
-  table.sort(zones, function(a,b) return (a.name or "") < (b.name or "") end)
 done()
   return zones
 end
