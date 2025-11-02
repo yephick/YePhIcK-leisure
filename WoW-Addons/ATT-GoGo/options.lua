@@ -14,7 +14,7 @@ local CreateGroup, AddCheckbox
 
 -- Frame factory --------------------------------------------------------------
 local function SetupOptionsFrame()
---  if OptionsUI.frame then return OptionsUI.frame end
+  if OptionsUI.frame then return OptionsUI.frame end
   local f = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
   f:SetSize(300, 570)
   f:Hide()

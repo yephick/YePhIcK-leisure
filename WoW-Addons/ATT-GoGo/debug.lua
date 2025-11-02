@@ -7,7 +7,7 @@ local function fmt_tbl(t)
       return v
     elseif tv == "table" then
       local n = 0; for _ in pairs(v) do n = n + 1 end
-      return string.format("%s (keys=%d)", tostring(v), n)    -- e.g., "table: 0x1234 (keys=5)"
+      return ("%s (keys=%d)"):format(tostring(v), n)    -- e.g., "table: 0x1234 (keys=5)"
     else
       return tostring(v)
     end
@@ -15,7 +15,7 @@ local function fmt_tbl(t)
 
   local lines = {}
   for k, v in pairs(t) do
-    lines[#lines+1] = string.format("{<%s> %s = %s}", type(v), tostring(k), val_str(v))
+    lines[#lines+1] = ("{<%s> %s = %s}"):format(type(v), tostring(k), val_str(v))
   end
 
   table.sort(lines) -- stable, human-friendly order
@@ -292,13 +292,6 @@ end
 --   DebugPrintNodePath(node)                  -- compact labels
 --   DebugPrintNodePath(node, { verbose=true })-- include id tags
 --   DebugPrintNodePath(entry.attNode)         -- works with ATT nodes directly
-local function firstNonNil(...)
-  for i = 1, select('#', ...) do
-    local v = select(i, ...)
-    if v ~= nil then return v end
-  end
-end
-
 local function tagList(n)
   local tags = {}
   if n.instanceID     then tags[#tags+1] = "inst:" .. n.instanceID end
@@ -314,7 +307,7 @@ end
 
 local function labelFor(n, verbose)
   -- Prefer human-readable label, fall back to typed id
-  local lbl = firstNonNil(n.text, n.name)
+  local lbl = n.text or n.name
   if not lbl then
     if n.instanceID    then lbl = "Instance " .. n.instanceID
     elseif n.mapID     then lbl = "Map " .. n.mapID
@@ -335,10 +328,9 @@ end
 --- Print a breadcrumb path from root to the given ATT node.
 --- @param node table  -- ATT node (has .parent links)
 --- @param opts table? -- { sep=" > ", verbose=true }
-function DebugPrintNodePath(node, opts)
+function DebugGetNodePath(node, opts)
   if type(node) ~= "table" then
-    DebugLogf("[Path] not a table: %s", tostring(node))
-    return
+    return ("[Path] not a table: %s"):format(tostring(node))
   end
   opts = opts or {}
   local sep     = opts.sep or " > "
@@ -346,7 +338,7 @@ function DebugPrintNodePath(node, opts)
 
   -- Collect labels from node up to root
   local chain, cur, safety = {}, node, 0
-  while type(cur) == "table" and safety < 128 do
+  while type(cur) == "table" and safety < 32 do
     chain[#chain+1] = labelFor(cur, verbose)
     cur = rawget(cur, "parent") -- do not trigger metatables
     safety = safety + 1
@@ -356,8 +348,11 @@ function DebugPrintNodePath(node, opts)
   for i = #chain, 1, -1 do rev[#rev+1] = chain[i] end
 
   local path = table.concat(rev, sep)
-  DebugLogf("[Path] %s", path)
-  return path
+  return "[Path] " .. path
+end
+
+function DebugPrintNodePath(node, opts)
+  DebugLog(DebugGetNodePath(node, opts))
 end
 
 -- this is a placeholder function to be used as needed, do not remove
@@ -382,13 +377,6 @@ local now_ms = function() return GetTimePreciseSec()*1000 end
 local SITES, ACTIVE, NEXT_ID = {}, {}, 0
 local SAMPLE_N = 128
 
-local function callsite(level)
-  level = (level or 1) + 1
-  local s = debugstack(level, 1, 0)
-  local file, line = s:match("([^\n]+):(%d+):")
-  return ((file or "?") .. ":" .. (line or "?")), s
-end
-
 local function add_sample(st, dt)
   st.count = st.count + 1
   st.total = st.total + dt
@@ -403,11 +391,11 @@ local function add_sample(st, dt)
   st.samples[si] = dt; st.si = si
 end
 
-local function ensure_site(label, site, stack)
-  local key = site .. "|" .. (label or "")
+local function ensure_site(label)
+  local key = label
   local st = SITES[key]
   if not st then
-    st = { label=label or "", site=site, stack=stack,
+    st = { label=label or "",
            count=0, total=0, min=math.huge, max=0, mean=0, M2=0,
            samples={}, si=0 }
     SITES[key] = st
@@ -418,14 +406,13 @@ end
 function Perf.begin(label)
   NEXT_ID = NEXT_ID + 1
   local id = NEXT_ID
-  local site, stack = callsite(1)
-  local key = ensure_site(label, site, stack)
+  local key = ensure_site(label)--, site, stack)
   ACTIVE[id] = { key = key, t0 = now_ms() }
   return id
 end
 
 function Perf.finish(id)
-  local a = ACTIVE[id]; if not a then print("not a: " .. tostring(id)); return end
+  local a = ACTIVE[id]; if not a then TP(id); print("not a: " .. tostring(id)); return end
   ACTIVE[id] = nil
   local dt = now_ms() - a.t0
   local st = SITES[a.key]
@@ -457,13 +444,6 @@ function Perf.wrap(label, fn, ...)
   return r1, r2, r3, r4, r5
 end
 
--- Directly add an externally measured duration (ms) to current callsite
-function Perf.mark(label, dt_ms)
-  local site, stack = callsite(1)
-  local key, st = ensure_site(label, site, stack)
-  add_sample(st, dt_ms)
-end
-
 local function pct_from_samples(samples, count, p)
   if count == 0 then return 0 end
   local arr, n = {}, 0
@@ -477,19 +457,16 @@ local function summary_lines()
   local entries = {}
   for _,st in pairs(SITES) do entries[#entries+1] = st end
   table.sort(entries, function(a,b)
-    if a.total ~= b.total then return a.total > b.total end
-    return a.site < b.site
+    return a.total > b.total
   end)
 
   local lines = {}
-  lines[#lines+1] = ("%-7s  %-6s  %-6s  %-6s  %-6s  %-6s  %s")
-                    :format("count","avg","p95","max","std","total","site|label")
+  lines[#lines+1] = ("%-7s  %-6s  %-6s  %-6s  %-6s  %-6s  %s"):format("count","avg","p95","max","std","total", "label")
   for _,st in ipairs(entries) do
     local std = (st.count>1) and math.sqrt(st.M2/(st.count-1)) or 0
     local p95 = pct_from_samples(st.samples, st.count, 95)
     local avg = st.total / st.count
-    lines[#lines+1] = ("%7d  %6.1f  %6.1f  %6.1f  %6.1f  %6.1f  %s|%s")
-                      :format(st.count, avg, p95, st.max, std, st.total, st.site, st.label)
+    lines[#lines+1] = ("%7d  %6.1f  %6.1f  %6.1f  %6.1f  %6.1f  %s"):format(st.count, avg, p95, st.max, std, st.total, st.label)
   end
   return lines, entries
 end
@@ -498,11 +475,6 @@ local function log_summary()
   local lines, entries = summary_lines()
   DebugLog("Perf summary:", "perf")
   for _,ln in ipairs(lines) do DebugLog(ln, "perf") end
-  DebugLog("Perf first-hit stacks:", "perf")
-  for _,st in ipairs(entries) do
-    DebugLog(("---- %7d  %s|%s ----"):format(st.count, st.site, st.label), "perf")
-    for line in (st.stack or ""):gmatch("(.-)\n") do DebugLog(line, "perf") end
-  end
 end
 
 -- Auto summary on logout (same pattern as your TP_summary)
@@ -512,6 +484,7 @@ perf_lof:SetScript("OnEvent", log_summary)
 
 -- Export global
 _G.ATTPerf = Perf
+_G.AttPerfLogSummary = log_summary
 
 --------------------------------------------------
 ---------------    U S A G E  --------------------
@@ -531,8 +504,4 @@ _G.ATTPerf = Perf
 -- local id = ATTPerf.begin("ScanNode")
 -- -- ... work ...
 -- ATTPerf.finish(id)
---------------------------------------------------
--- 4) Add your own measured duration:
--- -- If you time with something else and want to record it:
--- ATTPerf.mark("ExternalTimer", duration_ms)
 --------------------------------------------------

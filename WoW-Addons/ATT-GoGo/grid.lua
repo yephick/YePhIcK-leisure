@@ -75,7 +75,7 @@ function Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, perce
   stats:SetPoint("BOTTOM", 0, 8)
   stats:SetJustifyH("CENTER")
   stats:SetWidth(widgetSize - 8)
-  stats:SetText(string.format("%d / %d (%.1f%%)", collected, total, percent))
+  stats:SetText(("%d / %d (%.1f%%)"):format(collected, total, percent))
 end
 
 -- ownerNode is the node that carries mapID/instanceID for DB lookups (e.g., the instance node)
@@ -94,6 +94,7 @@ local DIFF_LABEL = {
 }
 
 local function AttachInfoIcon(parentFrame, eraNode)
+return ATTPerf.wrap("AttachInfoIcon", function()
   -- collect per-difficulty rows present in this era wrapper
   local diffs = {}
   for _, ch in ipairs(eraNode.g) do
@@ -119,13 +120,15 @@ local function AttachInfoIcon(parentFrame, eraNode)
     for _, r in ipairs(diffs) do
       local p = (r.t > 0) and (r.c / r.t * 100) or 0
       local tag = DIFF_LABEL[r.d] or r.d
-      GameTooltip:AddLine(string.format("• %s — %d/%d (%.1f%%)", tag, r.c, r.t, p), 0.9, 0.9, 0.9)
+      GameTooltip:AddLine(("• %s — %d/%d (%.1f%%)"):format(tag, r.c, r.t, p), 0.9, 0.9, 0.9)
     end
   end)
+end)
 end
 
 -- Main: Create a progress widget for grid
 function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, onFavToggled)
+return ATTPerf.wrap("Tile.CreateProgressWidget", function()
     local f = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
     f:SetSize(widgetSize, 60)
     f:SetPoint("TOPLEFT", x * (widgetSize + padding), -y * (60 + padding))
@@ -139,11 +142,10 @@ function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZ
 
     -- Instance/Zone icon in top-left (same toggle)
     if GetSetting("showInstanceIconOnWidgets", true) then
-        local node = data.instanceID and Util.ATTSearchOne("instanceID", data.instanceID) or Util.ATTSearchOne("mapID", data.mapID) or TP() or { icon = 134400 }
         local tex = f:CreateTexture(nil, "ARTWORK")
         tex:SetSize(48, 48)
         tex:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -6)
-        Util.ApplyNodeIcon(tex, node, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
+        Util.ApplyNodeIcon(tex, attNode or data, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
     end
 
     local collected, total, percent
@@ -192,6 +194,7 @@ function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZ
     end)
 
     return f
+end)
 end
 
 
@@ -393,6 +396,7 @@ end
 
 -- Helper: Populate a frame with widgets in a grid
 function Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll)
+local done = ATTPerf.auto("Grid.Populate")
   Util.ClearChildrenOrTabs(content)
   wipe(widgets)
 
@@ -403,13 +407,16 @@ function Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, paddi
 
   for _, entry in ipairs(dataset) do
     if includeRemoved or (not entry.removed) then
+      local tf = ATTPerf.auto("tile factory")
       local f = tileFactory(content, entry, x, y, widgetSize, padding)
+      tf()
       widgets[#widgets+1] = f
       x = x + 1
       if x >= cols then x = 0; y = y + 1 end
     end
   end
   content:SetSize(frameWidth, (y + 1) * (60 + padding) + 80)
+done()
 end
 
 -- Factory: Create a scrolling grid for any dataset and widget factory
@@ -425,7 +432,7 @@ function Grid.Create(parent, dataset, tileFactory, widgetSize, padding)
     local widgets = {}
 
     local function Populate()
-        ATTPerf.wrap("Grid.Populate", function() Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll) end)
+        ATTPerf.wrap("Grid.Create:Populate", function() Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll) end)
     end
     local Debounced = Util.Debounce(Populate, 0.08)
 
@@ -502,7 +509,9 @@ end
 
 -- refresh the currently-visible grid
 function RefreshActiveTab()
+local done = ATTPerf.auto("RefreshActiveTab")
     if currentTab and currentTab:IsShown() then currentTab:Refresh() end
+done()
 end
 
 function SetupMainUI()
@@ -524,7 +533,7 @@ local done = ATTPerf.auto("SetupMainUI")
 
     Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, expansions, summaryY - 35, false, nil, nil, Grid.Create)
     Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, zones, -105, true,
-        function(entry) local _, t = Util.ResolveMapProgress(entry.mapID); return (t or 0) > 0 end,
+        function(entry) local done = ATTPerf.auto("tab factory Util.ResolveMapProgress"); local _, t = Util.ResolveMapProgress(entry.mapID); done(); return (t or 0) > 0 end,
         Tabs.ZoneEntrySort, Grid.Create)
 
     Tabs.InitialTabSelection(mainFrame, tabOrder, SelectTab)

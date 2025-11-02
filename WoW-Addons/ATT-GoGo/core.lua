@@ -148,17 +148,19 @@ end
 
 -- Progress straight from the map package (matches /attmini totals)
 function Util.ResolveMapProgress(mapID)
+return ATTPerf.wrap("Util.ResolveMapProgress", function()
   local hit = _MAP_PROG_CACHE[mapID]
   if hit then return hit[1], hit[2], hit[3] end
-  local root = ATTPerf.wrap("GetMapRoot", Util.GetMapRoot, mapID)
+  local root = ATTPerf.wrap("GetMapRoot", function() return Util.GetMapRoot(mapID) end)
   if type(root) == "table" then
-    local c, t, p = ATTPerf.wrap("ATTGetProgress", Util.ATTGetProgress, root)
+    local c, t, p = ATTPerf.wrap("ATTGetProgress", function() return Util.ATTGetProgress(root) end)
     _MAP_PROG_CACHE[mapID] = {c, t, p}
     return c, t, p
   else
     TP(mapID, root)
   end
   return 0, 0, 0
+end)
 end
 
 -- === Favorites (account-wide) ===
@@ -194,51 +196,48 @@ end
 -------------------------------------------------
 local _PROG_CACHE = setmetatable({}, { __mode = "k" })
 function Util.InvalidateProgressCache(node)
-  -- no arg => nuke all (use for BIG wave / full rebuild)
-  if not node then
-    for k in pairs(_PROG_CACHE) do _PROG_CACHE[k] = nil end
-    return
-  end
+  if not node then for k in pairs(_PROG_CACHE) do _PROG_CACHE[k] = nil end; return end -- no arg => nuke all (use for BIG wave / full rebuild)
   -- targeted: clear this node and bubble to parents so rollups recompute
   local p = node
-  while type(p) == "table" do
-    _PROG_CACHE[p] = nil
-    p = rawget(p, "parent")
-  end
+  while type(p) == "table" do _PROG_CACHE[p] = nil; p = rawget(p, "parent") end
 end
 
 function Util.ATTGetProgress(node)
-  if not node then TP(); return 0, 0, 0 end
-
+return ATTPerf.wrap("Util.ATTGetProgress", function()
   local hit = _PROG_CACHE[node]
   if hit then return hit[1], hit[2], hit[3] end
 
-  if type(node.g) ~= "table" then return 0, 0, 0 end
   if node.collectible then
-    return node.collected and 1 or 0, 1, node.collected and 100 or 0
+    local c = node.collected and 1 or 0
+    local t = 1
+    local p = c * 100
+    _PROG_CACHE[node] = { c, t, p }
+    return c, t, p
   end
 
-  local c = node.progress or 0
-  local t = node.total or 0
-  if t > 0 then return c, t, (c / t) * 100 end
-  if next(node.g) ~= nil then
-    local ac, at = 0, 0
-    for _, child in pairs(node.g) do
-      local c1, t1 = Util.ATTGetProgress(child)
-      ac, at = ac + c1, at + t1
-    end
-    if at > 0 then
-      local ap = (ac / at) * 100
-      _PROG_CACHE[node] = { ac, at, ap }
-      return ac, at, ap
-    end
-  else
-    TP(node, node.g, next(node.g))
+  -- Precomputed totals (ATT containers sometimes carry these)
+  if node.total and node.total > 0 then
+    local c, t = node.progress or 0, node.total
+    local p = (c / t) * 100
+    _PROG_CACHE[node] = { c, t, p }
+    return c, t, p
   end
-  return 0, 0, 0
+
+  -- Roll up children
+  local ac, at = 0, 0
+  for _, ch in pairs(node.g or {}) do
+    local c1, t1 = Util.ATTGetProgress(ch)
+    ac, at = ac + (c1 or 0), at + (t1 or 0)
+  end
+
+  local ap = (at > 0) and (ac / at * 100) or 0
+  _PROG_CACHE[node] = { ac, at, ap }
+  return ac, at, ap
+end)
 end
 
 function Util.GetCollectionProgress(dataset)
+return ATTPerf.wrap("Util.GetCollectionProgress", function()
   local c, t = 0, 0
   if type(dataset) ~= "table" then TP(dataset); return 0, 0, 0 end
 
@@ -258,6 +257,7 @@ function Util.GetCollectionProgress(dataset)
     TP(dataset)
   end
   return c, t, (t > 0) and (c / t * 100) or 0
+end)
 end
 
 -------------------------------------------------
@@ -340,23 +340,20 @@ end
 
 
 function Util.ClearChildrenOrTabs(arg)
-  -- anything derived from Frame has a .GetChildren()
-  if arg and type(arg) ~= "string" and arg.GetChildren then
+  -- a Frame – clear all child frames
+  if arg and arg.GetChildren then
     for _, child in ipairs({ arg:GetChildren() }) do
       child:Hide()
       child:SetParent(nil)
     end
     return
   end
-  if type(arg) == "table" then
-    for k, v in pairs(arg) do
-      if type(v) == "table" and v.Hide and v.SetParent then v:Hide(); v:SetParent(nil) else TP(k, v, arg[k]) end
+  -- a table of frames/buttons – hide & detach, then wipe
+  for k, v in pairs(arg) do
+      if v.Hide and v.SetParent then v:Hide(); v:SetParent(nil) else TP(k, v, arg[k]) end
       arg[k] = nil
-    end
-    wipe(arg)
-  else
-    TP(arg)
   end
+  wipe(arg)
 end
 
 function Util.GetGridCols(scrollWidth, widgetSize, padding)
@@ -425,7 +422,7 @@ function Util.FindAchievementForTitleNode(node)
   if up then return up end
 
   -- If we have a titleID, ask ATT for that leaf and walk *its* parents.
-  if node.titleID and Util.ATTSearchOne then
+  if node.titleID then
     local hit = Util.ATTSearchOne("titleID", node.titleID)
     if type(hit) == "table" then
       local via = ascend_for_achievement(hit)
@@ -443,6 +440,7 @@ end
 -- Map/waypoint helpers
 -------------------------------------------------
 function Util.ExtractMapAndCoords(node)
+return ATTPerf.wrap("Util.ExtractMapAndCoords", function()
   if not node or type(node) ~= "table" then TP(node); return nil end
 
   local c = node.coords
@@ -461,6 +459,7 @@ function Util.ExtractMapAndCoords(node)
   end
 
   return nil
+end)
 end
 
 function Util.TryTomTomWaypoint(mapID, x, y, title)
@@ -494,6 +493,7 @@ function Util.FocusMapForNode(node)
 end
 
 function Util.GetNodeIcon(node)
+return ATTPerf.wrap("Util.GetNodeIcon", function()
   if not node then TP(node); return nil end
   if node.icon then return node.icon end
 
@@ -511,9 +511,9 @@ function Util.GetNodeIcon(node)
 
   -- Fallback: scan ONLY this node's fields for "*ID" and ask ATT for an icon
   for field, id in pairs(node) do
-    if type(field) == "string" and field:sub(-2) == "ID" and id ~= nil then
+    if id ~= nil and type(field) == "string" and field:sub(-2) == "ID" then
       local res = Util.ATTSearchOne(field, id)
-      if res.icon and res.icon ~= 0 and res.icon ~= "" then return res.icon else TP(field, id, res) end
+      if res.icon and res.icon ~= 0 and res.icon ~= "" then return res.icon end
     end
   end
 
@@ -526,6 +526,7 @@ function Util.GetNodeIcon(node)
   TP(node, node.parent, p, hops)
 
   return nil
+end)
 end
 
 -- Centralized icon applier: works with ItemButtons *and* raw Textures.
@@ -533,8 +534,9 @@ end
 --   Util.ApplyNodeIcon(btnOrTexture, node)
 --   Util.ApplyNodeIcon(btnOrTexture, node, { texCoord = {0.07,0.93,0.07,0.93} })
 function Util.ApplyNodeIcon(target, node, opts)
+return ATTPerf.wrap("Util.ApplyNodeIcon", function()
   opts = opts or {}
-  local tex = Util.GetNodeIcon(node)   -- may be file path, fileID, atlas, or a table {atlas=..., coords=..., id=..., texture=...}
+  local tex = opts.icon or Util.GetNodeIcon(node)   -- may be file path, fileID, atlas, or a table {atlas=..., coords=..., id=..., texture=...}
   local icon
   -- Determine the "icon" subtexture if target is an ItemButton; otherwise treat target as the Texture itself.
   if target and target.GetObjectType and target:GetObjectType() == "Texture" then
@@ -544,72 +546,20 @@ function Util.ApplyNodeIcon(target, node, opts)
         or (target and target.GetName and _G[target:GetName() .. "IconTexture"])
   end
 
-  local function clear_icon()
-    if icon then icon:SetAtlas(nil) end
-    if icon then icon:SetTexture(nil) end
-    if icon then icon:SetTexCoord(0, 1, 0, 1) end
-    if icon then icon:SetDesaturated(false) end
-  end
-  local function normalize_path(s)
-    s = s:gsub("\\", "/")
-    s = s:gsub("^interface/", "Interface/")
-    s = s:gsub("^Interface/addons/", "Interface/AddOns/")
-    if not s:find("^Interface/") then s = "Interface/" .. s end
-    return s
-  end
-  local function apply_file(file_or_id, coords)
-    clear_icon()
-    -- If we have a Texture, set it directly; otherwise try ItemButton texture path.
-    if icon and not icon.GetObjectType then TP(icon) end
-    if icon and not icon.SetTexture then TP(icon) end
-    if icon and icon.GetObjectType and icon:GetObjectType() == "Texture" then
-      icon:SetTexture(file_or_id or 134400)
-    elseif SetItemButtonTexture and target then
-      SetItemButtonTexture(target, file_or_id or 134400)
-    elseif icon and icon.SetTexture then
-      icon:SetTexture(file_or_id or 134400)
-    end
-    if target and not SetItemButtonTexture then TP(file_or_id, coords) end
-    local tc = opts.texCoord or coords
-    if icon and tc and #tc == 4 then
-      icon:SetTexCoord(tc[1], tc[2], tc[3], tc[4])
-    end
-  end
-  local function apply_atlas(atlas, desat)
-    if icon and not icon.SetAtlas then TP(atlas, desat) end
-    if icon and icon.SetAtlas then
-      clear_icon()
-      icon:SetAtlas(atlas, false)
-      icon:SetDesaturated(desat)
-      return true
-    end
-    TP(atlas, desat)
-    return false
-  end
-
-  -- String: atlas name (no slash/dot) OR file path
-  if type(tex) == "string" then
-    if (not tex:find("/")) and (not tex:find("%.")) then
-      TP(target, node, opts, tex)
-      if not apply_atlas(tex, false) then
-        apply_file(134400)
-      end
-      return
-    else
-      apply_file(normalize_path(tex))
-      return
-    end
-  end
-
-  -- Numeric fileID
-  if type(tex) == "number" then
-    apply_file(tex)
+  -- Paint
+  if icon and icon.SetTexture then
+    icon:SetTexture(tex)
+    local tc = opts.texCoord or { 0, 1, 0, 1 }
+    icon:SetTexCoord(tc[1], tc[2], tc[3], tc[4])
     return
+  else
+    if not icon.SetTexture then TP(icon) end
   end
 
-  -- Fallback
-  TP(target, node, opts)
-  apply_file(134400)
+  -- Fallback for ItemButtons
+  SetItemButtonTexture(target, tex)
+
+end)
 end
 
 -- === Removed/retired detection ===
@@ -636,6 +586,7 @@ end
 
 -- Return era for a difficulty child (prefer child.awp, then instance.awp, then instance.expansionID, else Classic)
 local function EraForChild(instanceNode, child)
+return ATTPerf.wrap("EraForChild", function()
   if not child then TP(instanceNode, child) end
   if child and child.difficultyID then
     return EraFromAwp(child.awp)
@@ -644,10 +595,12 @@ local function EraForChild(instanceNode, child)
         or 1
   end
   return nil
+end)
 end
 
 -- Build { [era] = {difficultyChildren...} } ignoring non-difficulty headers
 local function BuildEraBuckets(instanceNode)
+return ATTPerf.wrap("BuildEraBuckets", function()
   local buckets, hasDiff = {}, false
   local kids = type(instanceNode.g) == "table" and instanceNode.g or nil
   if kids then
@@ -674,10 +627,12 @@ local function BuildEraBuckets(instanceNode)
     buckets[era] = {}
   end
   return buckets
+end)
 end
 
 -- Wrapper limited to era; also decide and *store once* a stable progress key
 local function MakeEraWrapper(instanceNode, era, diffs, isSplit)
+return ATTPerf.wrap("MakeEraWrapper", function()
   local name = instanceNode.text or instanceNode.name
   local wrap = {
     text = name, name = name,
@@ -700,6 +655,7 @@ local function MakeEraWrapper(instanceNode, era, diffs, isSplit)
     wrap.progressKey = id
   end
   return wrap
+end)
 end
 
 -------------------------------------------------
@@ -708,6 +664,7 @@ end
 
 -- from an Instance node, pick the child Group which matches a difficultyID
 function Util.SelectDifficultyChild(instanceNode, difficultyID)
+return ATTPerf.wrap("Util.SelectDifficultyChild", function()
   if not (instanceNode and instanceNode.g) then TP(instanceNode, difficultyID); return nil end
 
   for _, child in ipairs(instanceNode.g) do
@@ -717,10 +674,12 @@ function Util.SelectDifficultyChild(instanceNode, difficultyID)
   end
 
   return instanceNode
+end)
 end
 
 -- Returns the instance container for a given map by walking hits up to an ancestor with instanceID.
 local function FindInstanceFromMap(mapID)
+return ATTPerf.wrap("FindInstanceFromMap", function()
   local pick
   local function try(field)
       local hits = ATT.SearchForField(field, mapID)
@@ -738,6 +697,7 @@ local function FindInstanceFromMap(mapID)
   try("maps")
   if not pick then try("mapID") end
   return pick
+end)
 end
 
 -- Unified context resolver: returns the ATT node for current instance or zone.
@@ -798,6 +758,7 @@ function Util.ResolvePopupTargetForCurrentContext()
 end
 
 function IsInstanceLockedOut(instance)
+return ATTPerf.wrap("IsInstanceLockedOut", function()
   local sid
   if type(instance) == "table" then
     local n = instance
@@ -813,6 +774,7 @@ function IsInstanceLockedOut(instance)
     end
   end
   return false
+end)
 end
 
 -- ============================================================
@@ -854,6 +816,7 @@ end
 
 -- Build a lockout snapshot (absolute expiry + boss list by name only)
 local function BuildLockoutFromSavedInstances(attInstanceNode)
+return ATTPerf.wrap("BuildLockoutFromSavedInstances", function()
   local isLocked, _, numBosses, lockoutIndex = IsInstanceLockedOut(attInstanceNode)
   if not isLocked then return nil end
 
@@ -867,44 +830,41 @@ local function BuildLockoutFromSavedInstances(attInstanceNode)
   end
 
   return { expiresAt = expiresAt, bosses = bosses, sid = sid }
+end)
 end
 
 function Util.SaveInstanceProgressByNode(attInstanceNode)
+return ATTPerf.wrap("Util.SaveInstanceProgressByNode", function()
   if type(attInstanceNode) ~= "table" then TP(attInstanceNode); return end
-  local instanceID = attInstanceNode.instanceID; if not instanceID then TP(attInstanceNode); return end
+  local instanceID = attInstanceNode.instanceID
 
-  local key = Util.GetInstanceProgressKey(attInstanceNode) or TP(attInstanceNode) or instanceID
+  local key = Util.GetInstanceProgressKey(attInstanceNode)
   local c, t = Util.ATTGetProgress(attInstanceNode)
-  if not t then
-    TP(attInstanceNode, instanceID, key, c, t)
-  end
   local lock = BuildLockoutFromSavedInstances(attInstanceNode)
 
   local me = Util.EnsureProgressDB()
   me.instances = me.instances or {}
 
-  if key == instanceID then
-    -- non-split: progress + lock under numeric key
-    me.instances[instanceID] = { c, t, lock = lock }
-  else
-    -- split: store progress under composite key; keep lock under numeric ID
---    DebugLogf("saving era-split instance progress with instanceID %d, key %s, c %d, t %d", instanceID, key, c, t)
-    me.instances[key] = { c, t }
-    local base = me.instances[instanceID] or {}
-    base = { c, t, lock = lock }
-    me.instances[instanceID] = base
+  me.instances[instanceID] = { c, t, lock = lock } -- split and non-split: progress + lock under numeric key
+  if key ~= instanceID then
+    -- split: store progress under composite key
+    me.instances[key]        = { c, t }
+--    DebugLogf("saved era-split instance progress with instanceID %d, key %s, c %d, t %d", instanceID, key, c, t)
   end
+end)
 end
 
 -- Save zone progress for an ATT zone node
 function Util.SaveZoneProgressByMapID(mapID)
-  if not mapID then TP(mapID); return end
+return ATTPerf.wrap("Util.SaveZoneProgressByMapID", function()
   local c, t = Util.ResolveMapProgress(mapID)
   Util.EnsureProgressDB().zones[mapID] = { c or 0, t or 0 }
+end)
 end
 
 -- Convenience: snapshot whatever the current context is
 function Util.SaveCurrentContextProgress()
+return ATTPerf.wrap("Util.SaveCurrentContextProgress", function()
   local node, info = Util.ResolveContextNode()
 
   if info.kind == "instance" then
@@ -912,6 +872,7 @@ function Util.SaveCurrentContextProgress()
   else
     if info.uiMapID then Util.SaveZoneProgressByMapID(info.uiMapID) else TP(node, info) end
   end
+end)
 end
 
 -- === Other-toons option (tri-state) ===
@@ -926,6 +887,7 @@ end
 -- UI lists (Expansions / Zones)
 -------------------------------------------------
 function GetCompletionColor(percent)
+return ATTPerf.wrap("GetCompletionColor", function()
   percent = math.max(0, math.min(100, percent or 0))
   local intensity = 0.15
   if percent < 50 then
@@ -933,13 +895,16 @@ function GetCompletionColor(percent)
   else
     local r = (100 - percent) / 50; return r * intensity, intensity, 0
   end
+end)
 end
 
 local function CompletionHex(percent, boost)
+return ATTPerf.wrap("CompletionHex", function()
   local r, g, b = GetCompletionColor(percent)
   boost = boost or 4.0                      -- punch it up for text
   r, g, b = math.min(r*boost,1), math.min(g*boost,1), math.min(b*boost,1)
-  return string.format("|cff%02x%02x%02x", r*255, g*255, b*255)
+  return ("|cff%02x%02x%02x"):format(r*255, g*255, b*255)
+end)
 end
 
 function BuildExpansionList()
@@ -969,6 +934,7 @@ end)
 end
 
 function Util.GetInstanceProgressKey(node)
+return ATTPerf.wrap("Util.GetInstanceProgressKey", function()
   if type(node) ~= "table" then TP(node); return nil end
   if node.progressKey ~= nil then return node.progressKey end
   local id = node.instanceID; if not id then TP(id); return nil end
@@ -976,6 +942,7 @@ function Util.GetInstanceProgressKey(node)
   -- if we don’t know whether it’s split, default to legacy (numeric)
   node.progressKey = (node.__eraSplit and era) and (id .. ":" .. era) or id
   return node.progressKey
+end)
 end
 
 function GetInstancesForExpansion(expansionID)
@@ -985,6 +952,7 @@ return ATTPerf.wrap("GetInstancesForExpansion", function()
   local out = {}
 
   local function scanContainer(cat)
+  return ATTPerf.wrap("GetInstancesForExpansion:scanContainer", function()
     if type(cat.g) ~= "table" then return end
     for _, exp in pairs(cat.g) do
       if type(exp.g) == "table" then
@@ -1014,6 +982,7 @@ return ATTPerf.wrap("GetInstancesForExpansion", function()
         end
       end
     end
+  end)
   end
 
   for _, cat in pairs(root.g) do scanContainer(cat) end
@@ -1067,6 +1036,7 @@ end
 Tooltip = Tooltip or {}
 
 function Tooltip.CreateTooltip(frame, anchor, contentFunc)
+local done = ATTPerf.auto("Tooltip.CreateTooltip")
     frame:EnableMouse(true)
     frame:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, anchor or "ANCHOR_RIGHT")
@@ -1075,12 +1045,14 @@ function Tooltip.CreateTooltip(frame, anchor, contentFunc)
         GameTooltip:Show()
     end)
     frame:SetScript("OnLeave", function(self) GameTooltip:Hide() end)
+done()
 end
 
 function Tooltip.AddHeader(title, r, g, b) GameTooltip:AddLine(title, r or 0, g or 1, b or 0) end
 function Tooltip.AddLine(text, r, g, b)   GameTooltip:AddLine(text, r or 1, g or 1, b or 1) end
 
 function Tooltip.AddInstanceLockoutTo(tooltip, data)
+local done = ATTPerf.auto("Tooltip.AddInstanceLockoutTo")
     local isLocked, numDown, numBosses, lockoutIndex = IsInstanceLockedOut(data)
     if isLocked then
         local reset = select(3, GetSavedInstanceInfo(lockoutIndex))
@@ -1090,17 +1062,19 @@ function Tooltip.AddInstanceLockoutTo(tooltip, data)
             for i = 1, numBosses do
                 local bossName, _, isKilled = GetSavedInstanceEncounterInfo(lockoutIndex, i)
                 local color = isKilled and "|cff00ff00" or "|cffff4040"
-                tooltip:AddLine(string.format("%s%s|r", color, bossName or ("Boss " .. i)))
+                tooltip:AddLine(("%s%s|r"):format(color, bossName or ("Boss " .. i)))
             end
         end
     else
         tooltip:AddLine("No active lockout.", 0.5, 0.5, 0.5)
     end
+done()
 end
 
 -- Append other-toons progress (same realm, skip current toon)
 -- ownerNode: zone (mapID) or instance (instanceID) node used to key into the DB.
 local function AddOtherToonsSection(tooltip, ownerNode, isZone)
+ATTPerf.wrap("AddOtherToonsSection", function()
   local mode = Util.GetOtherToonsMode()
   if mode == 0 then return end
   if mode == 1 and isZone then return end
@@ -1133,7 +1107,7 @@ local function AddOtherToonsSection(tooltip, ownerNode, isZone)
       if entry then
         local c, t = entry[1] or 0, entry[2] or 0
         local p = (t > 0) and (c / t * 100) or 0
-        local line = string.format("• %s: %d / %d (%.1f%%)", charName, c, t, p)
+        local line = ("• %s: %d / %d (%.1f%%)"):format(charName, c, t, p)
         if not isZone then
           local secs = (entry.lock and entry.lock.expiresAt - now) or 0
           if secs > 0 then
@@ -1153,20 +1127,24 @@ local function AddOtherToonsSection(tooltip, ownerNode, isZone)
       tooltip:AddLine(l, 0.9, 0.9, 0.9, false)
     end
   end
+end)
 end
 
 -- Consolidated progress block used by the minimap tooltip
 function Tooltip.AddProgress(tooltip, data, collected, total, percent, isZone, ownerNode, lockoutData)
-  tooltip:AddLine(string.format("Collected: %d / %d (%.2f%%)", collected, total, percent))
+local done = ATTPerf.auto("Tooltip.AddProgress")
+  tooltip:AddLine(("Collected: %d / %d (%.2f%%)"):format(collected, total, percent))
   if not isZone then
     Tooltip.AddInstanceLockoutTo(tooltip, lockoutData or data or ownerNode)
   end
 
   Tooltip.AddMyLockouts(tooltip)
   AddOtherToonsSection(tooltip, ownerNode, isZone)
+done()
 end
 
 function Tooltip.AddContextProgressTo(tooltip)
+local done = ATTPerf.auto("Tooltip.AddContextProgressTo")
   local node, info = Util.ResolveContextNode()
 
   if info.kind == "instance" then
@@ -1189,9 +1167,11 @@ function Tooltip.AddContextProgressTo(tooltip)
     -- owner stub only needs mapID for “other toons” section
     Tooltip.AddProgress(tooltip, nil, c, t, p, true, { mapID = info.uiMapID }, nil)
   end
+done()
 end
 
 function Tooltip.AddMyLockouts(tooltip)
+local done = ATTPerf.auto("Tooltip.AddMyLockouts")
   local me = Util.EnsureProgressDB()
   local rows, now = {}, time()
   local instances = me.instances
@@ -1202,7 +1182,7 @@ function Tooltip.AddMyLockouts(tooltip)
       if lock and (lock.expiresAt - now) > 0 then
         local total = (lock.bosses and #lock.bosses) or TP(lock) or 0
         local down = 0; for i = 1, total do if lock.bosses[i].down then down = down + 1 end end
-        local bossTxt = (total > 0 and string.format("(%d/%d) ", down, total) or "")
+        local bossTxt = (total > 0 and ("(%d/%d) "):format(down, total) or "")
         local node = Util.ATTSearchOne("instanceID", id)
         local name = Util.NodeDisplayName(node)
         local c, t, p = entry[1], entry[2], 0
@@ -1212,10 +1192,8 @@ function Tooltip.AddMyLockouts(tooltip)
           TP(id, entry[1], entry[2])
           c, t, p = Util.ATTGetProgress(node)
         end
---        if c == nil then print("id, name, c, t = ", id, name, entry[1], entry[2]) end
         local hex = CompletionHex(p, 6.7)
-
-        rows[#rows+1] = string.format("• %s%s %s— %d/%d (%.1f%%)|r", hex, name, bossTxt, c, t, p)
+        rows[#rows+1] = ("• %s%s %s— %d/%d (%.1f%%)|r"):format(hex, name, bossTxt, c, t, p)
       end
     end
   end
@@ -1226,4 +1204,5 @@ function Tooltip.AddMyLockouts(tooltip)
     tooltip:AddLine("Locked instances:", 0.9, 0.9, 0.9)
     for _, line in ipairs(rows) do tooltip:AddLine(line, 1, 1, 1, false) end
   end
+done()
 end
