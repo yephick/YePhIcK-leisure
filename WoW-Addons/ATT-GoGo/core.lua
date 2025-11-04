@@ -88,7 +88,6 @@ function Util.FormatTime(seconds)
 end
 
 function Util.InsertNodeChatLink(node)
-  if not node then TP(node); return end
   local link
   if     node.itemID        then link = select(2, GetItemInfo(node.itemID))
   elseif node.achievementID then link = GetAchievementLink(node.achievementID)
@@ -100,8 +99,10 @@ end
 
 function Util.NodeDisplayName(n)
   return n.text or n.name
-      or (n.mapID and ("Map " .. n.mapID))
-      or (n.instanceID and ("Instance " .. n.instanceID))
+      or ATT.GetNameFromProviders(n)
+      or TP(n)
+--      or (n.mapID and ("Map " .. n.mapID))
+--      or (n.instanceID and ("Instance " .. n.instanceID))
       or "?"
 end
 
@@ -140,7 +141,7 @@ function Util.GetMapRoot(mapID)
   end
   local info = C_Map.GetMapInfo(mapID)
   local name = (info and info.name) or ("Map " .. mapID)
-  local kids = (type(pkg.g) == "table" and pkg.g) or pkg
+  local kids = pkg.g or pkg
   local root = { text = name, name = name, mapID = mapID, g = kids }
   _MAP_ROOT_CACHE[mapID] = root
   return root
@@ -152,7 +153,7 @@ return ATTPerf.wrap("Util.ResolveMapProgress", function()
   local hit = _MAP_PROG_CACHE[mapID]
   if hit then return hit[1], hit[2], hit[3] end
   local root = ATTPerf.wrap("GetMapRoot", function() return Util.GetMapRoot(mapID) end)
-  if type(root) == "table" then
+  if root then
     local c, t, p = ATTPerf.wrap("ATTGetProgress", function() return Util.ATTGetProgress(root) end)
     _MAP_PROG_CACHE[mapID] = {c, t, p}
     return c, t, p
@@ -391,8 +392,6 @@ end
 -- Achievement helpers
 -------------------------------------------------
 function Util.OpenAchievementByID(achievementID)
-  if not achievementID then TP(achievementID); return end
-
   if IsModifiedClick("CHATLINK") then
     local link = GetAchievementLink(achievementID)
     if link then ChatEdit_InsertLink(link) return else TP(link) end
@@ -406,7 +405,6 @@ end
 
 -- Given a node (often a Title leaf), try to find the achievement that awards it.
 function Util.FindAchievementForTitleNode(node)
-  if type(node) ~= "table" then TP(node); return nil end
   -- If the node already carries an achievementID, use it.
   if node.achievementID then return node.achievementID end
 
@@ -441,8 +439,6 @@ end
 -------------------------------------------------
 function Util.ExtractMapAndCoords(node)
 return ATTPerf.wrap("Util.ExtractMapAndCoords", function()
-  if not node or type(node) ~= "table" then TP(node); return nil end
-
   local c = node.coords
   if c then
     local x = c[1][1]
@@ -494,36 +490,24 @@ end
 
 function Util.GetNodeIcon(node)
 return ATTPerf.wrap("Util.GetNodeIcon", function()
-  if not node then TP(node); return nil end
-  if node.icon then return node.icon end
+  if not node then TP(); return nil end
+  local ret = node.icon
+      or ATT.GetIconFromProviders(node)
+      or ATT.GetRelativeValue(node, "icon")
+      or node.mapID and Util.ATTSearchOne("mapID", node.mapID).icon
+      or node.achievementID and Util.ATTSearchOne("achievementID", node.achievementID).icon
 
-  -- meta-achievement icon via Blizzard API (covers our stub reps)
-  if node.achievementID then
-    local _, _, _, _, _, _, _, _, _, icon = GetAchievementInfo(node.achievementID)
-    if icon then return icon end
-  end
-
-  -- spell icons
-  if node.spellID then
-    local icon = GetSpellTexture(node.spellID)
-    if icon then return icon end
-  end
+  if ret then return ret end
 
   -- Fallback: scan ONLY this node's fields for "*ID" and ask ATT for an icon
   for field, id in pairs(node) do
     if id ~= nil and type(field) == "string" and field:sub(-2) == "ID" then
       local res = Util.ATTSearchOne(field, id)
-      if res.icon and res.icon ~= 0 and res.icon ~= "" then return res.icon end
+      if res.icon and res.icon ~= 0 and res.icon ~= "" then TP(field, id); return res.icon end
     end
   end
 
-  -- bubble up a few parents if needed (ATT may populate later for items)
-  local p, hops = rawget(node, "parent"), 0
-  while p and hops < 3 do
-    if p.icon then return p.icon end
-    p = rawget(p, "parent"); hops = hops + 1
-  end
-  TP(node, node.parent, p, hops)
+  TP(node, node.parent)
 
   return nil
 end)
@@ -553,7 +537,7 @@ return ATTPerf.wrap("Util.ApplyNodeIcon", function()
     icon:SetTexCoord(tc[1], tc[2], tc[3], tc[4])
     return
   else
-    if not icon.SetTexture then TP(icon) end
+    if icon and not icon.SetTexture then TP(icon) end
   end
 
   -- Fallback for ItemButtons
@@ -602,7 +586,7 @@ end
 local function BuildEraBuckets(instanceNode)
 return ATTPerf.wrap("BuildEraBuckets", function()
   local buckets, hasDiff = {}, false
-  local kids = type(instanceNode.g) == "table" and instanceNode.g or nil
+  local kids = instanceNode.g
   if kids then
     for _, ch in pairs(kids) do
       if ch.difficultyID then
@@ -641,7 +625,7 @@ return ATTPerf.wrap("MakeEraWrapper", function()
     savedInstanceID = instanceNode.savedInstanceID,  -- keep lock-match key on the wrapper
     icon = instanceNode.icon,
     parent = instanceNode.parent,
-    g = (type(diffs)=="table" and #diffs>0) and diffs or instanceNode.g,
+    g = (diffs and #diffs>0) and diffs or instanceNode.g,
     awp = instanceNode.awp,
     rwp = instanceNode.rwp,
     eraKey = era,

@@ -238,7 +238,7 @@ function OptionsUI.BuildAccountGroup(parent)
       info.value = opt.value
       info.checked = (opt.value == Util.GetOtherToonsMode())
       info.func = function()
-        SetSetting("otherToonsInTooltips", opt.value or 1)
+        SetSetting("otherToonsInTooltips", opt.value)
         SyncOtherToonsDropdown()
       end
       UIDropDownMenu_AddButton(info, level)

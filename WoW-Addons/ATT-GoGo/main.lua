@@ -226,12 +226,14 @@ local function SetupSlashCmd()
         local SHOW    = { s = true, show = true }
         local LIST    = { l = true, list = true }
         local DUMP    = { d = true, dump = true }
+        local PERF    = { p = true, perf = true }
 
         if HELP[cmd]    then PrintSlashCmdHelp()        return end
         if OPTIONS[cmd] then OptionsUI.Show()           return end
         if SHOW[cmd]    then ShowMainFrame()            return end
         if LIST[cmd]    then OpenUncollectedForHere()   return end
         if DUMP[cmd]    then DumpCurrentCtx()           return end
+        if PERF[cmd]    then ATTPerf.on(rest == "1")    return end
         if cmd == "add" then DebugLog(rest)             return end
 
         print(CTITLE .. "Unknown command. Type '/gogo help' for options.")
@@ -284,6 +286,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
 
         PrintStartup()
     onready()
+        ATTPerf.on(true)
     end)
 end)
 

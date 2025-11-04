@@ -77,7 +77,7 @@ end
 
 local RETRIEVING = "Retrieving data"
 local function IsPlaceholderTitle(t)
-    return (not t) or t == "" or t == RETRIEVING or (t and t:lower():find("retrieving"))
+    return t == nil or t == "" or t == RETRIEVING or t:lower():find("retrieving")
 end
 
 -- Short display name for a collectible leaf
@@ -119,10 +119,10 @@ end
 
 -- One-time hook to re-append our lines whenever the item tooltip is rebuilt
 if not GameTooltip.__ATTGoGoHooked then
-local done = ATTPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
+local outter = ATTPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
     GameTooltip:HookScript("OnTooltipSetItem", function(tt)
-    local done = ATTPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
-        if not currentTooltipNode then done(); return end -- items in bags (for instance) don't have/need our tooltip hook
+    local inner = ATTPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
+        if not currentTooltipNode then inner(); return end -- items in bags (for instance) don't have/need our tooltip hook
         if not tt.__ATTGoGoReentrant then
             tt.__ATTGoGoReentrant = true
             local matched = passKeysByNode[currentTooltipNode]
@@ -131,10 +131,10 @@ local done = ATTPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
         else
             TP(tt.__ATTGoGoReentrant)
         end
-    done()
+    inner()
     end)
     GameTooltip.__ATTGoGoHooked = true
-done()
+outter()
 end
 
 -- === Lightweight 3D preview dock for creatures ===
@@ -209,7 +209,7 @@ end
 local function GetQuestObjectivesText(qid)
 return ATTPerf.wrap("GetQuestObjectivesText", function()
     local objs = C_QuestLog.GetQuestObjectives(qid)
-    if type(objs) ~= "table" then return Util.ATTSearchOne("questID", qid).name end
+    if not objs then return Util.ATTSearchOne("questID", qid).name end
     if #objs == 0 then return nil end
     local parts = {}
     for i = 1, #objs do

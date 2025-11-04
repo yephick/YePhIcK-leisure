@@ -370,14 +370,18 @@ end
 
 
 -- perf.lua — lightweight profiling for WoW Lua 5.1 (MoP Classic)
-
+local perf_en = false
 local Perf = {}
+function Perf.on(en) perf_en = en end
+
 local now_ms = function() return GetTimePreciseSec()*1000 end
 
 local SITES, ACTIVE, NEXT_ID = {}, {}, 0
 local SAMPLE_N = 128
 
+
 local function add_sample(st, dt)
+  if not perf_en then return end
   st.count = st.count + 1
   st.total = st.total + dt
   if dt < st.min then st.min = dt end
@@ -406,7 +410,7 @@ end
 function Perf.begin(label)
   NEXT_ID = NEXT_ID + 1
   local id = NEXT_ID
-  local key = ensure_site(label)--, site, stack)
+  local key = ensure_site(label)
   ACTIVE[id] = { key = key, t0 = now_ms() }
   return id
 end
@@ -414,6 +418,7 @@ end
 function Perf.finish(id)
   local a = ACTIVE[id]; if not a then TP(id); print("not a: " .. tostring(id)); return end
   ACTIVE[id] = nil
+  if perf_en ~= true then return end
   local dt = now_ms() - a.t0
   local st = SITES[a.key]
   add_sample(st, dt)
@@ -438,7 +443,7 @@ function Perf.wrap(label, fn, ...)
   local ok, r1, r2, r3, r4, r5 = xpcall(fn, _trace, ...)
   local dt = done()
   if not ok then
-    DebugLogf("[Perf][%s] errored after %.2f ms:\n%s", label or "", dt, r1)
+    DebugLogf("[Perf][%s] errored after %.2f ms:\n%s", label or "", dt or 0, r1)
     error(r1, 2)
   end
   return r1, r2, r3, r4, r5
@@ -463,10 +468,12 @@ local function summary_lines()
   local lines = {}
   lines[#lines+1] = ("%-7s  %-6s  %-6s  %-6s  %-6s  %-6s  %s"):format("count","avg","p95","max","std","total", "label")
   for _,st in ipairs(entries) do
-    local std = (st.count>1) and math.sqrt(st.M2/(st.count-1)) or 0
-    local p95 = pct_from_samples(st.samples, st.count, 95)
-    local avg = st.total / st.count
-    lines[#lines+1] = ("%7d  %6.1f  %6.1f  %6.1f  %6.1f  %6.1f  %s"):format(st.count, avg, p95, st.max, std, st.total, st.label)
+    if st.count > 0 then
+      local std = (st.count>1) and math.sqrt(st.M2/(st.count-1)) or 0
+      local p95 = pct_from_samples(st.samples, st.count, 95)
+      local avg = st.total / st.count
+      lines[#lines+1] = ("%7d  %6.1f  %6.1f  %6.1f  %6.1f  %6.1f  %s"):format(st.count, avg, p95, st.max, std, st.total, st.label)
+    end
   end
   return lines, entries
 end
