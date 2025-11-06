@@ -49,7 +49,6 @@ local function ShowMinimapTooltip(tooltip)
 end
 
 local function SetupMinimapIcon()
-local perf = ATTPerf.auto("SetupMinimapIcon")
     local ldb = LibStub:GetLibrary("LibDataBroker-1.1", true)
     local icon = LibStub:GetLibrary("LibDBIcon-1.0", true)
     local dataObj = ldb:NewDataObject(addonName, {
@@ -74,7 +73,6 @@ local perf = ATTPerf.auto("SetupMinimapIcon")
         OnTooltipShow = ShowMinimapTooltip,
     })
     icon:Register(addonName, dataObj, ATTGoGoDB.minimap)
-perf()
 end
 
 -- prolonged trash-combat warning (dungeons/raids, solo only, non-boss)
@@ -143,12 +141,11 @@ local BATCH_DELAY = 0.40 -- wait this long after the *last* event
 local collectedBatch = { count = 0, timer = nil }
 
 local function FlushCollectedBatch()
-local perf = ATTPerf.auto("FlushCollectedBatch")
     local cnt = collectedBatch.count
     collectedBatch.count, collectedBatch.timer = 0, nil
 
     if cnt >= THRESHOLD then
-    local perf1 = ATTPerf.auto("FlushCollectedBatch:BigWave")
+    local perf1 = AGGPerf.auto("FlushCollectedBatch:BigWave")
         -- Big wave => assume whole-DB refresh; rebuild everything
         DebugLog("BIG wave, cnt = " .. cnt)
         Util.InvalidateProgressCache()
@@ -156,19 +153,18 @@ local perf = ATTPerf.auto("FlushCollectedBatch")
         SetupMainUI()           -- full rebuild of main frame widgets (also refreshes data)
     perf1()
     else
-    local perf2 = ATTPerf.auto("FlushCollectedBatch:SmallWave")
+    local perf2 = AGGPerf.auto("FlushCollectedBatch:SmallWave")
         -- Small wave => do a context snapshot + popup/active-tab refresh
-        local done = ATTPerf.auto("smallWave")
         local node, info = Util.ResolveContextNode()
         if info.kind == "instance" then
-        local perf3 = ATTPerf.auto("FlushCollectedBatch:SmallWave:instance")
+        local perf3 = AGGPerf.auto("FlushCollectedBatch:SmallWave:instance")
             -- Invalidate the currently relevant difficulty child (and parents)
             local curDiff = ATT.GetCurrentDifficultyID()
             local child = Util.SelectDifficultyChild(node, curDiff) or node
             Util.InvalidateProgressCache(child)
         perf3()
         else
-        local perf3 = ATTPerf.auto("FlushCollectedBatch:SmalleWav:zone")
+        local perf3 = AGGPerf.auto("FlushCollectedBatch:SmalleWav:zone")
             -- Zone context: just nuke this map’s memo row
             if info.uiMapID then Util.InvalidateMapProgress(info.uiMapID) else TP(node, info) end
         perf3()
@@ -177,10 +173,8 @@ local perf = ATTPerf.auto("FlushCollectedBatch")
         Util.SaveCurrentContextProgress()
         RefreshUncollectedPopupForContextIfShown(true)
         RefreshActiveTab()
-        done()
     perf2()
     end
-perf()
 end
 
 local function OnThingCollected(data, etype)
@@ -233,7 +227,7 @@ local function SetupSlashCmd()
         if SHOW[cmd]    then ShowMainFrame()            return end
         if LIST[cmd]    then OpenUncollectedForHere()   return end
         if DUMP[cmd]    then DumpCurrentCtx()           return end
-        if PERF[cmd]    then ATTPerf.on(rest == "1")    return end
+        if PERF[cmd]    then AGGPerf.on(rest == "1")    return end
         if cmd == "add" then DebugLog(rest)             return end
 
         print(CTITLE .. "Unknown command. Type '/gogo help' for options.")
@@ -252,9 +246,8 @@ frame:SetScript("OnEvent", function(self, event, arg1)
 
     -- === Wait for ATT ("All The Things") ===
     ATT.AddEventHandler("OnReady", function()
-    local onready = ATTPerf.auto("main:OnReady")
         Util.CanonicalizePopupIdFilters()
-        ATTPerf.wrap("main:OnReady:SetupMainUI", SetupMainUI)
+        SetupMainUI()
         SetupMinimapIcon()
         EnsurePreviewDock(); EnsurePopup() -- create the preview dock before the uncollected list popup that uses it
         OptionsUI.Init()
@@ -285,8 +278,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         ATT.AddEventHandler("OnThingCollected", OnThingCollected)
 
         PrintStartup()
-    onready()
-        ATTPerf.on(true)
+        AGGPerf.on(true)
     end)
 end)
 

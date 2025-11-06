@@ -490,25 +490,25 @@ perf_lof:RegisterEvent("PLAYER_LOGOUT")
 perf_lof:SetScript("OnEvent", log_summary)
 
 -- Export global
-_G.ATTPerf = Perf
-_G.AttPerfLogSummary = log_summary
+_G.AGGPerf = Perf
+_G.AGGPerfLogSummary = log_summary
 
 --------------------------------------------------
 ---------------    U S A G E  --------------------
 --------------------------------------------------
 -- 1) Auto-guard (closest to RAII):
--- local done = ATTPerf.auto("BuildGrid")
+-- local done = AGGPerf.auto("BuildGrid")
 -- -- ... the code you want to measure ...
 -- done()
 --------------------------------------------------
 -- 2) Wrapper:
--- ATTPerf.wrap("RebuildUI", function()
+-- AGGPerf.wrap("RebuildUI", function()
 --   BuildTabs()
 --   BuildGrid()
 -- end)
 --------------------------------------------------
 -- 3) Begin/End pair (IDs handle recursion safely):
--- local id = ATTPerf.begin("ScanNode")
+-- local id = AGGPerf.begin("ScanNode")
 -- -- ... work ...
--- ATTPerf.finish(id)
+-- AGGPerf.finish(id)
 --------------------------------------------------

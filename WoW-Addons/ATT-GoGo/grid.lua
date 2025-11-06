@@ -94,7 +94,7 @@ local DIFF_LABEL = {
 }
 
 local function AttachInfoIcon(parentFrame, eraNode)
-return ATTPerf.wrap("AttachInfoIcon", function()
+return AGGPerf.wrap("AttachInfoIcon", function()
   -- collect per-difficulty rows present in this era wrapper
   local diffs = {}
   for _, ch in ipairs(eraNode.g) do
@@ -128,7 +128,7 @@ end
 
 -- Main: Create a progress widget for grid
 function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, onFavToggled)
-return ATTPerf.wrap("Tile.CreateProgressWidget", function()
+return AGGPerf.wrap("Tile.CreateProgressWidget", function()
     local f = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
     f:SetSize(widgetSize, 60)
     f:SetPoint("TOPLEFT", x * (widgetSize + padding), -y * (60 + padding))
@@ -286,7 +286,7 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
 
     local tileFactory = function(content, data, x, y, widgetSize, padding)
       local attNode = isZone and Util.GetMapRoot(data.mapID) or (data.attNode or data)
-      return ATTPerf.wrap("Tile.CreateProgressWidget", function() return Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, ResortAndRefresh) end)
+      return AGGPerf.wrap("Tile.CreateProgressWidget", function() return Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, ResortAndRefresh) end)
     end
 
     local scroll = gridFunc(tabContent, entries, tileFactory, 160, 10)
@@ -379,11 +379,11 @@ end
 
 -- For expansion tabs
 function Summary.UpdateExpansion(mainFrame, expID)
-local done = ATTPerf.auto("Summary.UpdateExpansion")
+local done = AGGPerf.auto("Summary.UpdateExpansion")
     local instances = GetInstancesForExpansion(expID)
-    local id = ATTPerf.begin("Util.GetCollectionProgress(instances)")
+    local id = AGGPerf.begin("Util.GetCollectionProgress(instances)")
     local collected, total, percent = Util.GetCollectionProgress(instances)
-    ATTPerf.finish(id)
+    AGGPerf.finish(id)
     Summary.Update(mainFrame, collected, total)
 done()
 end
@@ -396,7 +396,7 @@ end
 
 -- Helper: Populate a frame with widgets in a grid
 function Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll)
-local done = ATTPerf.auto("Grid.Populate")
+local done = AGGPerf.auto("Grid.Populate")
   Util.ClearChildrenOrTabs(content)
   wipe(widgets)
 
@@ -407,9 +407,7 @@ local done = ATTPerf.auto("Grid.Populate")
 
   for _, entry in ipairs(dataset) do
     if includeRemoved or (not entry.removed) then
-      local tf = ATTPerf.auto("tile factory")
       local f = tileFactory(content, entry, x, y, widgetSize, padding)
-      tf()
       widgets[#widgets+1] = f
       x = x + 1
       if x >= cols then x = 0; y = y + 1 end
@@ -432,7 +430,7 @@ function Grid.Create(parent, dataset, tileFactory, widgetSize, padding)
     local widgets = {}
 
     local function Populate()
-        ATTPerf.wrap("Grid.Create:Populate", function() Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll) end)
+        AGGPerf.wrap("Grid.Create:Populate", function() Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll) end)
     end
     local Debounced = Util.Debounce(Populate, 0.08)
 
@@ -509,13 +507,13 @@ end
 
 -- refresh the currently-visible grid
 function RefreshActiveTab()
-local done = ATTPerf.auto("RefreshActiveTab")
+local done = AGGPerf.auto("RefreshActiveTab")
     if currentTab and currentTab:IsShown() then currentTab:Refresh() end
 done()
 end
 
 function SetupMainUI()
-local done = ATTPerf.auto("SetupMainUI")
+local done = AGGPerf.auto("SetupMainUI")
     RequestRaidInfo()
     Util.ClearATTSearchCache()
 
@@ -533,7 +531,7 @@ local done = ATTPerf.auto("SetupMainUI")
 
     Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, expansions, summaryY - 35, false, nil, nil, Grid.Create)
     Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, zones, -105, true,
-        function(entry) local done = ATTPerf.auto("tab factory Util.ResolveMapProgress"); local _, t = Util.ResolveMapProgress(entry.mapID); done(); return (t or 0) > 0 end,
+        function(entry) local done = AGGPerf.auto("tab factory Util.ResolveMapProgress"); local _, t = Util.ResolveMapProgress(entry.mapID); done(); return (t or 0) > 0 end,
         Tabs.ZoneEntrySort, Grid.Create)
 
     Tabs.InitialTabSelection(mainFrame, tabOrder, SelectTab)

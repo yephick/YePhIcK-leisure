@@ -133,7 +133,7 @@ end
 function Util.GetMapRoot(mapID)
   local hit = _MAP_ROOT_CACHE[mapID]
   if hit ~= nil then return hit or nil end        -- false sentinel means "known empty"
-  local pkg = ATTPerf.wrap("GetCachedDataForMapID", function() return ATT.GetCachedDataForMapID(mapID) end)
+  local pkg = AGGPerf.wrap("GetCachedDataForMapID", function() return ATT.GetCachedDataForMapID(mapID) end)
   if type(pkg) ~= "table" or not next(pkg) then
     TP(pkg, next(pkg))
     _MAP_ROOT_CACHE[mapID] = false                -- remember "no data" to avoid repeated work
@@ -149,12 +149,12 @@ end
 
 -- Progress straight from the map package (matches /attmini totals)
 function Util.ResolveMapProgress(mapID)
-return ATTPerf.wrap("Util.ResolveMapProgress", function()
+return AGGPerf.wrap("Util.ResolveMapProgress", function()
   local hit = _MAP_PROG_CACHE[mapID]
   if hit then return hit[1], hit[2], hit[3] end
-  local root = ATTPerf.wrap("GetMapRoot", function() return Util.GetMapRoot(mapID) end)
+  local root = AGGPerf.wrap("GetMapRoot", function() return Util.GetMapRoot(mapID) end)
   if root then
-    local c, t, p = ATTPerf.wrap("ATTGetProgress", function() return Util.ATTGetProgress(root) end)
+    local c, t, p = AGGPerf.wrap("ATTGetProgress", function() return Util.ATTGetProgress(root) end)
     _MAP_PROG_CACHE[mapID] = {c, t, p}
     return c, t, p
   else
@@ -204,7 +204,7 @@ function Util.InvalidateProgressCache(node)
 end
 
 function Util.ATTGetProgress(node)
-return ATTPerf.wrap("Util.ATTGetProgress", function()
+return AGGPerf.wrap("Util.ATTGetProgress", function()
   local hit = _PROG_CACHE[node]
   if hit then return hit[1], hit[2], hit[3] end
 
@@ -238,7 +238,7 @@ end)
 end
 
 function Util.GetCollectionProgress(dataset)
-return ATTPerf.wrap("Util.GetCollectionProgress", function()
+return AGGPerf.wrap("Util.GetCollectionProgress", function()
   local c, t = 0, 0
   if type(dataset) ~= "table" then TP(dataset); return 0, 0, 0 end
 
@@ -438,7 +438,7 @@ end
 -- Map/waypoint helpers
 -------------------------------------------------
 function Util.ExtractMapAndCoords(node)
-return ATTPerf.wrap("Util.ExtractMapAndCoords", function()
+return AGGPerf.wrap("Util.ExtractMapAndCoords", function()
   local c = node.coords
   if c then
     local x = c[1][1]
@@ -489,7 +489,7 @@ function Util.FocusMapForNode(node)
 end
 
 function Util.GetNodeIcon(node)
-return ATTPerf.wrap("Util.GetNodeIcon", function()
+return AGGPerf.wrap("Util.GetNodeIcon", function()
   if not node then TP(); return nil end
   local ret = node.icon
       or ATT.GetIconFromProviders(node)
@@ -518,7 +518,7 @@ end
 --   Util.ApplyNodeIcon(btnOrTexture, node)
 --   Util.ApplyNodeIcon(btnOrTexture, node, { texCoord = {0.07,0.93,0.07,0.93} })
 function Util.ApplyNodeIcon(target, node, opts)
-return ATTPerf.wrap("Util.ApplyNodeIcon", function()
+return AGGPerf.wrap("Util.ApplyNodeIcon", function()
   opts = opts or {}
   local tex = opts.icon or Util.GetNodeIcon(node)   -- may be file path, fileID, atlas, or a table {atlas=..., coords=..., id=..., texture=...}
   local icon
@@ -551,7 +551,7 @@ local BUILD_NO = select(4, GetBuildInfo())
 
 -- return true if a node should be considered 'removed from game' relative to current client
 function Util.IsNodeRemoved(n)
-return ATTPerf.wrap("Util.IsNodeRemoved", function()
+return AGGPerf.wrap("Util.IsNodeRemoved", function()
   if n.u == 2 then return true end           -- ATT unobtainable flag for removed content
   if n.rwp then return n.rwp <= BUILD_NO end -- rwp: removed with patch
   if n.awp then return n.awp > BUILD_NO end  -- awp: added with patch
@@ -570,7 +570,7 @@ end
 
 -- Return era for a difficulty child (prefer child.awp, then instance.awp, then instance.expansionID, else Classic)
 local function EraForChild(instanceNode, child)
-return ATTPerf.wrap("EraForChild", function()
+return AGGPerf.wrap("EraForChild", function()
   if not child then TP(instanceNode, child) end
   if child and child.difficultyID then
     return EraFromAwp(child.awp)
@@ -584,7 +584,7 @@ end
 
 -- Build { [era] = {difficultyChildren...} } ignoring non-difficulty headers
 local function BuildEraBuckets(instanceNode)
-return ATTPerf.wrap("BuildEraBuckets", function()
+return AGGPerf.wrap("BuildEraBuckets", function()
   local buckets, hasDiff = {}, false
   local kids = instanceNode.g
   if kids then
@@ -616,7 +616,7 @@ end
 
 -- Wrapper limited to era; also decide and *store once* a stable progress key
 local function MakeEraWrapper(instanceNode, era, diffs, isSplit)
-return ATTPerf.wrap("MakeEraWrapper", function()
+return AGGPerf.wrap("MakeEraWrapper", function()
   local name = instanceNode.text or instanceNode.name
   local wrap = {
     text = name, name = name,
@@ -648,7 +648,7 @@ end
 
 -- from an Instance node, pick the child Group which matches a difficultyID
 function Util.SelectDifficultyChild(instanceNode, difficultyID)
-return ATTPerf.wrap("Util.SelectDifficultyChild", function()
+return AGGPerf.wrap("Util.SelectDifficultyChild", function()
   if not (instanceNode and instanceNode.g) then TP(instanceNode, difficultyID); return nil end
 
   for _, child in ipairs(instanceNode.g) do
@@ -663,7 +663,7 @@ end
 
 -- Returns the instance container for a given map by walking hits up to an ancestor with instanceID.
 local function FindInstanceFromMap(mapID)
-return ATTPerf.wrap("FindInstanceFromMap", function()
+return AGGPerf.wrap("FindInstanceFromMap", function()
   local pick
   local function try(field)
       local hits = ATT.SearchForField(field, mapID)
@@ -687,7 +687,7 @@ end
 -- Unified context resolver: returns the ATT node for current instance or zone.
 -- Returns: node, info  where info={kind="instance"|"zone", uiMapID=?}
 function Util.ResolveContextNode()
-return ATTPerf.wrap("Util.ResolveContextNode", function()
+return AGGPerf.wrap("Util.ResolveContextNode", function()
   local info = {}
   local sentinel = { text = "Unknown instance", name = "Unknown instance", g = {} }
 
@@ -742,7 +742,7 @@ function Util.ResolvePopupTargetForCurrentContext()
 end
 
 function IsInstanceLockedOut(instance)
-return ATTPerf.wrap("IsInstanceLockedOut", function()
+return AGGPerf.wrap("IsInstanceLockedOut", function()
   local sid
   if type(instance) == "table" then
     local n = instance
@@ -800,7 +800,7 @@ end
 
 -- Build a lockout snapshot (absolute expiry + boss list by name only)
 local function BuildLockoutFromSavedInstances(attInstanceNode)
-return ATTPerf.wrap("BuildLockoutFromSavedInstances", function()
+return AGGPerf.wrap("BuildLockoutFromSavedInstances", function()
   local isLocked, _, numBosses, lockoutIndex = IsInstanceLockedOut(attInstanceNode)
   if not isLocked then return nil end
 
@@ -818,7 +818,7 @@ end)
 end
 
 function Util.SaveInstanceProgressByNode(attInstanceNode)
-return ATTPerf.wrap("Util.SaveInstanceProgressByNode", function()
+return AGGPerf.wrap("Util.SaveInstanceProgressByNode", function()
   if type(attInstanceNode) ~= "table" then TP(attInstanceNode); return end
   local instanceID = attInstanceNode.instanceID
 
@@ -840,7 +840,7 @@ end
 
 -- Save zone progress for an ATT zone node
 function Util.SaveZoneProgressByMapID(mapID)
-return ATTPerf.wrap("Util.SaveZoneProgressByMapID", function()
+return AGGPerf.wrap("Util.SaveZoneProgressByMapID", function()
   local c, t = Util.ResolveMapProgress(mapID)
   Util.EnsureProgressDB().zones[mapID] = { c or 0, t or 0 }
 end)
@@ -848,7 +848,7 @@ end
 
 -- Convenience: snapshot whatever the current context is
 function Util.SaveCurrentContextProgress()
-return ATTPerf.wrap("Util.SaveCurrentContextProgress", function()
+return AGGPerf.wrap("Util.SaveCurrentContextProgress", function()
   local node, info = Util.ResolveContextNode()
 
   if info.kind == "instance" then
@@ -871,7 +871,7 @@ end
 -- UI lists (Expansions / Zones)
 -------------------------------------------------
 function GetCompletionColor(percent)
-return ATTPerf.wrap("GetCompletionColor", function()
+return AGGPerf.wrap("GetCompletionColor", function()
   percent = math.max(0, math.min(100, percent or 0))
   local intensity = 0.15
   if percent < 50 then
@@ -883,7 +883,7 @@ end)
 end
 
 local function CompletionHex(percent, boost)
-return ATTPerf.wrap("CompletionHex", function()
+return AGGPerf.wrap("CompletionHex", function()
   local r, g, b = GetCompletionColor(percent)
   boost = boost or 4.0                      -- punch it up for text
   r, g, b = math.min(r*boost,1), math.min(g*boost,1), math.min(b*boost,1)
@@ -892,7 +892,7 @@ end)
 end
 
 function BuildExpansionList()
-return ATTPerf.wrap("BuildExpansionList", function()
+return AGGPerf.wrap("BuildExpansionList", function()
   local list, seen = {}, {}
   local root = ATT:GetDataCache()
 
@@ -918,7 +918,7 @@ end)
 end
 
 function Util.GetInstanceProgressKey(node)
-return ATTPerf.wrap("Util.GetInstanceProgressKey", function()
+return AGGPerf.wrap("Util.GetInstanceProgressKey", function()
   if type(node) ~= "table" then TP(node); return nil end
   if node.progressKey ~= nil then return node.progressKey end
   local id = node.instanceID; if not id then TP(id); return nil end
@@ -930,13 +930,13 @@ end)
 end
 
 function GetInstancesForExpansion(expansionID)
-return ATTPerf.wrap("GetInstancesForExpansion", function()
+return AGGPerf.wrap("GetInstancesForExpansion", function()
   local root = ATT:GetDataCache()
   if not (root and root.g) then TP(expansionID, root, root.g); return {} end
   local out = {}
 
   local function scanContainer(cat)
-  return ATTPerf.wrap("GetInstancesForExpansion:scanContainer", function()
+  return AGGPerf.wrap("GetInstancesForExpansion:scanContainer", function()
     if type(cat.g) ~= "table" then return end
     for _, exp in pairs(cat.g) do
       if type(exp.g) == "table" then
@@ -976,7 +976,7 @@ end)
 end
 
 function BuildZoneList()
-local done = ATTPerf.auto("BuildZoneList")
+local done = AGGPerf.auto("BuildZoneList")
   local root = ATT:GetDataCache()
 
   local zones, seen = {}, {}
@@ -1020,7 +1020,7 @@ end
 Tooltip = Tooltip or {}
 
 function Tooltip.CreateTooltip(frame, anchor, contentFunc)
-local done = ATTPerf.auto("Tooltip.CreateTooltip")
+local done = AGGPerf.auto("Tooltip.CreateTooltip")
     frame:EnableMouse(true)
     frame:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, anchor or "ANCHOR_RIGHT")
@@ -1036,7 +1036,7 @@ function Tooltip.AddHeader(title, r, g, b) GameTooltip:AddLine(title, r or 0, g 
 function Tooltip.AddLine(text, r, g, b)   GameTooltip:AddLine(text, r or 1, g or 1, b or 1) end
 
 function Tooltip.AddInstanceLockoutTo(tooltip, data)
-local done = ATTPerf.auto("Tooltip.AddInstanceLockoutTo")
+local done = AGGPerf.auto("Tooltip.AddInstanceLockoutTo")
     local isLocked, numDown, numBosses, lockoutIndex = IsInstanceLockedOut(data)
     if isLocked then
         local reset = select(3, GetSavedInstanceInfo(lockoutIndex))
@@ -1058,7 +1058,7 @@ end
 -- Append other-toons progress (same realm, skip current toon)
 -- ownerNode: zone (mapID) or instance (instanceID) node used to key into the DB.
 local function AddOtherToonsSection(tooltip, ownerNode, isZone)
-ATTPerf.wrap("AddOtherToonsSection", function()
+AGGPerf.wrap("AddOtherToonsSection", function()
   local mode = Util.GetOtherToonsMode()
   if mode == 0 then return end
   if mode == 1 and isZone then return end
@@ -1116,7 +1116,7 @@ end
 
 -- Consolidated progress block used by the minimap tooltip
 function Tooltip.AddProgress(tooltip, data, collected, total, percent, isZone, ownerNode, lockoutData)
-local done = ATTPerf.auto("Tooltip.AddProgress")
+local done = AGGPerf.auto("Tooltip.AddProgress")
   tooltip:AddLine(("Collected: %d / %d (%.2f%%)"):format(collected, total, percent))
   if not isZone then
     Tooltip.AddInstanceLockoutTo(tooltip, lockoutData or data or ownerNode)
@@ -1128,7 +1128,7 @@ done()
 end
 
 function Tooltip.AddContextProgressTo(tooltip)
-local done = ATTPerf.auto("Tooltip.AddContextProgressTo")
+local done = AGGPerf.auto("Tooltip.AddContextProgressTo")
   local node, info = Util.ResolveContextNode()
 
   if info.kind == "instance" then
@@ -1155,7 +1155,7 @@ done()
 end
 
 function Tooltip.AddMyLockouts(tooltip)
-local done = ATTPerf.auto("Tooltip.AddMyLockouts")
+local done = AGGPerf.auto("Tooltip.AddMyLockouts")
   local me = Util.EnsureProgressDB()
   local rows, now = {}, time()
   local instances = me.instances

@@ -34,7 +34,7 @@ local OPPOSITE_FACTION = (FACTION == 1 and 2) or (FACTION == 2 and 1) or 0
 local CLASS_ID = select(3, UnitClass("player"))
 
 local function IsAllowedLeaf(node, activeKeys)
-return ATTPerf.wrap("IsAllowedLeaf", function()
+return AGGPerf.wrap("IsAllowedLeaf", function()
     if OPPOSITE_FACTION ~= 0 and node.r == OPPOSITE_FACTION then
         return false, {}
     end
@@ -82,7 +82,7 @@ end
 
 -- Short display name for a collectible leaf
 local function NodeShortName(n)
-return ATTPerf.wrap("NodeShortName", function()
+return AGGPerf.wrap("NodeShortName", function()
 local t = n and (n.text or n.name)
     if not IsPlaceholderTitle(t) then return t end
     if n.itemID  then return GetItemInfo(n.itemID) or "Item " .. n.itemID end
@@ -105,7 +105,7 @@ end
 -- Tooltip helpers
 ------------------------------------------------------------
 local function AddMatchedIDLines(node, matchedKeys)
-return ATTPerf.wrap("AddMatchedIDLines", function()
+return AGGPerf.wrap("AddMatchedIDLines", function()
     if not matchedKeys or #matchedKeys == 0 then return false end
     GameTooltip:AddLine(" ")
     for _, k in ipairs(matchedKeys) do
@@ -119,9 +119,9 @@ end
 
 -- One-time hook to re-append our lines whenever the item tooltip is rebuilt
 if not GameTooltip.__ATTGoGoHooked then
-local outter = ATTPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
+local outter = AGGPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
     GameTooltip:HookScript("OnTooltipSetItem", function(tt)
-    local inner = ATTPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
+    local inner = AGGPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
         if not currentTooltipNode then inner(); return end -- items in bags (for instance) don't have/need our tooltip hook
         if not tt.__ATTGoGoReentrant then
             tt.__ATTGoGoReentrant = true
@@ -186,7 +186,7 @@ end
 
 -- List up to 31 dependent uncollected child collectibles on the tooltip (sub-achievements, item rewards, etc.)
 local function AddUncollectedChildrenToTooltip(node)
-ATTPerf.wrap("AddUncollectedChildrenToTooltip", function()
+AGGPerf.wrap("AddUncollectedChildrenToTooltip", function()
     if type(node) ~= "table" or type(node.g) ~= "table" or next(node.g) == nil then return end
     local shown, extra = 0, 0
     for _, ch in pairs(node.g) do
@@ -207,7 +207,7 @@ end
 
 -- Returns a single-line compact description of quest objectives, or nil if unavailable.
 local function GetQuestObjectivesText(qid)
-return ATTPerf.wrap("GetQuestObjectivesText", function()
+return AGGPerf.wrap("GetQuestObjectivesText", function()
     local objs = C_QuestLog.GetQuestObjectives(qid)
     if not objs then return Util.ATTSearchOne("questID", qid).name end
     if #objs == 0 then return nil end
@@ -223,7 +223,7 @@ end
 
 -- Renders the quest tooltip once (no retry). Returns true if it printed real objectives.
 local function RenderQuestTooltip(node, matched, owner)
-return ATTPerf.wrap("RenderQuestTooltip", function()
+return AGGPerf.wrap("RenderQuestTooltip", function()
     local line = GetQuestObjectivesText(node.questID)
     GameTooltip:AddLine(line or node.name or TP(node, node.text) or "Objective(s) unavailable", 1, 1, 1, true)
     AddUncollectedChildrenToTooltip(node)
@@ -261,7 +261,7 @@ local requestedOnce = {}
 
 local function SetupNodeTooltip(btn, boundNode)
     btn:SetScript("OnEnter", function(self)
-    ATTPerf.wrap("SetupNodeTooltip:OnEnter", function()
+    AGGPerf.wrap("SetupNodeTooltip:OnEnter", function()
         local node = self.node or boundNode
         if not node then TP(btn, boundNode, self, self.node, node); return end
         currentTooltipNode = node
@@ -355,7 +355,7 @@ local function EnsureRetryTicker()
     if retryTicker then return end
     retryCount = 0
     retryTicker = C_Timer.NewTicker(0.5, function()
-    ATTPerf.wrap("EnsureRetryTicker:retryTicker", function()
+    AGGPerf.wrap("EnsureRetryTicker:retryTicker", function()
         retryCount = retryCount + 1
         for id, label in pairs(achLabelsByID) do
             local _, name = GetAchievementInfo(id)
@@ -376,7 +376,7 @@ end
 -- Display text
 ------------------------------------------------------------
 local function ResolveDisplayForNode(node, label, btn)
-return ATTPerf.wrap("ResolveDisplayForNode", function()
+return AGGPerf.wrap("ResolveDisplayForNode", function()
     local display = RETRIEVING -- this is a very hot function, so don't pre-fetch `NodeShortName(node)` which is overwritten most of the time
 
     if node.itemID then
@@ -431,7 +431,7 @@ local CATEGORY_RANK = {}
 for i, key in ipairs(CATEGORY_ORDER) do CATEGORY_RANK[key] = i end
 
 local function GetNodePrimaryKey(node)
-return ATTPerf.wrap("GetNodePrimaryKey", function()
+return AGGPerf.wrap("GetNodePrimaryKey", function()
     local matched = passKeysByNode and passKeysByNode[node]
     if matched and #matched > 0 then
         local bestKey, bestRank
@@ -451,7 +451,7 @@ end
 
 -- so far is only used in SortPopupNodes(nodes)
 local function GetNodeDisplayName(node)
-return ATTPerf.wrap("GetNodeDisplayName", function()
+return AGGPerf.wrap("GetNodeDisplayName", function()
     local display = node.text or node.name
     if display and display ~= "" then return display:lower() end
 
@@ -484,7 +484,7 @@ end
 
 -- De-duplicate achievements by achievementID, preferring a richer "meta" node over stubs.
 local function DedupAchievements(nodes)
-return ATTPerf.wrap("DedupAchievements", function()
+return AGGPerf.wrap("DedupAchievements", function()
     if #nodes <= 1 then return nodes end
 
     local function richness(n)
@@ -540,7 +540,7 @@ end
 
 -- Collapse repeated achievement criteria into the parent achievement (controlled by per-character option)
 local function CollapseAchievementFamilies(root, nodes)
-return ATTPerf.wrap("CollapseAchievementFamilies", function()
+return AGGPerf.wrap("CollapseAchievementFamilies", function()
     local expandCriteria = GetCharSetting("expandAchievementCriteria", false)
     if expandCriteria or #nodes == 0 then return nodes end
 
@@ -586,7 +586,7 @@ end
 
 -- Map ATT/Item API qualities to a numeric rank (higher = better)
 local function QualityRank(node)
-return ATTPerf.wrap("QualityRank", function()
+return AGGPerf.wrap("QualityRank", function()
     -- Prefer ATT's 'q' (already numeric, 0..7). Fallback to GetItemInfo.
     local q = node and node.q
     if q == nil and node and node.itemID then
@@ -661,7 +661,7 @@ end
 
 local function GatherUncollectedNodes(node, out, keys, seen, d)
 local site = "GatherUncollectedNodes:" .. (d or 0)
-ATTPerf.wrap(site, function()
+AGGPerf.wrap(site, function()
     local depth = (d or 0) + 1
     if type(node) ~= "table" then TP(node); return end
 
@@ -669,7 +669,7 @@ ATTPerf.wrap(site, function()
     if seen[node] then TP(seen[node]); return end
     seen[node] = true
 
-    local iaLeaf = ATTPerf.auto(site .. ":IsAllowedLeaf")
+    local iaLeaf = AGGPerf.auto(site .. ":IsAllowedLeaf")
     local isAllowed, matched = IsAllowedLeaf(node, keys)
     if isAllowed then
         out[#out + 1] = node
@@ -679,7 +679,7 @@ ATTPerf.wrap(site, function()
 
     local kids = node.g
     if type(kids) == "table" then
-    local recursion = ATTPerf.auto(site .. ":recursion with " .. #kids .. " children")
+    local recursion = AGGPerf.auto(site .. ":recursion with " .. #kids .. " children")
 --    if #kids > 100 then local path = DebugGetNodePath(node.g); DebugLogf("%s: %s has %d children", (node.name or node.text or "noname"), path, #kids); TP(node.parent) end
         for i = 1, #kids do
             if type(kids[i]) == "table" and kids[i] ~= node.parent then
@@ -693,19 +693,19 @@ end
 
 -- Build + filter list
 local function BuildNodeList(root)
-return ATTPerf.wrap("BuildNodeList", function()
+return AGGPerf.wrap("BuildNodeList", function()
     local activeKeys = CollectActiveKeys()
     if #activeKeys == 0 then return {}, activeKeys end
 
     -- Gather raw leaves per active filters
     local nodes = {}
-    ATTPerf.wrap("BuildNodeList:GatherUncollectedNodes", function() GatherUncollectedNodes(root, nodes, activeKeys) end)
+    AGGPerf.wrap("BuildNodeList:GatherUncollectedNodes", function() GatherUncollectedNodes(root, nodes, activeKeys) end)
 
     -- Transformations (in order)
-    nodes = ATTPerf.wrap("BuildNodeList:CollapseAchievementFamilies", function() return CollapseAchievementFamilies(root, nodes) end)
-    nodes = ATTPerf.wrap("BuildNodeList:DedupItemsByItemID", DedupItemsByItemID, nodes)
-    nodes = ATTPerf.wrap("BuildNodeList:GroupItemsByVisualID", GroupItemsByVisualID, nodes)
-    ATTPerf.wrap("BuildNodeList:SortPopupNodes", SortPopupNodes, nodes)
+    nodes = AGGPerf.wrap("BuildNodeList:CollapseAchievementFamilies", function() return CollapseAchievementFamilies(root, nodes) end)
+    nodes = AGGPerf.wrap("BuildNodeList:DedupItemsByItemID", DedupItemsByItemID, nodes)
+    nodes = AGGPerf.wrap("BuildNodeList:GroupItemsByVisualID", GroupItemsByVisualID, nodes)
+    AGGPerf.wrap("BuildNodeList:SortPopupNodes", SortPopupNodes, nodes)
 
     return nodes, activeKeys
 end)
@@ -715,7 +715,7 @@ end
 -- Row creation / rendering (virtualized)
 ------------------------------------------------------------
 local function AcquireRow(scrollContent, i)
-return ATTPerf.wrap("AcquireRow", function()
+return AGGPerf.wrap("AcquireRow", function()
     scrollContent.rows = scrollContent.rows or {}
     local row = scrollContent.rows[i]
     if row then return row end
@@ -814,14 +814,14 @@ local function RenderRowAt(scrollContent, row, dataIndex, nodes)
     -- Fill visuals (fast path: icon + name)
     row.btn.node = node
     Util.ApplyNodeIcon(row.btn, node)
-    ATTPerf.wrap("RenderRowAt:ResolveDisplayForNode", function() ResolveDisplayForNode(node, row.label, row.btn) end)
+    AGGPerf.wrap("RenderRowAt:ResolveDisplayForNode", function() ResolveDisplayForNode(node, row.label, row.btn) end)
 
     row.btn:Show()
     row.label:Show()
 end
 
 local function UpdateVirtualList()
-local done = ATTPerf.auto("UpdateVirtualList")
+local done = AGGPerf.auto("UpdateVirtualList")
     local nodes = uncollectedPopup.currentNodes or {}
     local scroller = uncollectedPopup.scrollFrame
     local content  = uncollectedPopup.scrollContent
@@ -931,7 +931,7 @@ end
 ------------------------------------------------------------
 -- Populate & refresh (virtualized)
 local function PopulateUncollectedPopup(scrollContent, nodes)
-local done = ATTPerf.auto("PopulateUncollectedPopup")
+local done = AGGPerf.auto("PopulateUncollectedPopup")
     -- Adjust content height / empty state
     if #nodes == 0 then
         scrollContent.emptyLine = scrollContent.emptyLine or scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -968,7 +968,7 @@ updater:RegisterEvent("SPELLS_CHANGED")
 updater:RegisterEvent("ITEM_DATA_LOAD_RESULT")
 
 updater:SetScript("OnEvent", function(_, event, ...)
-local done = ATTPerf.auto("updater:SetScript:OnEvent")
+local done = AGGPerf.auto("updater:SetScript:OnEvent")
     local function SetItemLabel(itemID)
         local entry = itemLabelsByID[itemID]
         if not entry then return end
@@ -996,10 +996,10 @@ end)
 -- Build + show
 ------------------------------------------------------------
 local function RefreshPopup(data)
-local done = ATTPerf.auto("RefreshPopup")
+local done = AGGPerf.auto("RefreshPopup")
     uncollectedPopup.currentData = data
 
-    local nodes, activeKeys = ATTPerf.wrap("BuildNodeList", BuildNodeList, data)
+    local nodes, activeKeys = AGGPerf.wrap("BuildNodeList", BuildNodeList, data)
     uncollectedPopup.currentNodes = nodes
     PopulateUncollectedPopup(uncollectedPopup.scrollContent, nodes)
 
