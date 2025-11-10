@@ -209,6 +209,30 @@ local function PrintSlashCmdHelp()
     print("alternatively you can use /agg or /attgogo")
 end
 
+local function test()
+  local ctx = Util.ResolvePopupTargetForCurrentContext() -- provides instance per-difficulty subset
+  local mapID = C_Map.GetBestMapForUnit("player")
+  local pckg = ATT.GetCachedDataForMapID(mapID)          -- always provides a combined set
+
+  local function nt(o)
+    return ("name=%s; text=%s"):format(tostring(o and o.name or "noname"), tostring(o and o.text or "notext"))
+  end
+
+  -- ctx progress straight from the node
+  local c1, t1 = Util.ATTGetProgress(ctx)
+
+  -- pckg progress via the map root wrapper
+  local c2, t2 = Util.ResolveMapProgress(mapID)
+
+  print("ctx:  "  .. nt(ctx)  .. ("; %d/%d"):format(c1 or 0, t1 or 0))
+  print("pckg: " .. nt(pckg) .. ("; %d/%d"):format(c2 or 0, t2 or 0))
+
+  if IsInInstance() then
+    local name, instType, difficultyID, difficultyName, maxPlayers, dynDifficulty, isDyn, instMapID, grpSize = GetInstanceInfo()
+    print(name .. ", " .. instType .. ", difficulty " .. difficultyID .. " (" .. difficultyName .. "), max players " .. maxPlayers .. ", mapID " .. instMapID .. ", group size " .. grpSize)
+  end
+end
+
 local function SetupSlashCmd()
     SlashCmdList["ATTGOGO"] = function(msg)
         local raw = (msg or ""):trim()
@@ -221,12 +245,14 @@ local function SetupSlashCmd()
         local LIST    = { l = true, list = true }
         local DUMP    = { d = true, dump = true }
         local PERF    = { p = true, perf = true }
+        local TEST    = { t = true, test = true }
 
         if HELP[cmd]    then PrintSlashCmdHelp()        return end
         if OPTIONS[cmd] then OptionsUI.Show()           return end
         if SHOW[cmd]    then ShowMainFrame()            return end
         if LIST[cmd]    then OpenUncollectedForHere()   return end
         if DUMP[cmd]    then DumpCurrentCtx()           return end
+        if TEST[cmd]    then test()                     return end
         if PERF[cmd]    then AGGPerf.on(rest == "1")    return end
         if cmd == "add" then DebugLog(rest)             return end
 

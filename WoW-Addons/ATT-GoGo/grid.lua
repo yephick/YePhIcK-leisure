@@ -429,10 +429,7 @@ function Grid.Create(parent, dataset, tileFactory, widgetSize, padding)
 
     local widgets = {}
 
-    local function Populate()
-        AGGPerf.wrap("Grid.Create:Populate", function() Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll) end)
-    end
-    local Debounced = Util.Debounce(Populate, 0.08)
+    local Debounced = Util.Debounce(function() Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll) end, 0.08)
 
     scroll:SetScript("OnShow", Debounced)
     parent:HookScript("OnSizeChanged", Debounced)

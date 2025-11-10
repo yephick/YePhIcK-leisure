@@ -568,6 +568,18 @@ local function EraFromAwp(awp)
   return era
 end
 
+-- Derive era from a difficulty's required level when awp is missing
+local function EraFromLevel(lvl)
+  if type(lvl) ~= "number" then return nil end
+  if     lvl <= 60 then return 1       -- Classic
+  elseif lvl <= 70 then return 2   -- TBC
+  elseif lvl <= 80 then return 3   -- Wrath
+  elseif lvl <= 85 then return 4   -- Cata
+  elseif lvl <= 90 then return 5   -- MoP
+  end
+  return nil
+end
+
 -- Return era for a difficulty child (prefer child.awp, then instance.awp, then instance.expansionID, else Classic)
 local function EraForChild(instanceNode, child)
 return AGGPerf.wrap("EraForChild", function()
@@ -575,6 +587,7 @@ return AGGPerf.wrap("EraForChild", function()
   if child and child.difficultyID then
     return EraFromAwp(child.awp)
         or EraFromAwp(instanceNode.awp)
+        or EraFromLevel(child.lvl)
         or instanceNode.expansionID
         or 1
   end
@@ -692,35 +705,34 @@ return AGGPerf.wrap("Util.ResolveContextNode", function()
   local sentinel = { text = "Unknown instance", name = "Unknown instance", g = {} }
 
   if IsInInstance() then
-    local _, instType,_,_,_,_,_, instID = GetInstanceInfo()
+    local _, instType,_,_,_,_,_, instMapID = GetInstanceInfo()
     if instType == "party" or instType == "raid" then
-      info.kind = "instance"
-      -- 1) Find the raw instance node by instanceID (fallback to mapID)
-      -- some ATT nodes, like Kara, are not found by `instID == 532` but is found by `mapID == 350` (or Temple of Jade Serpent 464/429)
-      local node = Util.ATTSearchOne("instanceID", instID)
-      if not node then
-        info.uiMapID = C_Map.GetBestMapForUnit("player")
-        node = FindInstanceFromMap(info.uiMapID)
+      info.kind    = "instance"
+      info.uiMapID = C_Map.GetBestMapForUnit("player")
+    
+      -- 1) Map-first (same path ATT uses for /attmini)
+      local node = FindInstanceFromMap(info.uiMapID)        -- prefers 'maps', then 'mapID' hits
+      -- 2) Tight EJ fallback: only if EJ-candidate is mapped to the same UI map
+      if not node and instMapID then
+        TP(instMapID)
+        print("fallback! instMapID is " .. instMapID)
+        local cand = Util.ATTSearchOne("instanceID", instMapID)
+        if cand then
+          local sameMap = (cand.mapID == info.uiMapID) or (type(cand.maps) == "table" and tContains(cand.maps, info.uiMapID))
+          if sameMap then node = cand end
+        end
       end
       if not node then return sentinel, info end
-
-      -- 2) Narrow to the current difficulty
+    
       local curDiff = ATT.GetCurrentDifficultyID()
       local child   = Util.SelectDifficultyChild(node, curDiff) or node  -- returns diff child, or the node itself. 
-
-      -- 3) Determine current era + whether the instance is era-split, then wrap
+    
+      -- determine current era + whether the instance is era-split, then wrap
       local buckets = BuildEraBuckets(node)                               -- { [era] = {diff-children...} } 
       local first   = next(buckets)
       local isSplit = first and next(buckets, first)
-      -- Prefer child’s era; fall back to the first bucket / expansionID / Classic
-      local era     = (child.difficultyID and (EraFromAwp(child.awp) or EraFromAwp(node.awp) or node.expansionID or 1))
-                      or first
-                      or node.expansionID
-                      or 1
-      -- we want the *current difficulty branch* in the returned node
-      local diffs   = { child }      -- hand the wrapper a single diff-branch
-
-      local cooked  = MakeEraWrapper(node, era, diffs, isSplit)
+      local era     = EraForChild(node, child) or first or node.expansionID or 1
+      local cooked  = MakeEraWrapper(node, era, { child }, isSplit)
       return cooked, info
     end
   end
@@ -1136,7 +1148,7 @@ local done = AGGPerf.auto("Tooltip.AddContextProgressTo")
     local child   = Util.SelectDifficultyChild(node, curDiff) or node
     local c, t, p = Util.ATTGetProgress(child)
     tooltip:AddLine("|cffffd200" .. Util.NodeDisplayName(node) .. "|r")
-    Tooltip.AddProgress(tooltip, child, c, t, p, false, node, node)
+    Tooltip.AddProgress(tooltip, child, c, t, p, false, node, child)
   else
     local zoneName = GetRealZoneText()
     local subZone  = GetSubZoneText()
