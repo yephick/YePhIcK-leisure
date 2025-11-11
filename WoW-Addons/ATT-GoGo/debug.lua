@@ -472,7 +472,7 @@ local function summary_lines()
       local std = (st.count>1) and math.sqrt(st.M2/(st.count-1)) or 0
       local p95 = pct_from_samples(st.samples, st.count, 95)
       local avg = st.total / st.count
-      lines[#lines+1] = ("%7d  %6.1f  %6.1f  %6.1f  %6.1f  %6.1f  %s"):format(st.count, avg, p95, st.max, std, st.total, st.label)
+      lines[#lines+1] = ("%7d  %6.2f  %6.2f  %6.2f  %6.2f  %6.2f  %s"):format(st.count, avg, p95, st.max, std, st.total, st.label)
     end
   end
   return lines, entries

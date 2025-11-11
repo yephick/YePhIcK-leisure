@@ -814,7 +814,7 @@ local function RenderRowAt(scrollContent, row, dataIndex, nodes)
     -- Fill visuals (fast path: icon + name)
     row.btn.node = node
     Util.ApplyNodeIcon(row.btn, node)
-    AGGPerf.wrap("RenderRowAt:ResolveDisplayForNode", function() ResolveDisplayForNode(node, row.label, row.btn) end)
+    ResolveDisplayForNode(node, row.label, row.btn)
 
     row.btn:Show()
     row.label:Show()
