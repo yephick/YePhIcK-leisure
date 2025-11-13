@@ -133,7 +133,7 @@ end
 function Util.GetMapRoot(mapID)
   local hit = _MAP_ROOT_CACHE[mapID]
   if hit ~= nil then return hit or nil end        -- false sentinel means "known empty"
-  local pkg = AGGPerf.wrap("GetCachedDataForMapID", function() return ATT.GetCachedDataForMapID(mapID) end)
+  local pkg = ATT.GetCachedDataForMapID(mapID)
   if type(pkg) ~= "table" or not next(pkg) then
     TP(pkg, next(pkg))
     _MAP_ROOT_CACHE[mapID] = false                -- remember "no data" to avoid repeated work
@@ -152,9 +152,9 @@ function Util.ResolveMapProgress(mapID)
 return AGGPerf.wrap("Util.ResolveMapProgress", function()
   local hit = _MAP_PROG_CACHE[mapID]
   if hit then return hit[1], hit[2], hit[3] end
-  local root = AGGPerf.wrap("GetMapRoot", function() return Util.GetMapRoot(mapID) end)
+  local root = AGGPerf.wrap("Util.ResolveMapProgress:GetMapRoot", function() return Util.GetMapRoot(mapID) end)
   if root then
-    local c, t, p = AGGPerf.wrap("ATTGetProgress", function() return Util.ATTGetProgress(root) end)
+    local c, t, p = Util.ATTGetProgress(root)
     _MAP_PROG_CACHE[mapID] = {c, t, p}
     return c, t, p
   else
@@ -438,7 +438,6 @@ end
 -- Map/waypoint helpers
 -------------------------------------------------
 function Util.ExtractMapAndCoords(node)
-return AGGPerf.wrap("Util.ExtractMapAndCoords", function()
   local c = node.coords
   if c then
     local x = c[1][1]
@@ -455,7 +454,6 @@ return AGGPerf.wrap("Util.ExtractMapAndCoords", function()
   end
 
   return nil
-end)
 end
 
 function Util.TryTomTomWaypoint(mapID, x, y, title)
@@ -489,7 +487,6 @@ function Util.FocusMapForNode(node)
 end
 
 function Util.GetNodeIcon(node)
-return AGGPerf.wrap("Util.GetNodeIcon", function()
   if not node then TP(); return nil end
   local ret = node.icon
       or ATT.GetIconFromProviders(node)
@@ -510,7 +507,6 @@ return AGGPerf.wrap("Util.GetNodeIcon", function()
   TP(node, node.parent)
 
   return nil
-end)
 end
 
 -- Centralized icon applier: works with ItemButtons *and* raw Textures.
@@ -518,7 +514,6 @@ end
 --   Util.ApplyNodeIcon(btnOrTexture, node)
 --   Util.ApplyNodeIcon(btnOrTexture, node, { texCoord = {0.07,0.93,0.07,0.93} })
 function Util.ApplyNodeIcon(target, node, opts)
-return AGGPerf.wrap("Util.ApplyNodeIcon", function()
   opts = opts or {}
   local tex = opts.icon or Util.GetNodeIcon(node)   -- may be file path, fileID, atlas, or a table {atlas=..., coords=..., id=..., texture=...}
   local icon
@@ -543,7 +538,6 @@ return AGGPerf.wrap("Util.ApplyNodeIcon", function()
   -- Fallback for ItemButtons
   SetItemButtonTexture(target, tex)
 
-end)
 end
 
 -- === Removed/retired detection ===
@@ -551,12 +545,10 @@ local BUILD_NO = select(4, GetBuildInfo())
 
 -- return true if a node should be considered 'removed from game' relative to current client
 function Util.IsNodeRemoved(n)
-return AGGPerf.wrap("Util.IsNodeRemoved", function()
   if n.u == 2 then return true end           -- ATT unobtainable flag for removed content
   if n.rwp then return n.rwp <= BUILD_NO end -- rwp: removed with patch
   if n.awp then return n.awp > BUILD_NO end  -- awp: added with patch
   return false
-end)
 end
 
 -- === Era helpers ===
@@ -582,7 +574,6 @@ end
 
 -- Return era for a difficulty child (prefer child.awp, then instance.awp, then instance.expansionID, else Classic)
 local function EraForChild(instanceNode, child)
-return AGGPerf.wrap("EraForChild", function()
   if not child then TP(instanceNode, child) end
   if child and child.difficultyID then
     return EraFromAwp(child.awp)
@@ -592,12 +583,10 @@ return AGGPerf.wrap("EraForChild", function()
         or 1
   end
   return nil
-end)
 end
 
 -- Build { [era] = {difficultyChildren...} } ignoring non-difficulty headers
 local function BuildEraBuckets(instanceNode)
-return AGGPerf.wrap("BuildEraBuckets", function()
   local buckets, hasDiff = {}, false
   local kids = instanceNode.g
   if kids then
@@ -624,12 +613,10 @@ return AGGPerf.wrap("BuildEraBuckets", function()
     buckets[era] = {}
   end
   return buckets
-end)
 end
 
 -- Wrapper limited to era; also decide and *store once* a stable progress key
 local function MakeEraWrapper(instanceNode, era, diffs, isSplit)
-return AGGPerf.wrap("MakeEraWrapper", function()
   local name = instanceNode.text or instanceNode.name
   local wrap = {
     text = name, name = name,
@@ -652,7 +639,6 @@ return AGGPerf.wrap("MakeEraWrapper", function()
     wrap.progressKey = id
   end
   return wrap
-end)
 end
 
 -------------------------------------------------
@@ -661,7 +647,6 @@ end
 
 -- from an Instance node, pick the child Group which matches a difficultyID
 function Util.SelectDifficultyChild(instanceNode, difficultyID)
-return AGGPerf.wrap("Util.SelectDifficultyChild", function()
   if not (instanceNode and instanceNode.g) then TP(instanceNode, difficultyID); return nil end
 
   for _, child in ipairs(instanceNode.g) do
@@ -671,7 +656,6 @@ return AGGPerf.wrap("Util.SelectDifficultyChild", function()
   end
 
   return instanceNode
-end)
 end
 
 -- Returns the instance container for a given map by walking hits up to an ancestor with instanceID.
@@ -700,7 +684,6 @@ end
 -- Unified context resolver: returns the ATT node for current instance or zone.
 -- Returns: node, info  where info={kind="instance"|"zone", uiMapID=?}
 function Util.ResolveContextNode()
-return AGGPerf.wrap("Util.ResolveContextNode", function()
   local info = {}
   local sentinel = { text = "Unknown instance", name = "Unknown instance", g = {} }
 
@@ -741,7 +724,6 @@ return AGGPerf.wrap("Util.ResolveContextNode", function()
   info.kind = "zone"
   info.uiMapID = C_Map.GetBestMapForUnit("player")
   return Util.ATTSearchOne("mapID", info.uiMapID) or TP(info) or sentinel, info
-end)
 end
 
 function Util.ResolvePopupTargetForCurrentContext()
@@ -754,7 +736,6 @@ function Util.ResolvePopupTargetForCurrentContext()
 end
 
 function IsInstanceLockedOut(instance)
-return AGGPerf.wrap("IsInstanceLockedOut", function()
   local sid
   if type(instance) == "table" then
     local n = instance
@@ -762,15 +743,13 @@ return AGGPerf.wrap("IsInstanceLockedOut", function()
   else
     sid = tonumber(instance)
   end
-  if not sid then TP(instance, sid); return false end
   for i = 1, GetNumSavedInstances() do
     local _, _, _, _, locked, _, _, _, _, _, numEncounters, numCompleted, _, savedInstanceID = GetSavedInstanceInfo(i)
-    if locked and tonumber(savedInstanceID) == sid then
+    if locked and savedInstanceID == sid then
       return true, (numCompleted or 0), (numEncounters or 0), i
     end
   end
   return false
-end)
 end
 
 -- ============================================================
@@ -812,7 +791,6 @@ end
 
 -- Build a lockout snapshot (absolute expiry + boss list by name only)
 local function BuildLockoutFromSavedInstances(attInstanceNode)
-return AGGPerf.wrap("BuildLockoutFromSavedInstances", function()
   local isLocked, _, numBosses, lockoutIndex = IsInstanceLockedOut(attInstanceNode)
   if not isLocked then return nil end
 
@@ -822,16 +800,14 @@ return AGGPerf.wrap("BuildLockoutFromSavedInstances", function()
   local bosses = {}
   for i = 1, numBosses do
     local bossName, _, killed = GetSavedInstanceEncounterInfo(lockoutIndex, i)
-    bosses[#bosses+1] = { name = bossName or ("Boss " .. i), down = killed }
+    bosses[#bosses+1] = { name = bossName or TP(attInstanceNode) or ("Boss " .. i), down = killed }
   end
 
   return { expiresAt = expiresAt, bosses = bosses, sid = sid }
-end)
 end
 
 function Util.SaveInstanceProgressByNode(attInstanceNode)
-return AGGPerf.wrap("Util.SaveInstanceProgressByNode", function()
-  if type(attInstanceNode) ~= "table" then TP(attInstanceNode); return end
+--  if type(attInstanceNode) ~= "table" then TP(attInstanceNode); return end
   local instanceID = attInstanceNode.instanceID
 
   local key = Util.GetInstanceProgressKey(attInstanceNode)
@@ -843,32 +819,25 @@ return AGGPerf.wrap("Util.SaveInstanceProgressByNode", function()
 
   me.instances[instanceID] = { c, t, lock = lock } -- split and non-split: progress + lock under numeric key
   if key ~= instanceID then
-    -- split: store progress under composite key
-    me.instances[key]        = { c, t }
---    DebugLogf("saved era-split instance progress with instanceID %d, key %s, c %d, t %d", instanceID, key, c, t)
+    me.instances[key] = { c, t } -- split: store progress under composite key
   end
-end)
 end
 
 -- Save zone progress for an ATT zone node
 function Util.SaveZoneProgressByMapID(mapID)
-return AGGPerf.wrap("Util.SaveZoneProgressByMapID", function()
   local c, t = Util.ResolveMapProgress(mapID)
   Util.EnsureProgressDB().zones[mapID] = { c or 0, t or 0 }
-end)
 end
 
 -- Convenience: snapshot whatever the current context is
 function Util.SaveCurrentContextProgress()
-return AGGPerf.wrap("Util.SaveCurrentContextProgress", function()
   local node, info = Util.ResolveContextNode()
 
   if info.kind == "instance" then
     Util.SaveInstanceProgressByNode(node)
   else
-    if info.uiMapID then Util.SaveZoneProgressByMapID(info.uiMapID) else TP(node, info) end
+    Util.SaveZoneProgressByMapID(info.uiMapID)
   end
-end)
 end
 
 -- === Other-toons option (tri-state) ===
@@ -883,7 +852,6 @@ end
 -- UI lists (Expansions / Zones)
 -------------------------------------------------
 function GetCompletionColor(percent)
-return AGGPerf.wrap("GetCompletionColor", function()
   percent = math.max(0, math.min(100, percent or 0))
   local intensity = 0.15
   if percent < 50 then
@@ -891,20 +859,16 @@ return AGGPerf.wrap("GetCompletionColor", function()
   else
     local r = (100 - percent) / 50; return r * intensity, intensity, 0
   end
-end)
 end
 
 local function CompletionHex(percent, boost)
-return AGGPerf.wrap("CompletionHex", function()
   local r, g, b = GetCompletionColor(percent)
   boost = boost or 4.0                      -- punch it up for text
   r, g, b = math.min(r*boost,1), math.min(g*boost,1), math.min(b*boost,1)
   return ("|cff%02x%02x%02x"):format(r*255, g*255, b*255)
-end)
 end
 
 function BuildExpansionList()
-return AGGPerf.wrap("BuildExpansionList", function()
   local list, seen = {}, {}
   local root = ATT:GetDataCache()
 
@@ -917,20 +881,18 @@ return AGGPerf.wrap("BuildExpansionList", function()
         for _, c in pairs(exp.g) do if c and c.instanceID then hasInstance = true break end end
         if hasInstance then
           seen[id] = true
-          list[#list+1] = { id = id, name = exp.text or ("Expansion " .. id), node = exp }
+          list[#list+1] = { id = id, name = exp.text, node = exp }
         end
       end
     end
   end
 
   for _, cat in pairs(root.g) do scanContainer(cat) end
-  table.sort(list, function(a,b) return (a.id or 0) < (b.id or 0) end)
+  table.sort(list, function(a,b) return a.id < b.id end)
   return list
-end)
 end
 
 function Util.GetInstanceProgressKey(node)
-return AGGPerf.wrap("Util.GetInstanceProgressKey", function()
   if type(node) ~= "table" then TP(node); return nil end
   if node.progressKey ~= nil then return node.progressKey end
   local id = node.instanceID; if not id then TP(id); return nil end
@@ -938,7 +900,6 @@ return AGGPerf.wrap("Util.GetInstanceProgressKey", function()
   -- if we don’t know whether it’s split, default to legacy (numeric)
   node.progressKey = (node.__eraSplit and era) and (id .. ":" .. era) or id
   return node.progressKey
-end)
 end
 
 function GetInstancesForExpansion(expansionID)
@@ -988,7 +949,6 @@ end)
 end
 
 function BuildZoneList()
-local done = AGGPerf.auto("BuildZoneList")
   local root = ATT:GetDataCache()
 
   local zones, seen = {}, {}
@@ -1022,7 +982,6 @@ local done = AGGPerf.auto("BuildZoneList")
   end
 
   scan(root.g)
-done()
   return zones
 end
 
@@ -1032,7 +991,6 @@ end
 Tooltip = Tooltip or {}
 
 function Tooltip.CreateTooltip(frame, anchor, contentFunc)
-local done = AGGPerf.auto("Tooltip.CreateTooltip")
     frame:EnableMouse(true)
     frame:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, anchor or "ANCHOR_RIGHT")
@@ -1041,14 +999,12 @@ local done = AGGPerf.auto("Tooltip.CreateTooltip")
         GameTooltip:Show()
     end)
     frame:SetScript("OnLeave", function(self) GameTooltip:Hide() end)
-done()
 end
 
 function Tooltip.AddHeader(title, r, g, b) GameTooltip:AddLine(title, r or 0, g or 1, b or 0) end
 function Tooltip.AddLine(text, r, g, b)   GameTooltip:AddLine(text, r or 1, g or 1, b or 1) end
 
 function Tooltip.AddInstanceLockoutTo(tooltip, data)
-local done = AGGPerf.auto("Tooltip.AddInstanceLockoutTo")
     local isLocked, numDown, numBosses, lockoutIndex = IsInstanceLockedOut(data)
     if isLocked then
         local reset = select(3, GetSavedInstanceInfo(lockoutIndex))
@@ -1061,16 +1017,12 @@ local done = AGGPerf.auto("Tooltip.AddInstanceLockoutTo")
                 tooltip:AddLine(("%s%s|r"):format(color, bossName or ("Boss " .. i)))
             end
         end
-    else
-        tooltip:AddLine("No active lockout.", 0.5, 0.5, 0.5)
     end
-done()
 end
 
 -- Append other-toons progress (same realm, skip current toon)
 -- ownerNode: zone (mapID) or instance (instanceID) node used to key into the DB.
 local function AddOtherToonsSection(tooltip, ownerNode, isZone)
-AGGPerf.wrap("AddOtherToonsSection", function()
   local mode = Util.GetOtherToonsMode()
   if mode == 0 then return end
   if mode == 1 and isZone then return end
@@ -1123,12 +1075,10 @@ AGGPerf.wrap("AddOtherToonsSection", function()
       tooltip:AddLine(l, 0.9, 0.9, 0.9, false)
     end
   end
-end)
 end
 
 -- Consolidated progress block used by the minimap tooltip
 function Tooltip.AddProgress(tooltip, data, collected, total, percent, isZone, ownerNode, lockoutData)
-local done = AGGPerf.auto("Tooltip.AddProgress")
   tooltip:AddLine(("Collected: %d / %d (%.2f%%)"):format(collected, total, percent))
   if not isZone then
     Tooltip.AddInstanceLockoutTo(tooltip, lockoutData or data or ownerNode)
@@ -1136,11 +1086,9 @@ local done = AGGPerf.auto("Tooltip.AddProgress")
 
   Tooltip.AddMyLockouts(tooltip)
   AddOtherToonsSection(tooltip, ownerNode, isZone)
-done()
 end
 
 function Tooltip.AddContextProgressTo(tooltip)
-local done = AGGPerf.auto("Tooltip.AddContextProgressTo")
   local node, info = Util.ResolveContextNode()
 
   if info.kind == "instance" then
@@ -1156,23 +1104,18 @@ local done = AGGPerf.auto("Tooltip.AddContextProgressTo")
     tooltip:AddLine("|cffffd200" .. zoneDisplay .. "|r")
 
     local c, t, p = Util.ResolveMapProgress(info.uiMapID)
-    if t <= 0 then
-      tooltip:AddLine("Nothing to show for this location.", 0.7, 0.7, 0.7)
-      return
+    if t > 0 then
+      -- owner stub only needs mapID for “other toons” section
+      Tooltip.AddProgress(tooltip, nil, c, t, p, true, { mapID = info.uiMapID }, nil)
     end
-    -- owner stub only needs mapID for “other toons” section
-    Tooltip.AddProgress(tooltip, nil, c, t, p, true, { mapID = info.uiMapID }, nil)
   end
-done()
 end
 
 function Tooltip.AddMyLockouts(tooltip)
-local done = AGGPerf.auto("Tooltip.AddMyLockouts")
   local me = Util.EnsureProgressDB()
   local rows, now = {}, time()
-  local instances = me.instances
 
-  for id, entry in pairs(instances) do
+  for id, entry in pairs(me.instances) do
     if type(id) == "number" then   -- only numeric instanceID rows
       local lock = entry.lock
       if lock and (lock.expiresAt - now) > 0 then
@@ -1200,5 +1143,4 @@ local done = AGGPerf.auto("Tooltip.AddMyLockouts")
     tooltip:AddLine("Locked instances:", 0.9, 0.9, 0.9)
     for _, line in ipairs(rows) do tooltip:AddLine(line, 1, 1, 1, false) end
   end
-done()
 end

@@ -34,7 +34,6 @@ local OPPOSITE_FACTION = (FACTION == 1 and 2) or (FACTION == 2 and 1) or 0
 local CLASS_ID = select(3, UnitClass("player"))
 
 local function IsAllowedLeaf(node, activeKeys)
-return AGGPerf.wrap("IsAllowedLeaf", function()
     if OPPOSITE_FACTION ~= 0 and node.r == OPPOSITE_FACTION then
         return false, {}
     end
@@ -72,7 +71,6 @@ return AGGPerf.wrap("IsAllowedLeaf", function()
         return true, matched
     end
     return false, matched
-end)
 end
 
 local RETRIEVING = "Retrieving data"
@@ -82,8 +80,7 @@ end
 
 -- Short display name for a collectible leaf
 local function NodeShortName(n)
-return AGGPerf.wrap("NodeShortName", function()
-local t = n and (n.text or n.name)
+    local t = n and (n.text or n.name)
     if not IsPlaceholderTitle(t) then return t end
     if n.itemID  then return GetItemInfo(n.itemID) or "Item " .. n.itemID end
     if n.spellID then return GetSpellInfo(n.spellID) or ("Spell " .. n.spellID) end
@@ -97,44 +94,51 @@ local t = n and (n.text or n.name)
         local c = Util.ATTSearchOne("creatureID", n.creatureID) or Util.ATTSearchOne("npcID", n.npcID)
         return c and c.name or ("Creature " .. (n.creatureID or n.npcID))
     end
+    TP(n)
     return "Collectible"
-end)
 end
 
 ------------------------------------------------------------
 -- Tooltip helpers
 ------------------------------------------------------------
-local function AddMatchedIDLines(node, matchedKeys)
-return AGGPerf.wrap("AddMatchedIDLines", function()
-    if not matchedKeys or #matchedKeys == 0 then return false end
-    GameTooltip:AddLine(" ")
-    for _, k in ipairs(matchedKeys) do
-        local v = node[k]
-        local label = COLLECTIBLE_ID_LABELS[k] or k
-        GameTooltip:AddLine(label .. " ID: " .. v, 1, 1, 1)
+local function CollectIdFields(node)
+    local keys = {}
+    for k, v in pairs(node) do
+        if v ~= nil and v ~= "" and type(k) == "string" and k:find("ID", 1, true) then
+            keys[#keys + 1] = k
+        end
     end
-    return true
-end)
+    return keys
 end
 
--- One-time hook to re-append our lines whenever the item tooltip is rebuilt
+local function AddMatchedIDLines(node)
+    local keys = CollectIdFields(node) or print(CTITLE .. "trying node.parent") or node.parent and CollectIdFields(node.parent)
+    table.sort(keys)
+    if #keys == 0 then return end
+
+    GameTooltip:AddLine(" ")
+    for _, k in ipairs(keys) do
+        local v = node[k]
+        GameTooltip:AddLine(k .. ": " .. v, 1, 1, 1)
+    end
+end
+
+-- One-time hook to re-append our lines whenever the item tooltip is rebuilt. N.B.: items in bags (for instance) don't have/need our tooltip hook
 if not GameTooltip.__ATTGoGoHooked then
-local outter = AGGPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
     GameTooltip:HookScript("OnTooltipSetItem", function(tt)
-    local inner = AGGPerf.auto("BuildGriGameTooltip:__ATTGoGoHooked")
-        if not currentTooltipNode then inner(); return end -- items in bags (for instance) don't have/need our tooltip hook
-        if not tt.__ATTGoGoReentrant then
-            tt.__ATTGoGoReentrant = true
-            local matched = passKeysByNode[currentTooltipNode]
-            AddMatchedIDLines(currentTooltipNode, matched)
-            tt.__ATTGoGoReentrant = nil
-        else
-            TP(tt.__ATTGoGoReentrant)
+        if currentTooltipNode then
+            AddMatchedIDLines(currentTooltipNode)
         end
-    inner()
     end)
+
+    -- Quests/objects/spells/etc. that arrive via SetHyperlink (these often rebuild a tick later)
+    hooksecurefunc(GameTooltip, "SetHyperlink", function(tt, link)
+        if tt:IsShown() and currentTooltipNode then
+            AddMatchedIDLines(currentTooltipNode)
+        end
+    end)
+
     GameTooltip.__ATTGoGoHooked = true
-outter()
 end
 
 -- === Lightweight 3D preview dock for creatures ===
@@ -184,14 +188,13 @@ local function ShowPreviewForNode(node)
     previewDock:Show()
 end
 
--- List up to 31 dependent uncollected child collectibles on the tooltip (sub-achievements, item rewards, etc.)
+-- List up to N dependent uncollected child collectibles on the tooltip (sub-achievements, item rewards, etc.)
 local function AddUncollectedChildrenToTooltip(node)
-AGGPerf.wrap("AddUncollectedChildrenToTooltip", function()
     if type(node) ~= "table" or type(node.g) ~= "table" or next(node.g) == nil then return end
     local shown, extra = 0, 0
     for _, ch in pairs(node.g) do
         if type(ch) == "table" and ch.collectible and ch.collected ~= true then
-            if shown < 31 then
+            if shown < 21 then
                 GameTooltip:AddLine("• " .. NodeShortName(ch), 1, 1, 1, true)
                 shown = shown + 1
             else
@@ -202,34 +205,23 @@ AGGPerf.wrap("AddUncollectedChildrenToTooltip", function()
     if shown > 0 and extra > 0 then
         GameTooltip:AddLine(("And %d more..."):format(extra), 0.85, 0.85, 0.85, true)
     end
-end)
 end
 
 -- Returns a single-line compact description of quest objectives, or nil if unavailable.
-local function GetQuestObjectivesText(qid)
-return AGGPerf.wrap("GetQuestObjectivesText", function()
+local function AddQuestObjectivesText(qid)
     local objs = C_QuestLog.GetQuestObjectives(qid)
-    if not objs then return Util.ATTSearchOne("questID", qid).name end
-    if #objs == 0 then return nil end
-    local parts = {}
-    for i = 1, #objs do
-        local o = objs[i]
-        if o and o.text and o.text ~= "" then parts[#parts+1] = o.text end
+    if not objs then GameTooltip:AddLine(Util.ATTSearchOne("questID", qid).name, 1, 1, 1, true); return false end
+    for _, o in pairs(objs) do
+        if o.text and o.text ~= "" then GameTooltip:AddLine(o.text, 1, 1, 1, true) end
     end
-    if #parts == 0 then return nil end
-    return (table.concat(parts, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
-end)
+    return #objs > 0
 end
 
 -- Renders the quest tooltip once (no retry). Returns true if it printed real objectives.
-local function RenderQuestTooltip(node, matched, owner)
-return AGGPerf.wrap("RenderQuestTooltip", function()
-    local line = GetQuestObjectivesText(node.questID)
-    GameTooltip:AddLine(line or node.name or TP(node, node.text) or "Objective(s) unavailable", 1, 1, 1, true)
+local function RenderQuestTooltip(node)
+    local hasLines = AddQuestObjectivesText(node.questID)
     AddUncollectedChildrenToTooltip(node)
-    AddMatchedIDLines(node, matched)
-    return line ~= nil
-end)
+    return hasLines
 end
 
 -- === World Map ping (brief highlight at coords) ===
@@ -254,7 +246,7 @@ local function PingMapAt(mapID, x, y)
   PingFrame:ClearAllPoints()
   PingFrame:SetPoint("CENTER", child, "TOPLEFT", x * w, -y * h)
   PingFrame:Show()
-  C_Timer.After(0.75, function() PingFrame:Hide() end)
+  C_Timer.After(3.5, function() PingFrame:Hide() end)
 end
 
 local requestedOnce = {}
@@ -270,17 +262,21 @@ local function SetupNodeTooltip(btn, boundNode)
 
         -- brief attention ping on WorldMap near coords
         do
+          local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:mapPing")
           local m,x,y = Util.ExtractMapAndCoords(node)
           if not m and node.instanceID then local inst = Util.ATTSearchOne("instanceID", node.instanceID); if inst then m,x,y=Util.ExtractMapAndCoords(inst) end end
           if not m and node.flightpathID and node.g then for i=1, #node.g do m, x, y = Util.ExtractMapAndCoords(node.g[i]); if m then break end end end
           if not m and node.parent then m, x, y = Util.ExtractMapAndCoords(node.parent) end
           PingMapAt(m, x, y)
+          inner()
         end
 
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:ClearLines()
         local matched = passKeysByNode[node]
+        local perf = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info")
         if node.itemID then
+            local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:itemID")
             local id = node.itemID
             if GetItemInfo(id) then
                 GameTooltip:SetItemByID(id)
@@ -291,18 +287,22 @@ local function SetupNodeTooltip(btn, boundNode)
                     C_Item.RequestLoadItemDataByID(id)
                 end
             end
+            inner()
         elseif node.questID then
-            local hadRealObjectives = RenderQuestTooltip(node, matched, self)
+            local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:questID")
+            local hadRealObjectives = RenderQuestTooltip(node)
             if not hadRealObjectives then
                 C_Timer.After(0.50, function()
                     if currentTooltipNode == node and self:IsMouseOver() then
                         GameTooltip:ClearLines()
-                        RenderQuestTooltip(node, passKeysByNode[node], self)
+                        RenderQuestTooltip(node)
                         GameTooltip:Show()
                     end
                 end)
             end
+            inner()
         elseif node.achievementID then
+            local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:achievementID")
             local aID = node.achievementID
             local link = GetAchievementLink(aID)
             if link then
@@ -314,16 +314,19 @@ local function SetupNodeTooltip(btn, boundNode)
             end
 
             AddUncollectedChildrenToTooltip(node)
-            AddMatchedIDLines(node, matched)
+            inner()
         elseif node.creatureID or node.npcID then
+            local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:npcID")
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
             AddUncollectedChildrenToTooltip(node)
-            AddMatchedIDLines(node, matched)
+            inner()
         else
+            local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:else")
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
             AddUncollectedChildrenToTooltip(node)
-            AddMatchedIDLines(node, matched)
+            inner()
         end
+        perf()
         GameTooltip:Show()
     end)
     end)
@@ -376,7 +379,6 @@ end
 -- Display text
 ------------------------------------------------------------
 local function ResolveDisplayForNode(node, label, btn)
-return AGGPerf.wrap("ResolveDisplayForNode", function()
     local display = RETRIEVING -- this is a very hot function, so don't pre-fetch `NodeShortName(node)` which is overwritten most of the time
 
     if node.itemID then
@@ -417,7 +419,6 @@ return AGGPerf.wrap("ResolveDisplayForNode", function()
     end
 
     label:SetText(display)
-end)
 end
 
 ------------------------------------------------------------
@@ -431,8 +432,8 @@ local CATEGORY_RANK = {}
 for i, key in ipairs(CATEGORY_ORDER) do CATEGORY_RANK[key] = i end
 
 local function GetNodePrimaryKey(node)
-return AGGPerf.wrap("GetNodePrimaryKey", function()
-    local matched = passKeysByNode and passKeysByNode[node]
+    --local matched = passKeysByNode and passKeysByNode[node]
+    local matched = passKeysByNode[node]
     if matched and #matched > 0 then
         local bestKey, bestRank
         for _, k in ipairs(matched) do
@@ -446,7 +447,6 @@ return AGGPerf.wrap("GetNodePrimaryKey", function()
     end
     TP(node, matched, #matched)
     return "zz_fallback"
-end)
 end
 
 -- so far is only used in SortPopupNodes(nodes)
@@ -484,7 +484,6 @@ end
 
 -- De-duplicate achievements by achievementID, preferring a richer "meta" node over stubs.
 local function DedupAchievements(nodes)
-return AGGPerf.wrap("DedupAchievements", function()
     if #nodes <= 1 then return nodes end
 
     local function richness(n)
@@ -525,7 +524,6 @@ return AGGPerf.wrap("DedupAchievements", function()
         end
     end
     return uniq
-end)
 end
 
 -- Build active filter key list from current popup settings
@@ -540,7 +538,6 @@ end
 
 -- Collapse repeated achievement criteria into the parent achievement (controlled by per-character option)
 local function CollapseAchievementFamilies(root, nodes)
-return AGGPerf.wrap("CollapseAchievementFamilies", function()
     local expandCriteria = GetCharSetting("expandAchievementCriteria", false)
     if expandCriteria or #nodes == 0 then return nodes end
 
@@ -563,9 +560,7 @@ return AGGPerf.wrap("CollapseAchievementFamilies", function()
             metas[t.achievementID] = metas[t.achievementID] or t
         end
         local g = rawget(t, "g")
-        if type(g) == "table" then
-            for i = 1, #g do scan_for_metas(g[i]) end
-        end
+        for _, child in pairs(g or {}) do scan_for_metas(child) end
     end
     scan_for_metas(root)
 
@@ -581,20 +576,11 @@ return AGGPerf.wrap("CollapseAchievementFamilies", function()
     -- 4) de-dup achievements (prefer richer)
     keep = DedupAchievements(keep)
     return keep
-end)
 end
 
 -- Map ATT/Item API qualities to a numeric rank (higher = better)
 local function QualityRank(node)
-return AGGPerf.wrap("QualityRank", function()
-    -- Prefer ATT's 'q' (already numeric, 0..7). Fallback to GetItemInfo.
-    local q = node and node.q
-    if q == nil and node and node.itemID then
-        TP(node)
-        q = select(3, GetItemInfo(node.itemID))
-    end
-    return q or 0
-end)
+    return node and node.q or 0
 end
 
 -- Group items by visualID, keeping the first item among the highest-quality tier
@@ -603,19 +589,18 @@ local function GroupItemsByVisualID(nodes)
 
     local keep, byVid = {}, {}
     for _, n in ipairs(nodes) do
-        local vid = n and n.visualID
+        local vid = n.visualID
         if vid and n.itemID then
-            local g = byVid[vid]
-            if not g then
-                byVid[vid] = n
-                keep[#keep + 1] = n
+            local rec = byVid[vid]
+            if not rec then
+                local idx = #keep + 1
+                keep[idx] = n
+                byVid[vid] = { idx = idx, q = QualityRank(n) }
             else
-                local qNew, qOld = QualityRank(n), QualityRank(g)
-                if qNew > qOld then
-                    byVid[vid] = n
-                    for i = 1, #keep do
-                        if keep[i] == g then keep[i] = n; break end
-                    end
+                local q = QualityRank(n)
+                if q > rec.q then
+                    keep[rec.idx] = n
+                    rec.q = q
                 end
                 -- same quality -> keep existing (deterministic "first of best")
             end
@@ -630,9 +615,8 @@ end
 local function DedupItemsByItemID(nodes)
     if #nodes <= 1 then return nodes end
     local seen, keep = {}, {}
-    for i = 1, #nodes do
-        local n = nodes[i]
-        local id = n and n.itemID
+    for _, n in pairs(nodes) do
+        local id = n.itemID
         if id then
             if not seen[id] then
                 seen[id] = true
@@ -669,13 +653,11 @@ AGGPerf.wrap(site, function()
     if seen[node] then TP(seen[node]); return end
     seen[node] = true
 
-    local iaLeaf = AGGPerf.auto(site .. ":IsAllowedLeaf")
     local isAllowed, matched = IsAllowedLeaf(node, keys)
     if isAllowed then
         out[#out + 1] = node
         passKeysByNode[node] = matched
     end
-    iaLeaf()
 
     local kids = node.g
     if type(kids) == "table" then
@@ -702,10 +684,10 @@ return AGGPerf.wrap("BuildNodeList", function()
     AGGPerf.wrap("BuildNodeList:GatherUncollectedNodes", function() GatherUncollectedNodes(root, nodes, activeKeys) end)
 
     -- Transformations (in order)
-    nodes = AGGPerf.wrap("BuildNodeList:CollapseAchievementFamilies", function() return CollapseAchievementFamilies(root, nodes) end)
-    nodes = AGGPerf.wrap("BuildNodeList:DedupItemsByItemID", DedupItemsByItemID, nodes)
-    nodes = AGGPerf.wrap("BuildNodeList:GroupItemsByVisualID", GroupItemsByVisualID, nodes)
-    AGGPerf.wrap("BuildNodeList:SortPopupNodes", SortPopupNodes, nodes)
+    nodes = CollapseAchievementFamilies(root, nodes)
+    nodes = DedupItemsByItemID(nodes)
+    nodes = GroupItemsByVisualID(nodes)
+    SortPopupNodes(nodes)
 
     return nodes, activeKeys
 end)
@@ -715,7 +697,6 @@ end
 -- Row creation / rendering (virtualized)
 ------------------------------------------------------------
 local function AcquireRow(scrollContent, i)
-return AGGPerf.wrap("AcquireRow", function()
     scrollContent.rows = scrollContent.rows or {}
     local row = scrollContent.rows[i]
     if row then return row end
@@ -730,9 +711,7 @@ return AGGPerf.wrap("AcquireRow", function()
     -- hide "button" border art
     do
       local t = btn:GetNormalTexture(); t:SetTexture(nil); t:SetAlpha(0); t:Hide()
-
       local p = btn:GetPushedTexture(); p:SetTexture(nil); p:SetAlpha(0); p:Hide()
-
       local h = btn:GetHighlightTexture(); h:SetTexture(nil); h:SetAlpha(0); h:Hide()
     end
 
@@ -792,7 +771,6 @@ return AGGPerf.wrap("AcquireRow", function()
     row = { btn = btn, label = label }
     scrollContent.rows[i] = row
     return row
-end)
 end
 
 local function RenderRowAt(scrollContent, row, dataIndex, nodes)
@@ -968,14 +946,13 @@ updater:RegisterEvent("SPELLS_CHANGED")
 updater:RegisterEvent("ITEM_DATA_LOAD_RESULT")
 
 updater:SetScript("OnEvent", function(_, event, ...)
-local done = AGGPerf.auto("updater:SetScript:OnEvent")
     local function SetItemLabel(itemID)
         local entry = itemLabelsByID[itemID]
         if not entry then return end
         local name, link = GetItemInfo(itemID)
         if link or name then
             entry.label:SetText(link or name)
-            if entry.btn then Util.ApplyNodeIcon(entry.btn, entry.btn.node) else TP() end
+            if entry.btn and entry.btn.node then Util.ApplyNodeIcon(entry.btn, entry.btn.node) else TP() end
             itemLabelsByID[itemID] = nil
             requestedOnce[itemID] = nil
         end
@@ -989,7 +966,6 @@ local done = AGGPerf.auto("updater:SetScript:OnEvent")
             if name then label:SetText(name); spellLabelsByID[id] = nil end
         end
     end
-done()
 end)
 
 ------------------------------------------------------------

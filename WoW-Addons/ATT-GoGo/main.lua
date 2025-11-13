@@ -153,7 +153,6 @@ local function FlushCollectedBatch()
         SetupMainUI()           -- full rebuild of main frame widgets (also refreshes data)
     perf1()
     else
-    local perf2 = AGGPerf.auto("FlushCollectedBatch:SmallWave")
         -- Small wave => do a context snapshot + popup/active-tab refresh
         local node, info = Util.ResolveContextNode()
         if info.kind == "instance" then
@@ -164,16 +163,13 @@ local function FlushCollectedBatch()
             Util.InvalidateProgressCache(child)
         perf3()
         else
-        local perf3 = AGGPerf.auto("FlushCollectedBatch:SmalleWav:zone")
             -- Zone context: just nuke this map’s memo row
             if info.uiMapID then Util.InvalidateMapProgress(info.uiMapID) else TP(node, info) end
-        perf3()
         end
 
         Util.SaveCurrentContextProgress()
         RefreshUncollectedPopupForContextIfShown(true)
         RefreshActiveTab()
-    perf2()
     end
 end
 
@@ -274,6 +270,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     ATTGoGoDB.minimap = ATTGoGoDB.minimap or { minimapPos = 128, hide = false }
 
     Debug_Init()
+    AGGPerf.on(true)
 
     -- === Wait for ATT ("All The Things") ===
     ATT.AddEventHandler("OnReady", function()

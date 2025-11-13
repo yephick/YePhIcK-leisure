@@ -466,13 +466,13 @@ local function summary_lines()
   end)
 
   local lines = {}
-  lines[#lines+1] = ("%-7s  %-6s  %-6s  %-6s  %-6s  %-6s  %s"):format("count","avg","p95","max","std","total", "label")
+  lines[#lines+1] = ("%-7s  %-7s  %-7s  %-7s  %-7s  %-7s  %s"):format("count","avg","p95","max","std","total", "label")
   for _,st in ipairs(entries) do
     if st.count > 0 then
       local std = (st.count>1) and math.sqrt(st.M2/(st.count-1)) or 0
       local p95 = pct_from_samples(st.samples, st.count, 95)
       local avg = st.total / st.count
-      lines[#lines+1] = ("%7d  %6.2f  %6.2f  %6.2f  %6.2f  %6.2f  %s"):format(st.count, avg, p95, st.max, std, st.total, st.label)
+      lines[#lines+1] = ("%7d  %7.3f  %7.3f  %7.3f  %7.3f  %7.3f  %s"):format(st.count, avg, p95, st.max, std, st.total, st.label)
     end
   end
   return lines, entries

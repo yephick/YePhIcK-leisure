@@ -94,7 +94,6 @@ local DIFF_LABEL = {
 }
 
 local function AttachInfoIcon(parentFrame, eraNode)
-return AGGPerf.wrap("AttachInfoIcon", function()
   -- collect per-difficulty rows present in this era wrapper
   local diffs = {}
   for _, ch in ipairs(eraNode.g) do
@@ -116,14 +115,13 @@ return AGGPerf.wrap("AttachInfoIcon", function()
 
   Tooltip.CreateTooltip(btn, "ANCHOR_LEFT", function()
     GameTooltip:AddLine("Difficulties", 1, 1, 1)
-    table.sort(diffs, function(a,b) return (a.d or 0) < (b.d or 0) end)
+    table.sort(diffs, function(a,b) return a.d < b.d end)
     for _, r in ipairs(diffs) do
       local p = (r.t > 0) and (r.c / r.t * 100) or 0
       local tag = DIFF_LABEL[r.d] or r.d
       GameTooltip:AddLine(("• %s — %d/%d (%.1f%%)"):format(tag, r.c, r.t, p), 0.9, 0.9, 0.9)
     end
   end)
-end)
 end
 
 -- Main: Create a progress widget for grid
@@ -251,10 +249,10 @@ local function PrepareTabData(t, isZone, filterFunc, sortFunc)
             end
         end
     else
-          entries = GetInstancesForExpansion(t.id)
+        entries = GetInstancesForExpansion(t.id)
     end
     if sortFunc then
-          table.sort(entries, sortFunc)
+        table.sort(entries, sortFunc)
     end
     return entries
 end
@@ -286,7 +284,7 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
 
     local tileFactory = function(content, data, x, y, widgetSize, padding)
       local attNode = isZone and Util.GetMapRoot(data.mapID) or (data.attNode or data)
-      return AGGPerf.wrap("Tile.CreateProgressWidget", function() return Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, ResortAndRefresh) end)
+      return Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, ResortAndRefresh)
     end
 
     local scroll = gridFunc(tabContent, entries, tileFactory, 160, 10)
@@ -379,13 +377,9 @@ end
 
 -- For expansion tabs
 function Summary.UpdateExpansion(mainFrame, expID)
-local done = AGGPerf.auto("Summary.UpdateExpansion")
     local instances = GetInstancesForExpansion(expID)
-    local id = AGGPerf.begin("Util.GetCollectionProgress(instances)")
-    local collected, total, percent = Util.GetCollectionProgress(instances)
-    AGGPerf.finish(id)
-    Summary.Update(mainFrame, collected, total)
-done()
+    local c, t = Util.GetCollectionProgress(instances)
+    Summary.Update(mainFrame, c, t)
 end
 
 -- For zone tabs
@@ -504,9 +498,7 @@ end
 
 -- refresh the currently-visible grid
 function RefreshActiveTab()
-local done = AGGPerf.auto("RefreshActiveTab")
     if currentTab and currentTab:IsShown() then currentTab:Refresh() end
-done()
 end
 
 function SetupMainUI()
