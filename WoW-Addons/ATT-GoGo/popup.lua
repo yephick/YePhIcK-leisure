@@ -33,9 +33,12 @@ local OPPOSITE_FACTION = (FACTION == 1 and 2) or (FACTION == 2 and 1) or 0
 -- 6=Death Knight, 7=Shaman, 8=Mage, 9=Warlock, 10=Monk, 11=Druid, 12=Demon Hunter, 13=Evoker)
 local CLASS_ID = select(3, UnitClass("player"))
 
+local INCLUDE_REMOVED = false       -- set per-run in BuildNodeList
+local ACTIVE_KEYS = nil             -- set per-run in BuildNodeList
+
 local function IsAllowedLeaf(node, activeKeys)
     if OPPOSITE_FACTION ~= 0 and node.r == OPPOSITE_FACTION then
-        return false, {}
+        return false, nil
     end
 
     -- Class gate (ATT 'c' field)
@@ -47,30 +50,40 @@ local function IsAllowedLeaf(node, activeKeys)
         else
             ok = (nc == CLASS_ID)
         end
-        if not ok then return false, {} end
+        if not ok then return false, nil end
     end
 
-    if not GetSetting("includeRemoved", false) then
-        if Util.IsNodeRemoved(node) then
-            return false, {}   -- filtered out as 'removed'
-        end
+    -- Removed gate (setting once, no per-node GetSetting)
+    if not INCLUDE_REMOVED and Util.IsNodeRemoved(node) then
+        return false, nil
     end
 
+    -- visibility/uncollected flags
+    if node.visible == false or node.collected then
+        return false, nil
+    end
+
+    -- quick sanity check: ANY match (no allocations)
+    local anyMatch = false
+    local ak       = ACTIVE_KEYS           -- cache upvalues to locals
+    local n        = #ak
+    for i = 1, n do
+        local k = ak[i]
+        local v = node[k]
+        if v and v ~= 0 then anyMatch = true; break end
+    end
+    if not anyMatch then
+        return false, nil
+    end
+
+    -- build the 'matched' list we store for emitted nodes
     local matched = {}
-    -- respect current filter selection
-    for i = 1, #activeKeys do
-        local k = activeKeys[i]
+    for i = 1, #ACTIVE_KEYS do
+        local k = ACTIVE_KEYS[i]
         local v = node[k]
         if v ~= nil and v ~= 0 then matched[#matched + 1] = k end
     end
-
-    local isVisible     = (node.visible ~= false)
-    local isUncollected = not node.collected
-
-    if isUncollected and isVisible and #matched > 0 then
-        return true, matched
-    end
-    return false, matched
+    return #matched > 0, matched
 end
 
 local RETRIEVING = "Retrieving data"
@@ -643,18 +656,34 @@ local function SortPopupNodes(nodes)
     end)
 end
 
+local SKIP_FULLY_COLLECTED = true    -- feature flag (toggle for A/B)
+local VISITS, EMITS, SKIPS = 0, 0, 0 -- lightweight visit stats
+
 local function GatherUncollectedNodes(node, out, keys, seen, d)
+local depth = (d or 0) + 1
 local site = "GatherUncollectedNodes:" .. (d or 0)
 AGGPerf.wrap(site, function()
-    local depth = (d or 0) + 1
     if type(node) ~= "table" then TP(node); return end
 
     seen = seen or setmetatable({}, { __mode = "k" })
     if seen[node] then TP(seen[node]); return end
     seen[node] = true
 
+    VISITS = VISITS + 1
+
+    -- subtree fast-skip: if nothing uncollected lives here, don’t recurse
+    if SKIP_FULLY_COLLECTED then
+        local prog, total = Util.ATTGetProgress(node)
+        -- skip when container is obviously empty or fully done
+        if total and (total == 0 or prog == total) then
+            SKIPS = SKIPS + 1
+            return
+        end
+    end
+
     local isAllowed, matched = IsAllowedLeaf(node, keys)
     if isAllowed then
+        EMITS = EMITS + 1
         out[#out + 1] = node
         passKeysByNode[node] = matched
     end
@@ -664,8 +693,9 @@ AGGPerf.wrap(site, function()
     local recursion = AGGPerf.auto(site .. ":recursion with " .. #kids .. " children")
 --    if #kids > 100 then local path = DebugGetNodePath(node.g); DebugLogf("%s: %s has %d children", (node.name or node.text or "noname"), path, #kids); TP(node.parent) end
         for i = 1, #kids do
-            if type(kids[i]) == "table" and kids[i] ~= node.parent then
-                GatherUncollectedNodes(kids[i], out, keys, seen, depth)
+            local child = kids[i]
+            if type(child) == "table" and child ~= node.parent then
+                GatherUncollectedNodes(child, out, keys, seen, depth)
             end
         end
     recursion()
@@ -679,11 +709,21 @@ return AGGPerf.wrap("BuildNodeList", function()
     local activeKeys = CollectActiveKeys()
     if #activeKeys == 0 then return {}, activeKeys end
 
+    -- set hot-path locals for this traversal
+    ACTIVE_KEYS = activeKeys
+    INCLUDE_REMOVED = GetSetting("includeRemoved", false)
+
     -- Gather raw leaves per active filters
     local nodes = {}
-    AGGPerf.wrap("BuildNodeList:GatherUncollectedNodes", function() GatherUncollectedNodes(root, nodes, activeKeys) end)
+    AGGPerf.wrap("BuildNodeList:GatherUncollectedNodes", function()
+        VISITS, EMITS, SKIPS = 0, 0, 0
+        GatherUncollectedNodes(root, nodes, activeKeys)
+    end)
 
-    -- Transformations (in order)
+    -- one-line summary
+    DebugLogf("GatherUncollectedNodes:stats visits=%d emits=%d skips=%d keys=%d skip_full=%s", VISITS, EMITS, SKIPS, #ACTIVE_KEYS, tostring(SKIP_FULLY_COLLECTED))
+
+    -- transformations
     nodes = CollapseAchievementFamilies(root, nodes)
     nodes = DedupItemsByItemID(nodes)
     nodes = GroupItemsByVisualID(nodes)
