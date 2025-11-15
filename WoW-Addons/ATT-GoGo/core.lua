@@ -132,13 +132,7 @@ end
 -- Wrap a map package in a simple root so our popup can recurse it like any ATT node
 function Util.GetMapRoot(mapID)
   local hit = _MAP_ROOT_CACHE[mapID]
-  if hit ~= nil then return hit or nil end        -- false sentinel means "known empty"
   local pkg = ATT.GetCachedDataForMapID(mapID)
-  if type(pkg) ~= "table" or not next(pkg) then
-    TP(pkg, next(pkg))
-    _MAP_ROOT_CACHE[mapID] = false                -- remember "no data" to avoid repeated work
-    return nil
-  end
   local info = C_Map.GetMapInfo(mapID)
   local name = (info and info.name) or ("Map " .. mapID)
   local kids = pkg.g or pkg
@@ -149,18 +143,13 @@ end
 
 -- Progress straight from the map package (matches /attmini totals)
 function Util.ResolveMapProgress(mapID)
-return AGGPerf.wrap("Util.ResolveMapProgress", function()
+return AGGPerf.wrap("Util.ResolveMapProgress", function() -- 3380    0.373    0.009   94.670    3.023  1261.040  Util.ResolveMapProgress
   local hit = _MAP_PROG_CACHE[mapID]
   if hit then return hit[1], hit[2], hit[3] end
-  local root = AGGPerf.wrap("Util.ResolveMapProgress:GetMapRoot", function() return Util.GetMapRoot(mapID) end)
-  if root then
-    local c, t, p = Util.ATTGetProgress(root)
-    _MAP_PROG_CACHE[mapID] = {c, t, p}
-    return c, t, p
-  else
-    TP(mapID, root)
-  end
-  return 0, 0, 0
+  local root = Util.GetMapRoot(mapID)
+  local c, t, p = Util.ATTGetProgress(root)
+  _MAP_PROG_CACHE[mapID] = {c, t, p}
+  return c, t, p
 end)
 end
 
@@ -204,7 +193,7 @@ function Util.InvalidateProgressCache(node)
 end
 
 function Util.ATTGetProgress(node)
-return AGGPerf.wrap("Util.ATTGetProgress", function()
+return AGGPerf.wrap("Util.ATTGetProgress", function() -- 72371    0.030    0.012   51.860    0.358  2180.288  Util.ATTGetProgress
   local hit = _PROG_CACHE[node]
   if hit then return hit[1], hit[2], hit[3] end
 
@@ -238,27 +227,15 @@ end)
 end
 
 function Util.GetCollectionProgress(dataset)
-return AGGPerf.wrap("Util.GetCollectionProgress", function()
   local c, t = 0, 0
-  if type(dataset) ~= "table" then TP(dataset); return 0, 0, 0 end
 
-  local added = false
   for _, entry in pairs(dataset) do
     local node = (type(entry) == "table" and (entry.attNode or entry)) or nil
-    if node then
-      local c1, t1 = Util.ATTGetProgress(node)
-      c, t = c + (c1 or 0), t + (t1 or 0)
-      added = true
-    else
-      TP(added, entry)
-    end
+    local c1, t1 = Util.ATTGetProgress(node)
+    c, t = c + (c1 or 0), t + (t1 or 0)
   end
 
-  if not added then
-    TP(dataset)
-  end
   return c, t, (t > 0) and (c / t * 100) or 0
-end)
 end
 
 -------------------------------------------------
@@ -660,7 +637,6 @@ end
 
 -- Returns the instance container for a given map by walking hits up to an ancestor with instanceID.
 local function FindInstanceFromMap(mapID)
-return AGGPerf.wrap("FindInstanceFromMap", function()
   local pick
   local function try(field)
       local hits = ATT.SearchForField(field, mapID)
@@ -678,7 +654,6 @@ return AGGPerf.wrap("FindInstanceFromMap", function()
   try("maps")
   if not pick then try("mapID") end
   return pick
-end)
 end
 
 -- Unified context resolver: returns the ATT node for current instance or zone.
@@ -691,26 +666,40 @@ function Util.ResolveContextNode()
     local _, instType,_,_,_,_,_, instMapID = GetInstanceInfo()
     if instType == "party" or instType == "raid" then
       info.kind    = "instance"
-      info.uiMapID = C_Map.GetBestMapForUnit("player")
-    
-      -- 1) Map-first (same path ATT uses for /attmini)
-      local node = FindInstanceFromMap(info.uiMapID)        -- prefers 'maps', then 'mapID' hits
-      -- 2) Tight EJ fallback: only if EJ-candidate is mapped to the same UI map
-      if not node and instMapID then
-        TP(instMapID)
-        print("fallback! instMapID is " .. instMapID)
-        local cand = Util.ATTSearchOne("instanceID", instMapID)
-        if cand then
-          local sameMap = (cand.mapID == info.uiMapID) or (type(cand.maps) == "table" and tContains(cand.maps, info.uiMapID))
-          if sameMap then node = cand end
-        end
+      -- 1) Find the raw instance node by instanceID (fallback to mapID)
+      -- some ATT nodes, like Kara, are not found by `instID == 532` but is found by `mapID == 350` (or Temple of Jade Serpent 464/429)
+      local node = Util.ATTSearchOne("instanceID", instMapID)
+      if not node then
+        info.uiMapID = C_Map.GetBestMapForUnit("player")
+        node = FindInstanceFromMap(info.uiMapID)
       end
+
+----      info.uiMapID = C_Map.GetBestMapForUnit("player")
+--  
+--      local node
+----      if info.uiMapID then
+----        node = ATT.GetCachedDataForMapID(info.uiMapID)
+----      else
+--        -- 1) Map-first (same path ATT uses for /attmini)
+--        node = FindInstanceFromMap(info.uiMapID)        -- prefers 'maps', then 'mapID' hits
+--        -- 2) Tight EJ fallback: only if EJ-candidate is mapped to the same UI map
+--        if not node and instMapID then
+--          TP(instMapID)
+--          print("fallback! instMapID is " .. instMapID)
+--          local cand = Util.ATTSearchOne("instanceID", instMapID)
+--          if cand then
+--            local sameMap = (cand.mapID == info.uiMapID) or (type(cand.maps) == "table" and tContains(cand.maps, info.uiMapID))
+--            if sameMap then node = cand end
+--          end
+--        end
+----      end
       if not node then return sentinel, info end
-    
+
+      -- 2) Narrow to the current difficulty
       local curDiff = ATT.GetCurrentDifficultyID()
       local child   = Util.SelectDifficultyChild(node, curDiff) or node  -- returns diff child, or the node itself. 
     
-      -- determine current era + whether the instance is era-split, then wrap
+      -- 3) determine current era + whether the instance is era-split, then wrap
       local buckets = BuildEraBuckets(node)                               -- { [era] = {diff-children...} } 
       local first   = next(buckets)
       local isSplit = first and next(buckets, first)
@@ -903,13 +892,13 @@ function Util.GetInstanceProgressKey(node)
 end
 
 function GetInstancesForExpansion(expansionID)
-return AGGPerf.wrap("GetInstancesForExpansion", function()
+return AGGPerf.wrap("GetInstancesForExpansion", function() -- 13    1.685    1.882    3.064    0.468   21.902  GetInstancesForExpansion
   local root = ATT:GetDataCache()
   if not (root and root.g) then TP(expansionID, root, root.g); return {} end
   local out = {}
 
   local function scanContainer(cat)
-  return AGGPerf.wrap("GetInstancesForExpansion:scanContainer", function()
+  return AGGPerf.wrap("GetInstancesForExpansion:scanContainer", function() -- 325    0.064    0.169    1.631    0.179   20.761  GetInstancesForExpansion:scanContainer
     if type(cat.g) ~= "table" then return end
     for _, exp in pairs(cat.g) do
       if type(exp.g) == "table" then

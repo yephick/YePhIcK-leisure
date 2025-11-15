@@ -156,12 +156,10 @@ local function FlushCollectedBatch()
         -- Small wave => do a context snapshot + popup/active-tab refresh
         local node, info = Util.ResolveContextNode()
         if info.kind == "instance" then
-        local perf3 = AGGPerf.auto("FlushCollectedBatch:SmallWave:instance")
             -- Invalidate the currently relevant difficulty child (and parents)
             local curDiff = ATT.GetCurrentDifficultyID()
             local child = Util.SelectDifficultyChild(node, curDiff) or node
             Util.InvalidateProgressCache(child)
-        perf3()
         else
             -- Zone context: just nuke this map’s memo row
             if info.uiMapID then Util.InvalidateMapProgress(info.uiMapID) else TP(node, info) end
@@ -230,7 +228,7 @@ local function test()
 
   if IsInInstance() then
     local name, instType, difficultyID, difficultyName, maxPlayers, dynDifficulty, isDyn, instMapID, grpSize = GetInstanceInfo()
-    print(name .. ", " .. instType .. ", difficulty " .. difficultyID .. " (" .. difficultyName .. "), max players " .. maxPlayers .. ", mapID " .. instMapID .. ", group size " .. grpSize)
+    print(name .. ", " .. instType .. ", difficulty " .. difficultyID .. " (" .. difficultyName .. "), max players " .. maxPlayers .. ", instMapID " .. instMapID .. ", group size " .. grpSize)
   end
 end
 

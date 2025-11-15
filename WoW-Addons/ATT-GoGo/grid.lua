@@ -146,12 +146,14 @@ return AGGPerf.wrap("Tile.CreateProgressWidget", function()
         Util.ApplyNodeIcon(tex, attNode or data, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
     end
 
+    local perf = AGGPerf.auto("Tile.CreateProgressWidget:calc_progress")
     local collected, total, percent
     if isZone then
       collected, total, percent = Util.ResolveMapProgress(data.mapID)
     else
       collected, total, percent = Util.ATTGetProgress(attNode or data)
     end
+    perf()
     Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
     Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
     -- N.B.: pass an owner with mapID/instanceID so "other toons" can be shown
@@ -399,6 +401,7 @@ local done = AGGPerf.auto("Grid.Populate")
   local cols = Util.GetGridCols(frameWidth, widgetSize, padding)
   local x, y = 0, 0
 
+  local perf = AGGPerf.auto("Grid.Populate:tileFactory")
   for _, entry in ipairs(dataset) do
     if includeRemoved or (not entry.removed) then
       local f = tileFactory(content, entry, x, y, widgetSize, padding)
@@ -407,6 +410,7 @@ local done = AGGPerf.auto("Grid.Populate")
       if x >= cols then x = 0; y = y + 1 end
     end
   end
+  perf()
   content:SetSize(frameWidth, (y + 1) * (60 + padding) + 80)
 done()
 end

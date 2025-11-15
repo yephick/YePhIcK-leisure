@@ -275,13 +275,11 @@ local function SetupNodeTooltip(btn, boundNode)
 
         -- brief attention ping on WorldMap near coords
         do
-          local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:mapPing")
           local m,x,y = Util.ExtractMapAndCoords(node)
           if not m and node.instanceID then local inst = Util.ATTSearchOne("instanceID", node.instanceID); if inst then m,x,y=Util.ExtractMapAndCoords(inst) end end
           if not m and node.flightpathID and node.g then for i=1, #node.g do m, x, y = Util.ExtractMapAndCoords(node.g[i]); if m then break end end end
           if not m and node.parent then m, x, y = Util.ExtractMapAndCoords(node.parent) end
           PingMapAt(m, x, y)
-          inner()
         end
 
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -292,7 +290,9 @@ local function SetupNodeTooltip(btn, boundNode)
             local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:itemID")
             local id = node.itemID
             if GetItemInfo(id) then
+                local in2 = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:itemID:SetItemByID")
                 GameTooltip:SetItemByID(id)
+                in2()
             else
                 GameTooltip:SetText(("Item %d"):format(id))
                 if not requestedOnce[id] and not C_Item.IsItemDataCachedByID(id) then
@@ -462,39 +462,6 @@ local function GetNodePrimaryKey(node)
     return "zz_fallback"
 end
 
--- so far is only used in SortPopupNodes(nodes)
-local function GetNodeDisplayName(node)
-return AGGPerf.wrap("GetNodeDisplayName", function()
-    local display = node.text or node.name
-    if display and display ~= "" then return display:lower() end
-
-    if node.itemID then
-        local name = GetItemInfo(node.itemID) -- this may fail on first call
-        return name and name:lower() or ("item %d"):format(node.itemID)
-    end
-    if node.achievementID then
-        local _, name = GetAchievementInfo(node.achievementID)
-        return name and name ~= "" and name:lower() or TP(node, display, node.achievementID, name) or ("achievement %d"):format(node.achievementID)
-    end
-    if node.questID then return ("quest %d"):format(node.questID) end
-    if node.mapID then return ("map %d"):format(node.mapID) end
-    if node.instanceID then return ("instance %d"):format(node.instanceID) end
-    if node.visualID then return ("visual %d"):format(node.visualID) end
-    if node.flightpathID then return ("flight path %d"):format(node.flightpathID) end
-    if node.explorationID then return ("exploration %d"):format(node.explorationID) end
-    if node.titleID then return ("title %d"):format(node.titleID) end
-
-    local ids = {}
-    for k, v in pairs(node) do
-        if type(k) == "string" and k:match("ID$") and v ~= nil and v ~= "" then
-            ids[#ids+1] = k .. "=" .. v
-        end
-    end
-    table.sort(ids)
-    return (#ids > 0) and table.concat(ids, ", ") or TP(node.parent.parent, node.parent, node, node.g) or "zzz, item has no *ID fields"
-end)
-end
-
 -- De-duplicate achievements by achievementID, preferring a richer "meta" node over stubs.
 local function DedupAchievements(nodes)
     if #nodes <= 1 then return nodes end
@@ -650,8 +617,6 @@ local function SortPopupNodes(nodes)
         local ak, bk = GetNodePrimaryKey(a), GetNodePrimaryKey(b)
         local ar, br = (CATEGORY_RANK[ak] or TP(ak) or 999), (CATEGORY_RANK[bk] or TP(bk) or 999)
         if ar ~= br then return ar < br end
---        local an, bn = GetNodeDisplayName(a), GetNodeDisplayName(b)
---        if an ~= bn then return an < bn end
         return getID(a) < getID(b)
     end)
 end
@@ -1015,7 +980,7 @@ local function RefreshPopup(data)
 local done = AGGPerf.auto("RefreshPopup")
     uncollectedPopup.currentData = data
 
-    local nodes, activeKeys = AGGPerf.wrap("BuildNodeList", BuildNodeList, data)
+    local nodes, activeKeys = AGGPerf.wrap("RefreshPopup:BuildNodeList", BuildNodeList, data)
     uncollectedPopup.currentNodes = nodes
     PopulateUncollectedPopup(uncollectedPopup.scrollContent, nodes)
 
