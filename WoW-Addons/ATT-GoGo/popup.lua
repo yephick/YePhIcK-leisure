@@ -842,8 +842,7 @@ function EnsurePopup()
         tile = true, tileSize = 16, edgeSize = 16,
         insets = { left = 4, right = 4, top = 4, bottom = 4 }
     })
-    uncollectedPopup:SetFrameStrata("DIALOG")
-    uncollectedPopup:SetFrameLevel(200)
+    uncollectedPopup:SetFrameStrata("MEDIUM")
     table.insert(UISpecialFrames, "ATTGoGoUncollectedPopup")
 
     -- title + close
