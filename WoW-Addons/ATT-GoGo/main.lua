@@ -204,31 +204,25 @@ local function PrintSlashCmdHelp()
 end
 
 local function test()
+  if GetSetting("TP_en", false) ~= true then return end
+
   local ctx = Util.ResolvePopupTargetForCurrentContext() -- provides instance per-difficulty subset
   local mapID = C_Map.GetBestMapForUnit("player")
   local pkg = ATT.GetCachedDataForMapID(mapID)          -- always provides a combined set
+  local node, info = Util.ResolveContextNode()
   print("mapID: " .. mapID)
 
-  local function nt(o)
-    return ("name=%s; text=%s"):format(tostring(o and o.name or "noname"), tostring(o and o.text or "notext"))
-  end
+  local function nt(o, c, t) return ("name=%s; text=%s; %d/%d"):format(tostring(o and o.name or "noname"), tostring(o and o.text or "notext"), (c or 0), (t or 0)) end
 
-  -- ctx progress straight from the node
-  local c1, t1 = Util.ATTGetProgress(ctx)
-  local ctx_txt = nt(ctx) .. ("; %d/%d"):format(c1 or 0, t1 or 0)
-
-  -- pckg progress via the map root wrapper
-  local c2, t2 = Util.ResolveMapProgress(mapID)
-  local pkg_txt = nt(pkg) .. ("; %d/%d"):format(c2 or 0, t2 or 0)
-
-  if ctx_txt ~= pkg_txt then
-    print("ctx: " .. ctx_txt)
-    print("pkg: " .. pkg_txt)
-  end
+    print("ctx: " .. nt(ctx,  Util.ATTGetProgress(ctx)))
+    print("pkg: " .. nt(pkg,  Util.ResolveMapProgress(mapID)))
+    print("dfc: " .. nt(node, Util.ATTGetProgress(node)))
 
   if IsInInstance() then
     local name, instType, difficultyID, difficultyName, maxPlayers, dynDifficulty, isDyn, instMapID, grpSize = GetInstanceInfo()
-    print(name .. ", " .. instType .. ", difficulty " .. difficultyID .. " (" .. difficultyName .. "), max players " .. maxPlayers .. ", instMapID " .. instMapID .. ", group size " .. grpSize)
+    print(name .. ", " .. instType .. ", difficulty=" .. difficultyID .. " (" .. difficultyName .. "), max players=" .. maxPlayers .. ", instMapID=" .. instMapID .. ", group size=" .. grpSize)
+    local mi = ATT.CurrentMapInfo
+    print("mapID=" .. mi.mapID .. ", name=" .. mi.name .. ", mapType=" .. mi.mapType .. ", parentMapID=" .. mi.parentMapID)
   end
 end
 
@@ -292,7 +286,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             zoneWatcher:RegisterEvent(ev)
         end
         zoneWatcher:SetScript("OnEvent", function()
---            test()
+            if IsInInstance() then test() end
             -- slight delay so C_Map / GetInstanceInfo settle
             C_Timer.After(0.15, RefreshUncollectedPopupForContextIfShown)
         end)

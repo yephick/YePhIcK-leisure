@@ -132,6 +132,7 @@ end
 -- Wrap a map package in a simple root so our popup can recurse it like any ATT node
 function Util.GetMapRoot(mapID)
   local hit = _MAP_ROOT_CACHE[mapID]
+  if hit then return hit end
   local pkg = ATT.GetCachedDataForMapID(mapID)
   local info = C_Map.GetMapInfo(mapID)
   local name = (info and info.name) or ("Map " .. mapID)
@@ -659,66 +660,35 @@ end
 -- Unified context resolver: returns the ATT node for current instance or zone.
 -- Returns: node, info  where info={kind="instance"|"zone", uiMapID=?}
 function Util.ResolveContextNode()
-  local info = {}
-  local sentinel = { text = "Unknown instance", name = "Unknown instance", g = {} }
+  local info = { uiMapID = ATT.CurrentMapID }
+  local node = ATT.GetCachedDataForMapID(info.uiMapID)
 
   if IsInInstance() then
-    local _, instType,_,_,_,_,_, instMapID = GetInstanceInfo()
+    info.kind = "instance"
+    local _, instType = GetInstanceInfo()
     if instType == "party" or instType == "raid" then
-      info.kind    = "instance"
-      -- 1) Find the raw instance node by instanceID (fallback to mapID)
-      -- some ATT nodes, like Kara, are not found by `instID == 532` but is found by `mapID == 350` (or Temple of Jade Serpent 464/429)
-      local node = Util.ATTSearchOne("instanceID", instMapID)
-      if not node then
-        info.uiMapID = C_Map.GetBestMapForUnit("player")
-        node = FindInstanceFromMap(info.uiMapID)
-      end
-
-----      info.uiMapID = C_Map.GetBestMapForUnit("player")
---  
---      local node
-----      if info.uiMapID then
-----        node = ATT.GetCachedDataForMapID(info.uiMapID)
-----      else
---        -- 1) Map-first (same path ATT uses for /attmini)
---        node = FindInstanceFromMap(info.uiMapID)        -- prefers 'maps', then 'mapID' hits
---        -- 2) Tight EJ fallback: only if EJ-candidate is mapped to the same UI map
---        if not node and instMapID then
---          TP(instMapID)
---          print("fallback! instMapID is " .. instMapID)
---          local cand = Util.ATTSearchOne("instanceID", instMapID)
---          if cand then
---            local sameMap = (cand.mapID == info.uiMapID) or (type(cand.maps) == "table" and tContains(cand.maps, info.uiMapID))
---            if sameMap then node = cand end
---          end
---        end
-----      end
-      if not node then return sentinel, info end
-
-      -- 2) Narrow to the current difficulty
+      -- narrow to the current difficulty
       local curDiff = ATT.GetCurrentDifficultyID()
       local child   = Util.SelectDifficultyChild(node, curDiff) or node  -- returns diff child, or the node itself. 
     
-      -- 3) determine current era + whether the instance is era-split, then wrap
+      -- determine current era + whether the instance is era-split, then wrap
       local buckets = BuildEraBuckets(node)                               -- { [era] = {diff-children...} } 
       local first   = next(buckets)
       local isSplit = first and next(buckets, first)
       local era     = EraForChild(node, child) or first or node.expansionID or 1
-      local cooked  = MakeEraWrapper(node, era, { child }, isSplit)
-      return cooked, info
+      node          = MakeEraWrapper(node, era, { child }, isSplit)
     end
+  else
+    info.kind = "zone"
   end
 
-  -- treat everything else as a "zone"
-  info.kind = "zone"
-  info.uiMapID = C_Map.GetBestMapForUnit("player")
-  return Util.ATTSearchOne("mapID", info.uiMapID) or TP(info) or sentinel, info
+  return node or TP(info), info
 end
 
 function Util.ResolvePopupTargetForCurrentContext()
   local node, info = Util.ResolveContextNode()
   if info.kind == "instance" then
-    return Util.SelectDifficultyChild(node, ATT.GetCurrentDifficultyID()) or node
+    return node
   else
     return Util.GetMapRoot(info.uiMapID)
   end
