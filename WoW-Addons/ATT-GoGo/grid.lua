@@ -126,7 +126,7 @@ end
 
 -- Main: Create a progress widget for grid
 function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, onFavToggled)
-return AGGPerf.wrap("Tile.CreateProgressWidget", function()
+return AGGPerf.wrap("Tile.CreateProgressWidget", function() -- 214    0.629    1.148    1.669    0.297  134.556  Tile.CreateProgressWidget
     local f = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
     f:SetSize(widgetSize, 60)
     f:SetPoint("TOPLEFT", x * (widgetSize + padding), -y * (60 + padding))
@@ -146,7 +146,7 @@ return AGGPerf.wrap("Tile.CreateProgressWidget", function()
         Util.ApplyNodeIcon(tex, attNode or data, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
     end
 
-    local perf = AGGPerf.auto("Tile.CreateProgressWidget:calc_progress")
+    local perf = AGGPerf.auto("Tile.CreateProgressWidget:calc_progress") -- 214    0.008    0.020    0.026    0.004    1.779  Tile.CreateProgressWidget:calc_progress
     local collected, total, percent
     if isZone then
       collected, total, percent = Util.ResolveMapProgress(data.mapID)

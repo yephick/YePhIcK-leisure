@@ -846,8 +846,11 @@ function EnsurePopup()
     table.insert(UISpecialFrames, "ATTGoGoUncollectedPopup")
 
     -- title + close
-    uncollectedPopup.title = uncollectedPopup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    uncollectedPopup.title:SetPoint("TOP", 0, -10)
+    uncollectedPopup.title = uncollectedPopup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    uncollectedPopup.title:SetPoint("TOPLEFT", 12, -10)
+    uncollectedPopup.title:SetPoint("TOPRIGHT", -24, -10)
+    uncollectedPopup.title:SetWordWrap(true)
+    uncollectedPopup.title:SetNonSpaceWrap(false)
     uncollectedPopup.title:SetText("Missing Items")
 
     local closeBtn = CreateFrame("Button", nil, uncollectedPopup, "UIPanelCloseButton")
