@@ -16,7 +16,8 @@ local spellLabelsByID = {}      -- [spellID]     = FontString
 local passKeysByNode  = setmetatable({}, { __mode = "k" })
 
 -- Virtual list constants
-local ROW_HEIGHT = 28           -- row height
+local ROW_HEIGHT = 22           -- row height
+local ROW_BTN_SZ = 20           -- ItemButton size
 local ROW_BUFFER = 6            -- render-ahead buffer
 local __rowSerial = 0           -- unique names for ItemButtonTemplate rows
 
@@ -711,7 +712,7 @@ local function AcquireRow(scrollContent, i)
 
     -- Create the button+label pair once
     local btn = CreateFrame("Button", btnName, scrollContent, "ItemButtonTemplate")
-    btn:SetSize(24, 24)
+    btn:SetSize(ROW_BTN_SZ, ROW_BTN_SZ)
 
     -- hide "button" border art
     do
@@ -928,7 +929,7 @@ local done = AGGPerf.auto("PopulateUncollectedPopup")
         scrollContent:SetHeight(40)
     else
         if scrollContent.emptyLine then scrollContent.emptyLine:Hide() end
-        scrollContent:SetHeight(#nodes * ROW_HEIGHT + 10)
+        scrollContent:SetHeight(#nodes * ROW_HEIGHT + 8)
     end
 
     -- Preserve current scroll offset
