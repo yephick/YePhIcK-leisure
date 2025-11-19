@@ -1,9 +1,9 @@
-﻿## Interface: 50500, 50501
+﻿## Interface: 50502
 ## Title: ATT-GoGo
 ## Notes: Companion addon for 'AllTheThings' to show instance farming status in a grid.
-## Author: YePhIcK
+## Author: |cffffff40YePhIcK|r
 ## X-CoAuthor: GenAI
-## Version: 0.8
+## Version: 0.82
 ## Dependencies: AllTheThings
 ## OptionalDeps: LibStub LibDataBroker-1.1 LibDBIcon-1.0
 Libs\LibStub\LibStub.lua

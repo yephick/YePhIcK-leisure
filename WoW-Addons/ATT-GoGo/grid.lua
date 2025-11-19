@@ -75,7 +75,7 @@ function Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, perce
   stats:SetPoint("BOTTOM", 0, 8)
   stats:SetJustifyH("CENTER")
   stats:SetWidth(widgetSize - 8)
-  stats:SetText(string.format("%d / %d (%.1f%%)", collected, total, percent))
+  stats:SetText(("%d / %d (%.1f%%)"):format(collected, total, percent))
 end
 
 -- ownerNode is the node that carries mapID/instanceID for DB lookups (e.g., the instance node)
@@ -115,17 +115,18 @@ local function AttachInfoIcon(parentFrame, eraNode)
 
   Tooltip.CreateTooltip(btn, "ANCHOR_LEFT", function()
     GameTooltip:AddLine("Difficulties", 1, 1, 1)
-    table.sort(diffs, function(a,b) return (a.d or 0) < (b.d or 0) end)
+    table.sort(diffs, function(a,b) return a.d < b.d end)
     for _, r in ipairs(diffs) do
       local p = (r.t > 0) and (r.c / r.t * 100) or 0
       local tag = DIFF_LABEL[r.d] or r.d
-      GameTooltip:AddLine(string.format("• %s — %d/%d (%.1f%%)", tag, r.c, r.t, p), 0.9, 0.9, 0.9)
+      GameTooltip:AddLine(("• %s — %d/%d (%.1f%%)"):format(tag, r.c, r.t, p), 0.9, 0.9, 0.9)
     end
   end)
 end
 
 -- Main: Create a progress widget for grid
 function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, onFavToggled)
+return AGGPerf.wrap("Tile.CreateProgressWidget", function() -- 214    0.629    1.148    1.669    0.297  134.556  Tile.CreateProgressWidget
     local f = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
     f:SetSize(widgetSize, 60)
     f:SetPoint("TOPLEFT", x * (widgetSize + padding), -y * (60 + padding))
@@ -139,19 +140,20 @@ function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZ
 
     -- Instance/Zone icon in top-left (same toggle)
     if GetSetting("showInstanceIconOnWidgets", true) then
-        local node = data.instanceID and Util.ATTSearchOne("instanceID", data.instanceID) or Util.ATTSearchOne("mapID", data.mapID) or TP() or { icon = 134400 }
         local tex = f:CreateTexture(nil, "ARTWORK")
         tex:SetSize(48, 48)
         tex:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -6)
-        Util.ApplyNodeIcon(tex, node, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
+        Util.ApplyNodeIcon(tex, attNode or data, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
     end
 
+    local perf = AGGPerf.auto("Tile.CreateProgressWidget:calc_progress") -- 214    0.008    0.020    0.026    0.004    1.779  Tile.CreateProgressWidget:calc_progress
     local collected, total, percent
     if isZone then
       collected, total, percent = Util.ResolveMapProgress(data.mapID)
     else
       collected, total, percent = Util.ATTGetProgress(attNode or data)
     end
+    perf()
     Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
     Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
     -- N.B.: pass an owner with mapID/instanceID so "other toons" can be shown
@@ -192,6 +194,7 @@ function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZ
     end)
 
     return f
+end)
 end
 
 
@@ -237,15 +240,15 @@ local function PrepareTabData(t, isZone, filterFunc, sortFunc)
     local entries = {}
     if isZone then
         for i, child in pairs(t.node.g or {}) do
-          local mid = child and child.mapID
-          if mid then
-            local entry = {
-              mapID   = mid,
-              name    = child.text or child.name,
-              removed = Util.IsNodeRemoved(child),
-            }
-            if (not filterFunc) or filterFunc(entry) then entries[#entries+1] = entry end
-          end
+            local mid = child and child.mapID
+            if mid then
+                local entry = {
+                    mapID   = mid,
+                    name    = child.text or child.name,
+                    removed = Util.IsNodeRemoved(child),
+                }
+                if (not filterFunc) or filterFunc(entry) then entries[#entries+1] = entry end
+            end
         end
     else
         entries = GetInstancesForExpansion(t.id)
@@ -377,8 +380,8 @@ end
 -- For expansion tabs
 function Summary.UpdateExpansion(mainFrame, expID)
     local instances = GetInstancesForExpansion(expID)
-    local collected, total, percent = Util.GetCollectionProgress(instances)
-    Summary.Update(mainFrame, collected, total)
+    local c, t = Util.GetCollectionProgress(instances)
+    Summary.Update(mainFrame, c, t)
 end
 
 -- For zone tabs
@@ -389,6 +392,7 @@ end
 
 -- Helper: Populate a frame with widgets in a grid
 function Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll)
+local done = AGGPerf.auto("Grid.Populate")
   Util.ClearChildrenOrTabs(content)
   wipe(widgets)
 
@@ -397,6 +401,7 @@ function Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, paddi
   local cols = Util.GetGridCols(frameWidth, widgetSize, padding)
   local x, y = 0, 0
 
+  local perf = AGGPerf.auto("Grid.Populate:tileFactory")
   for _, entry in ipairs(dataset) do
     if includeRemoved or (not entry.removed) then
       local f = tileFactory(content, entry, x, y, widgetSize, padding)
@@ -405,7 +410,9 @@ function Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, paddi
       if x >= cols then x = 0; y = y + 1 end
     end
   end
+  perf()
   content:SetSize(frameWidth, (y + 1) * (60 + padding) + 80)
+done()
 end
 
 -- Factory: Create a scrolling grid for any dataset and widget factory
@@ -420,10 +427,7 @@ function Grid.Create(parent, dataset, tileFactory, widgetSize, padding)
 
     local widgets = {}
 
-    local function Populate()
-        Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll)
-    end
-    local Debounced = Util.Debounce(Populate, 0.08)
+    local Debounced = Util.Debounce(function() Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll) end, 0.08)
 
     scroll:SetScript("OnShow", Debounced)
     parent:HookScript("OnSizeChanged", Debounced)
@@ -448,7 +452,7 @@ local function CreateMainFrame()
     Util.PersistOnSizeChanged(f, "mainWindowPos", function() end)
 
     f:Hide()
-    f.TitleText:SetText(title .. " - Progress summaries")
+    f.TitleText:SetText(TITLE .. " - Progress summaries")
 end
 
 -- Helper: Create gear icon button for options
@@ -458,7 +462,7 @@ local function CreateOptionsButton()
     optionsBtn:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -30, -3)
     optionsBtn:SetNormalTexture("Interface\\Icons\\INV_Misc_Gear_01")
     optionsBtn:SetHighlightTexture("Interface\\Icons\\INV_Misc_Gear_01", "ADD")
-    Util.SetTooltip(optionsBtn, "ANCHOR_LEFT", "Options", "Open " .. title .. " Options")
+    Util.SetTooltip(optionsBtn, "ANCHOR_LEFT", "Options", "Open " .. TITLE .. " options")
     optionsBtn:SetScript("OnClick", function() OptionsUI.Show() end)
 end
 
@@ -502,6 +506,7 @@ function RefreshActiveTab()
 end
 
 function SetupMainUI()
+local done = AGGPerf.auto("SetupMainUI")
     RequestRaidInfo()
     Util.ClearATTSearchCache()
 
@@ -519,9 +524,10 @@ function SetupMainUI()
 
     Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, expansions, summaryY - 35, false, nil, nil, Grid.Create)
     Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, zones, -105, true,
-        function(entry) local _, t = Util.ResolveMapProgress(entry.mapID); return (t or 0) > 0 end,
+        function(entry) local done = AGGPerf.auto("tab factory Util.ResolveMapProgress"); local _, t = Util.ResolveMapProgress(entry.mapID); done(); return (t or 0) > 0 end,
         Tabs.ZoneEntrySort, Grid.Create)
 
     Tabs.InitialTabSelection(mainFrame, tabOrder, SelectTab)
     RegisterMainFrameEvents()
+done()
 end

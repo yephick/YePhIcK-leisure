@@ -7,7 +7,7 @@ local function fmt_tbl(t)
       return v
     elseif tv == "table" then
       local n = 0; for _ in pairs(v) do n = n + 1 end
-      return string.format("%s (keys=%d)", tostring(v), n)    -- e.g., "table: 0x1234 (keys=5)"
+      return ("%s (keys=%d)"):format(tostring(v), n)    -- e.g., "table: 0x1234 (keys=5)"
     else
       return tostring(v)
     end
@@ -15,7 +15,7 @@ local function fmt_tbl(t)
 
   local lines = {}
   for k, v in pairs(t) do
-    lines[#lines+1] = string.format("{<%s> %s = %s}", type(v), tostring(k), val_str(v))
+    lines[#lines+1] = ("{<%s> %s = %s}"):format(type(v), tostring(k), val_str(v))
   end
 
   table.sort(lines) -- stable, human-friendly order
@@ -69,7 +69,7 @@ function TP(...)
     end
 
     DebugLog(msg, "trace")
-    print("|cff00ff00[ATT-GoGo]|r " .. msg)
+    print(CTITLE .. msg)
 
     if n > 0 then
       print("args:")
@@ -137,9 +137,9 @@ local function TP_summary()
   end
 end
 
-local plof = CreateFrame("Frame")
-plof:RegisterEvent("PLAYER_LOGOUT")
-plof:SetScript("OnEvent", TP_summary)
+local tp_sum_lof = CreateFrame("Frame")
+tp_sum_lof:RegisterEvent("PLAYER_LOGOUT")
+tp_sum_lof:SetScript("OnEvent", TP_summary)
 
 
 -- Ensure debug table
@@ -292,13 +292,6 @@ end
 --   DebugPrintNodePath(node)                  -- compact labels
 --   DebugPrintNodePath(node, { verbose=true })-- include id tags
 --   DebugPrintNodePath(entry.attNode)         -- works with ATT nodes directly
-local function firstNonNil(...)
-  for i = 1, select('#', ...) do
-    local v = select(i, ...)
-    if v ~= nil then return v end
-  end
-end
-
 local function tagList(n)
   local tags = {}
   if n.instanceID     then tags[#tags+1] = "inst:" .. n.instanceID end
@@ -314,7 +307,7 @@ end
 
 local function labelFor(n, verbose)
   -- Prefer human-readable label, fall back to typed id
-  local lbl = firstNonNil(n.text, n.name)
+  local lbl = n.text or n.name
   if not lbl then
     if n.instanceID    then lbl = "Instance " .. n.instanceID
     elseif n.mapID     then lbl = "Map " .. n.mapID
@@ -335,10 +328,9 @@ end
 --- Print a breadcrumb path from root to the given ATT node.
 --- @param node table  -- ATT node (has .parent links)
 --- @param opts table? -- { sep=" > ", verbose=true }
-function DebugPrintNodePath(node, opts)
+function DebugGetNodePath(node, opts)
   if type(node) ~= "table" then
-    DebugLogf("[Path] not a table: %s", tostring(node))
-    return
+    return ("[Path] not a table: %s"):format(tostring(node))
   end
   opts = opts or {}
   local sep     = opts.sep or " > "
@@ -346,7 +338,7 @@ function DebugPrintNodePath(node, opts)
 
   -- Collect labels from node up to root
   local chain, cur, safety = {}, node, 0
-  while type(cur) == "table" and safety < 128 do
+  while type(cur) == "table" and safety < 32 do
     chain[#chain+1] = labelFor(cur, verbose)
     cur = rawget(cur, "parent") -- do not trigger metatables
     safety = safety + 1
@@ -356,8 +348,11 @@ function DebugPrintNodePath(node, opts)
   for i = #chain, 1, -1 do rev[#rev+1] = chain[i] end
 
   local path = table.concat(rev, sep)
-  DebugLogf("[Path] %s", path)
-  return path
+  return "[Path] " .. path
+end
+
+function DebugPrintNodePath(node, opts)
+  DebugLog(DebugGetNodePath(node, opts))
 end
 
 -- this is a placeholder function to be used as needed, do not remove
@@ -368,6 +363,152 @@ end
 -- Call this on ADDON_LOADED or manually to start a new debug session
 function Debug_Init()
   wipe(ensure("log"))
+  wipe(ensure("perf"))
   wipe(ensure("trace"))
   DebugDump()
 end
+
+
+-- perf.lua — lightweight profiling for WoW Lua 5.1 (MoP Classic)
+local perf_en = false
+local Perf = {}
+function Perf.on(en) perf_en = en end
+
+local now_ms = function() return GetTimePreciseSec()*1000 end
+
+local SITES, ACTIVE, NEXT_ID = {}, {}, 0
+local SAMPLE_N = 128
+
+
+local function add_sample(st, dt)
+  if not perf_en then return end
+  st.count = st.count + 1
+  st.total = st.total + dt
+  if dt < st.min then st.min = dt end
+  if dt > st.max then st.max = dt end
+  -- Welford variance
+  local delta = dt - st.mean
+  st.mean = st.mean + delta / st.count
+  st.M2   = st.M2   + delta * (dt - st.mean)
+  -- ring buffer
+  local si = st.si + 1; if si > SAMPLE_N then si = 1 end
+  st.samples[si] = dt; st.si = si
+end
+
+local function ensure_site(label)
+  local key = label
+  local st = SITES[key]
+  if not st then
+    st = { label=label or "",
+           count=0, total=0, min=math.huge, max=0, mean=0, M2=0,
+           samples={}, si=0 }
+    SITES[key] = st
+  end
+  return key, st
+end
+
+function Perf.begin(label)
+  NEXT_ID = NEXT_ID + 1
+  local id = NEXT_ID
+  local key = ensure_site(label)
+  ACTIVE[id] = { key = key, t0 = now_ms() }
+  return id
+end
+
+function Perf.finish(id)
+  local a = ACTIVE[id]; if not a then TP(id); print("not a: " .. tostring(id)); return end
+  ACTIVE[id] = nil
+  if perf_en ~= true then return end
+  local dt = now_ms() - a.t0
+  local st = SITES[a.key]
+  add_sample(st, dt)
+  return dt
+end
+
+-- RAII-ish guard: call the returned function at scope exit
+function Perf.auto(label)
+  local id = Perf.begin(label)
+  return function() return Perf.finish(id) end
+end
+
+-- Wrap a function body with profiling, preserving errors
+function Perf.wrap(label, fn, ...)
+  local done = Perf.auto(label)
+
+  local function _trace(err)
+    -- WoW's global stack function is available in live
+    return tostring(err) .. "\n" .. debugstack(2, 12, 0)
+  end
+
+  local ok, r1, r2, r3, r4, r5 = xpcall(fn, _trace, ...)
+  local dt = done()
+  if not ok then
+    DebugLogf("[Perf][%s] errored after %.2f ms:\n%s", label or "", dt or 0, r1)
+    error(r1, 2)
+  end
+  return r1, r2, r3, r4, r5
+end
+
+local function pct_from_samples(samples, count, p)
+  if count == 0 then return 0 end
+  local arr, n = {}, 0
+  for _,v in pairs(samples) do n=n+1; arr[n]=v end
+  table.sort(arr)
+  local idx = math.max(1, math.min(n, math.floor((p/100)*n + 0.5)))
+  return arr[idx]
+end
+
+local function summary_lines()
+  local entries = {}
+  for _,st in pairs(SITES) do entries[#entries+1] = st end
+  table.sort(entries, function(a,b)
+    return a.total > b.total
+  end)
+
+  local lines = {}
+  lines[#lines+1] = ("%-7s  %-7s  %-7s  %-7s  %-7s  %-7s  %s"):format("count","avg","p95","max","std","total", "label")
+  for _,st in ipairs(entries) do
+    if st.count > 0 then
+      local std = (st.count>1) and math.sqrt(st.M2/(st.count-1)) or 0
+      local p95 = pct_from_samples(st.samples, st.count, 95)
+      local avg = st.total / st.count
+      lines[#lines+1] = ("%7d  %7.3f  %7.3f  %7.3f  %7.3f  %7.3f  %s"):format(st.count, avg, p95, st.max, std, st.total, st.label)
+    end
+  end
+  return lines, entries
+end
+
+local function log_summary()
+  local lines, entries = summary_lines()
+  DebugLog("Perf summary:", "perf")
+  for _,ln in ipairs(lines) do DebugLog(ln, "perf") end
+end
+
+-- Auto summary on logout (same pattern as your TP_summary)
+local perf_lof = CreateFrame("Frame")
+perf_lof:RegisterEvent("PLAYER_LOGOUT")
+perf_lof:SetScript("OnEvent", log_summary)
+
+-- Export global
+_G.AGGPerf = Perf
+_G.AGGPerfLogSummary = log_summary
+
+--------------------------------------------------
+---------------    U S A G E  --------------------
+--------------------------------------------------
+-- 1) Auto-guard (closest to RAII):
+-- local done = AGGPerf.auto("BuildGrid")
+-- -- ... the code you want to measure ...
+-- done()
+--------------------------------------------------
+-- 2) Wrapper:
+-- AGGPerf.wrap("RebuildUI", function()
+--   BuildTabs()
+--   BuildGrid()
+-- end)
+--------------------------------------------------
+-- 3) Begin/End pair (IDs handle recursion safely):
+-- local id = AGGPerf.begin("ScanNode")
+-- -- ... work ...
+-- AGGPerf.finish(id)
+--------------------------------------------------

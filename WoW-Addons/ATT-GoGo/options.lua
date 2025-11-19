@@ -14,13 +14,13 @@ local CreateGroup, AddCheckbox
 
 -- Frame factory --------------------------------------------------------------
 local function SetupOptionsFrame()
---  if OptionsUI.frame then return OptionsUI.frame end
+  if OptionsUI.frame then return OptionsUI.frame end
   local f = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
   f:SetSize(300, 570)
   f:Hide()
   Util.EnableDragPersist(f, "optionsWindowPos")                                     -- replaces the custom drag code
 
-  f.TitleText:SetText("ATT-GoGo Options")
+  f.TitleText:SetText(TITLE .. " options")
 
   -- Reset window sizes/positions button
   local resetBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
@@ -49,7 +49,7 @@ local function SetupOptionsFrame()
     -- Options defaults (self)
     Util.LoadFramePosition(f, "optionsWindowPos", "LEFT", 92, 80)
 
-    print("|cff00ff00[ATT-GoGo]|r Window sizes/positions reset to defaults.")
+    print(CTITLE .. "Window sizes/positions reset to defaults.")
   end)
 
   -- When the window opens, sync controls from DB
@@ -132,7 +132,7 @@ function OptionsUI.BuildAccountGroup(parent)
     function(v)
       ATTGoGoDB.minimap.hide = (not v)
       local icon = LibStub:GetLibrary("LibDBIcon-1.0", true)
-      if v then icon:Show(title) else icon:Hide(title) end
+      if v then icon:Show(TITLE) else icon:Hide(TITLE) end
     end,
     nil,
     "Shows a movable launcher icon near the minimap."
@@ -238,7 +238,7 @@ function OptionsUI.BuildAccountGroup(parent)
       info.value = opt.value
       info.checked = (opt.value == Util.GetOtherToonsMode())
       info.func = function()
-        SetSetting("otherToonsInTooltips", opt.value or 1)
+        SetSetting("otherToonsInTooltips", opt.value)
         SyncOtherToonsDropdown()
       end
       UIDropDownMenu_AddButton(info, level)
