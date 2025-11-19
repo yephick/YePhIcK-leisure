@@ -22,8 +22,7 @@ local ROW_BUFFER = 6            -- render-ahead buffer
 local __rowSerial = 0           -- unique names for ItemButtonTemplate rows
 
 local function SafeNodeName(n)
-    if not n or type(n) ~= "table" then TP(n); return "?" end
-    return n.text or n.name or _G.UNKNOWN or "?"
+    return n.text or n.name or "?"
 end
 
 -- cached faction result
