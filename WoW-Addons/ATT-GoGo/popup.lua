@@ -268,7 +268,6 @@ local function SetupNodeTooltip(btn, boundNode)
     btn:SetScript("OnEnter", function(self)
     AGGPerf.wrap("SetupNodeTooltip:OnEnter", function()
         local node = self.node or boundNode
-        if not node then TP(btn, boundNode, self, self.node, node); return end
         currentTooltipNode = node
 
         ShowPreviewForNode(node)

@@ -101,8 +101,6 @@ function Util.NodeDisplayName(n)
   return n.text or n.name
       or ATT.GetNameFromProviders(n)
       or TP(n)
---      or (n.mapID and ("Map " .. n.mapID))
---      or (n.instanceID and ("Instance " .. n.instanceID))
       or "?"
 end
 
@@ -852,9 +850,8 @@ function BuildExpansionList()
 end
 
 function Util.GetInstanceProgressKey(node)
-  if type(node) ~= "table" then TP(node); return nil end
   if node.progressKey ~= nil then return node.progressKey end
-  local id = node.instanceID; if not id then TP(id); return nil end
+  local id = node.instanceID; if not id then return nil end -- may happen when TP'ing out and back into an LFG instance (happened to me in East DM after 2 people left the group)
   local era = node.eraKey
   -- if we don’t know whether it’s split, default to legacy (numeric)
   node.progressKey = (node.__eraSplit and era) and (id .. ":" .. era) or id
@@ -864,7 +861,6 @@ end
 function GetInstancesForExpansion(expansionID)
 return AGGPerf.wrap("GetInstancesForExpansion", function() -- 13    1.685    1.882    3.064    0.468   21.902  GetInstancesForExpansion
   local root = ATT:GetDataCache()
-  if not (root and root.g) then TP(expansionID, root, root.g); return {} end
   local out = {}
 
   local function scanContainer(cat)
@@ -988,7 +984,6 @@ local function AddOtherToonsSection(tooltip, ownerNode, isZone)
 
   local _, realm, myChar = Util.EnsureProgressDB()
   local realmBucket = ATTGoGoDB.progress[realm]
-  if not ownerNode then TP(tooltip, ownerNode, isZone, realm, myChar, realmBucket); return end
 
   local key, bucket
   if isZone then
@@ -998,7 +993,6 @@ local function AddOtherToonsSection(tooltip, ownerNode, isZone)
     bucket = "instances"
     key = ownerNode.instanceID
   end
-  if not key then TP(tooltip, ownerNode, isZone, mode); return end
 
   local rows, now = {}, time()
   for charName, perChar in pairs(realmBucket) do

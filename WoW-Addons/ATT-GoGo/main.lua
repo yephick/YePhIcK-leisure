@@ -1,5 +1,5 @@
 ﻿local addonName = ...
-local ICON_FILE = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga"
+local ICON_FILE = "Interface\\AddOns\\ATT-GoGo\\icon-dragon2.tga"
 TITLE = GetAddOnMetadata(addonName, "Title") or "UNKNOWN"
 CTITLE = "|cff00ff00" .. TITLE .. "|r "
 
