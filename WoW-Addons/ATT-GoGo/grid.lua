@@ -17,19 +17,23 @@ function Tile.AttachClickAndHoverUX(f, data)
             ShowUncollectedPopup(data)
         end
     end)
-    f.__origBorderColor = { f:GetBackdropBorderColor() }
+    if not f.__origBorderColor then f.__origBorderColor = { f:GetBackdropBorderColor() } end
 
-    -- Hover: gold border + hand cursor
-    f:HookScript("OnEnter", function(self)
-        self:SetBackdropBorderColor(1, 0.82, 0, 1)   -- gold-ish
-        SetCursor("Interface\\CURSOR\\Point")
-    end)
+    -- Hover: gold border + hand cursor (only hook once per frame)
+    if not f.__hoverHandlersAttached then
+        f.__hoverHandlersAttached = true
 
-    f:HookScript("OnLeave", function(self)
-        self:SetBackdropBorderColor( self.__origBorderColor[1], self.__origBorderColor[2],
-                                     self.__origBorderColor[3], self.__origBorderColor[4] )
-        ResetCursor()
-    end)
+        f:HookScript("OnEnter", function(self)
+            self:SetBackdropBorderColor(1, 0.82, 0, 1)   -- gold-ish
+            SetCursor("Interface\\CURSOR\\Point")
+        end)
+
+        f:HookScript("OnLeave", function(self)
+            self:SetBackdropBorderColor( self.__origBorderColor[1], self.__origBorderColor[2],
+                                         self.__origBorderColor[3], self.__origBorderColor[4] )
+            ResetCursor()
+        end)
+    end
 end
 
 function Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
@@ -53,27 +57,49 @@ function Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
 end
 
 function Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
-  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  title:SetPoint("TOP", 0, -10)
-  title:SetJustifyH("CENTER")
+  -- title (created once, reused)
+  local title = f.title
+  if not title then
+    title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    f.title = title
+    title:SetPoint("TOP", 0, -10)
+    title:SetJustifyH("CENTER")
+    title:SetWordWrap(false)
+    title:SetMaxLines(1)
+  end
   title:SetWidth(widgetSize - 8)
   title:SetText(Util.NodeDisplayName(data))
-  title:SetWordWrap(false)
-  title:SetMaxLines(1)
-  if data.instanceID  then
+
+  -- optional lockout line (only for instances)
+  local lockFS = f.lockFS
+  if data.instanceID then
     local isLocked, _, _, lockoutIndex = IsInstanceLockedOut(data)
     if isLocked then
-      local reset = select(3, GetSavedInstanceInfo(lockoutIndex))
-      local lockFS = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      lockFS:SetPoint("TOP", title, "BOTTOM", 0, -2)
-      lockFS:SetJustifyH("CENTER")
+      if not lockFS then
+        lockFS = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        f.lockFS = lockFS
+        lockFS:SetPoint("TOP", f.title, "BOTTOM", 0, -2)
+        lockFS:SetJustifyH("CENTER")
+      end
       lockFS:SetWidth(widgetSize - 8)
+      local reset = select(3, GetSavedInstanceInfo(lockoutIndex))
       lockFS:SetText("|cffffd200" .. Util.FormatTime(reset) .. "|r")
+      lockFS:Show()
+    elseif lockFS then
+      lockFS:Hide()
     end
+  elseif lockFS then
+    lockFS:Hide()
   end
-  local stats = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  stats:SetPoint("BOTTOM", 0, 8)
-  stats:SetJustifyH("CENTER")
+
+  -- stats line
+  local stats = f.stats
+  if not stats then
+    stats = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    f.stats = stats
+    stats:SetPoint("BOTTOM", 0, 8)
+    stats:SetJustifyH("CENTER")
+  end
   stats:SetWidth(widgetSize - 8)
   stats:SetText(("%d / %d (%.1f%%)"):format(collected, total, percent))
 end
@@ -86,10 +112,14 @@ function Tile.SetProgressWidgetTooltip(f, data, collected, total, percent, isZon
   end)
 end
 
+-- list of difficulties is obtained by running `/run for i=1,300 do local n=GetDifficultyInfo(i); if n then print(i, n) end end`
 local DIFF_LABEL = {
-  [1] = "5N", [2] = "5H", [8] = "CM",
-  [3] = "10N", [4] = "25N", [5] = "10H", [6] = "25H", [148] = "20", [9] = "40",
-  [7] = "LFR", [14] = "Flex/N", [15] = "Flex/H", [16] = "M",
+  [1]   = "5",  [2]   = "5H", [8]   = "CM",  [11]  = "3H",  [12]  = "3",
+  [3]   = "10", [4]   = "25", [5]   = "10H", [6]   = "25H", [7]   = "LFR", [9]   = "40", [14]  = "Flex", [148] = "20",
+  [173] = "5",  [174] = "5H", [175] = "10", [176] = "25", [193] = "10H", [194] = "25H",
+  [237] = "Celestial",
+  -- extras (unconfirmed)
+  [7]   = "LFR",    [15]  = "Flex/H", [16]  = "Flex/M",  [17]  = "LFR",     [102] = "LFG",
   [114] = "DS LFR", [115] = "DS LFR", [118] = "SoD LFR", [119] = "SoD LFR", [120] = "SoD LFR", [121] = "SoD LFR",
 }
 
@@ -103,71 +133,48 @@ local function AttachInfoIcon(parentFrame, eraNode)
           diffs[#diffs+1] = { d = d, c = c, t = t }
       end
   end
-  if #diffs == 0 then return end
 
-  local btn = CreateFrame("Button", nil, parentFrame)
-  btn:SetSize(16, 16)
-  btn:SetPoint("TOPRIGHT", parentFrame, "TOPRIGHT", -6, -6)
-
-  local tex = btn:CreateTexture(nil, "ARTWORK")
-  tex:SetAllPoints(btn)
-  tex:SetTexture("Interface\\FriendsFrame\\InformationIcon")
-
-  Tooltip.CreateTooltip(btn, "ANCHOR_LEFT", function()
-    GameTooltip:AddLine("Difficulties", 1, 1, 1)
-    table.sort(diffs, function(a,b) return a.d < b.d end)
-    for _, r in ipairs(diffs) do
-      local p = (r.t > 0) and (r.c / r.t * 100) or 0
-      local tag = DIFF_LABEL[r.d] or r.d
-      GameTooltip:AddLine(("• %s — %d/%d (%.1f%%)"):format(tag, r.c, r.t, p), 0.9, 0.9, 0.9)
+  if #diffs == 0 then
+    if parentFrame.infoBtn then
+      parentFrame.infoBtn:Hide()
     end
-  end)
+    return
+  end
+
+  local btn = parentFrame.infoBtn
+  if not btn then
+    btn = CreateFrame("Button", nil, parentFrame)
+    btn:SetSize(16, 16)
+    btn:SetPoint("TOPRIGHT", parentFrame, "TOPRIGHT", -6, -6)
+
+    local tex = btn:CreateTexture(nil, "ARTWORK")
+    tex:SetAllPoints(btn)
+    tex:SetTexture("Interface\\FriendsFrame\\InformationIcon")
+    btn.iconTex = tex
+
+    Tooltip.CreateTooltip(btn, "ANCHOR_LEFT", function()
+      GameTooltip:AddLine("Difficulties", 1, 1, 1)
+      local list = btn.diffs
+      if not list then return end
+      table.sort(list, function(a, b) return a.d < b.d end)
+      for _, r in ipairs(list) do
+        local p   = (r.t > 0) and (r.c / r.t * 100) or 0
+        local tag = DIFF_LABEL[r.d] or r.d
+        GameTooltip:AddLine(("• %s — %d/%d (%.1f%%)"):format(tag, r.c, r.t, p), 0.9, 0.9, 0.9)
+      end
+    end)
+
+    parentFrame.infoBtn = btn
+  end
+
+  btn.diffs = diffs
+  btn:Show()
 end
 
--- Main: Create a progress widget for grid
-function Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, onFavToggled)
-return AGGPerf.wrap("Tile.CreateProgressWidget", function() -- 214    0.629    1.148    1.669    0.297  134.556  Tile.CreateProgressWidget
-    local f = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    f:SetSize(widgetSize, 60)
-    f:SetPoint("TOPLEFT", x * (widgetSize + padding), -y * (60 + padding))
+function Tile.SetupFavoriteStar(f, data, isZone, onFavToggled)
+  local favKey = Util.FavKey(data, isZone)
 
-    f:SetBackdrop({
-        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 20,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 }
-    })
-
-    -- Instance/Zone icon in top-left (same toggle)
-    if GetSetting("showInstanceIconOnWidgets", true) then
-        local tex = f:CreateTexture(nil, "ARTWORK")
-        tex:SetSize(48, 48)
-        tex:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -6)
-        Util.ApplyNodeIcon(tex, attNode or data, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
-    end
-
-    local perf = AGGPerf.auto("Tile.CreateProgressWidget:calc_progress") -- 214    0.008    0.020    0.026    0.004    1.779  Tile.CreateProgressWidget:calc_progress
-    local collected, total, percent
-    if isZone then
-      collected, total, percent = Util.ResolveMapProgress(data.mapID)
-    else
-      collected, total, percent = Util.ATTGetProgress(attNode or data)
-    end
-    perf()
-    Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
-    Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
-    -- N.B.: pass an owner with mapID/instanceID so "other toons" can be shown
-    local owner = isZone and { mapID = data.mapID } or (attNode or data)
-    Tile.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone, owner)
-    -- click opens the ATT map package for zones, or the instance/era node otherwise
-    Tile.AttachClickAndHoverUX(f, attNode or data)
-    if attNode.instanceID then
-      AttachInfoIcon(f, attNode)
-    end
-
-    -- bottom-right favorite toggle using Blizzard's Reputation star (2x2 atlas)
-    local favKey  = Util.FavKey(attNode or data, isZone)
-
+  if not f.starBtn then
     local starBtn = CreateFrame("Button", nil, f)
     starBtn:SetSize(16, 16)
     starBtn:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 6)
@@ -176,23 +183,93 @@ return AGGPerf.wrap("Tile.CreateProgressWidget", function() -- 214    0.629    1
     local ICON_FAV = "Interface\\COMMON\\ReputationStar"
     starBtn:SetNormalTexture(ICON_FAV)
 
-    local function paintStar()
-      local UV_ON  = {0,   0.5, 0,   0.5}  -- filled
-      local UV_OFF = {0.5, 1.0, 0,   0.5}  -- hollow
-      local on = Util.IsFavoriteKey(favKey)
-      local normal = starBtn:GetNormalTexture();
+    f.starBtn = starBtn
+  end
+
+  local starBtn = f.starBtn
+
+  local function paintStar()
+    local UV_ON  = {0,   0.5, 0,   0.5}  -- filled
+    local UV_OFF = {0.5, 1.0, 0,   0.5}  -- hollow
+    local on     = Util.IsFavoriteKey(favKey)
+    local normal = starBtn:GetNormalTexture()
+    if normal then
       normal:SetAllPoints()
       normal:SetTexCoord(unpack(on and UV_ON or UV_OFF))
       normal:SetAlpha(on and 1 or 0.8)
     end
+  end
+  paintStar()
+
+  starBtn:SetScript("OnClick", function()
+    Util.ToggleFavoriteKey(favKey)
     paintStar()
+    if onFavToggled then onFavToggled() end
+  end)
+end
 
-    starBtn:SetScript("OnClick", function()
-      Util.ToggleFavoriteKey(favKey)
-      paintStar()
-      onFavToggled()
-    end)
+-- Main: Create a progress widget for grid
+function Tile.CreateProgressWidget(existing, content, data, x, y, widgetSize, padding, isZone, attNode, onFavToggled)
+return AGGPerf.wrap("Tile.CreateProgressWidget", function() -- 214    0.629    1.148    1.669    0.297  134.556  Tile.CreateProgressWidget
+    local f = existing
+    if not f then
+      f = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
+      f:SetBackdrop({
+        bgFile   = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile     = true, tileSize = 16, edgeSize = 20,
+        insets   = { left = 3, right = 3, top = 3, bottom = 3 },
+      })
+    else
+      f:SetParent(content)
+    end
 
+    -- size + layout for this grid cell
+    f:SetSize(widgetSize, 60)
+    f:ClearAllPoints()
+    f:SetPoint("TOPLEFT", x * (widgetSize + padding), -y * (60 + padding))
+
+    -- instance/zone icon in top-left (same toggle), created once and reused
+    if GetSetting("showInstanceIconOnWidgets", true) then
+      if not f.icon then
+        local tex = f:CreateTexture(nil, "ARTWORK")
+        tex:SetSize(48, 48)
+        tex:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -6)
+        f.icon = tex
+      end
+      Util.ApplyNodeIcon(f.icon, attNode or data, { texCoord = { 0.07, 0.93, 0.07, 0.93 } })
+      f.icon:Show()
+    elseif f.icon then
+      f.icon:Hide()
+    end
+
+    local collected, total, percent
+    if isZone then
+      collected, total, percent = Util.ResolveMapProgress(data.mapID)
+    else
+      collected, total, percent = Util.ATTGetProgress(attNode or data)
+    end
+
+    Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
+    Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, percent, attNode)
+
+    -- N.B.: pass an owner with mapID/instanceID so "other toons" can be shown
+    local owner = isZone and { mapID = data.mapID } or (attNode or data)
+    Tile.SetProgressWidgetTooltip(f, data, collected, total, percent, isZone, owner)
+
+    -- click opens the ATT map package for zones, or the instance/era node otherwise
+    Tile.AttachClickAndHoverUX(f, attNode or data)
+
+    if attNode.instanceID then
+      AttachInfoIcon(f, attNode)
+    elseif f.infoBtn then
+      f.infoBtn:Hide()
+    end
+
+    -- bottom-right favorite toggle using Blizzard's Reputation star (2x2 atlas)
+    Tile.SetupFavoriteStar(f, attNode or data, isZone, onFavToggled)
+
+    f:Show()
     return f
 end)
 end
@@ -284,9 +361,10 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
       tabContent.scroll:Refresh()
     end
 
-    local tileFactory = function(content, data, x, y, widgetSize, padding)
+    -- NOTE: first arg is the *existing* frame (or nil) for pooling
+    local tileFactory = function(existing, content, data, x, y, widgetSize, padding)
       local attNode = isZone and Util.GetMapRoot(data.mapID) or (data.attNode or data)
-      return Tile.CreateProgressWidget(content, data, x, y, widgetSize, padding, isZone, attNode, ResortAndRefresh)
+      return Tile.CreateProgressWidget(existing, content, data, x, y, widgetSize, padding, isZone, attNode, ResortAndRefresh)
     end
 
     local scroll = gridFunc(tabContent, entries, tileFactory, 160, 10)
@@ -393,24 +471,40 @@ end
 -- Helper: Populate a frame with widgets in a grid
 function Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll)
 local done = AGGPerf.auto("Grid.Populate")
-  Util.ClearChildrenOrTabs(content)
-  wipe(widgets)
-
   local includeRemoved = GetSetting("includeRemoved", false)
-  local frameWidth = scroll:GetWidth()
-  local cols = Util.GetGridCols(frameWidth, widgetSize, padding)
-  local x, y = 0, 0
+  local frameWidth     = scroll:GetWidth()
+  local cols           = Util.GetGridCols(frameWidth, widgetSize, padding)
+  local x, y           = 0, 0
+  local visibleCount   = 0
 
   local perf = AGGPerf.auto("Grid.Populate:tileFactory")
   for _, entry in ipairs(dataset) do
     if includeRemoved or (not entry.removed) then
-      local f = tileFactory(content, entry, x, y, widgetSize, padding)
-      widgets[#widgets+1] = f
+      visibleCount = visibleCount + 1
+
+      local f = widgets[visibleCount]
+      if f then
+        -- reuse existing widget frame
+        f = tileFactory(f, content, entry, x, y, widgetSize, padding)
+      else
+        -- create a new widget frame and add it to the pool
+        f = tileFactory(nil, content, entry, x, y, widgetSize, padding)
+        widgets[visibleCount] = f
+      end
+      if f then f:Show() end
+
       x = x + 1
       if x >= cols then x = 0; y = y + 1 end
     end
   end
   perf()
+
+  -- hide any now-unused pooled widgets
+  for i = visibleCount + 1, #widgets do
+    local f = widgets[i]
+    if f then f:Hide() end
+  end
+
   content:SetSize(frameWidth, (y + 1) * (60 + padding) + 80)
 done()
 end
