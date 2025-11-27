@@ -89,19 +89,19 @@ function Tile.AddProgressWidgetText(f, data, widgetSize, collected, total, perce
       lockFS:Hide()
     end
   elseif lockFS then
-    lockFS:Hide()
+    lockFS:Hide() -- zone widget or instance without lockout: hide any previous lock text
   end
 
   -- stats line
-  local stats = f.stats
-  if not stats then
-    stats = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    f.stats = stats
-    stats:SetPoint("BOTTOM", 0, 8)
-    stats:SetJustifyH("CENTER")
+  local statsFS = f.statsFS
+  if not statsFS then
+    statsFS = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    f.statsFS = statsFS
+    statsFS:SetPoint("BOTTOM", 0, 8)
+    statsFS:SetJustifyH("CENTER")
   end
-  stats:SetWidth(widgetSize - 8)
-  stats:SetText(("%d / %d (%.1f%%)"):format(collected, total, percent))
+  statsFS:SetWidth(widgetSize - 8)
+  statsFS:SetText(("%d / %d (%.1f%%)"):format(collected, total, percent))
 end
 
 -- ownerNode is the node that carries mapID/instanceID for DB lookups (e.g., the instance node)
@@ -246,8 +246,11 @@ return AGGPerf.wrap("Tile.CreateProgressWidget", function() -- 214    0.629    1
     local collected, total, percent
     if isZone then
       collected, total, percent = Util.ResolveMapProgress(data.mapID)
+      Util.SaveZoneProgressByMapID(data.mapID)
     else
-      collected, total, percent = Util.ATTGetProgress(attNode or data)
+      local node = attNode or data
+      collected, total, percent = Util.ATTGetProgress(node)
+      if node and node.instanceID then Util.SaveInstanceProgressByNode(node) end -- only persist for real instance nodes
     end
 
     Tile.SetProgressWidgetVisuals(f, data, percent, isZone)
@@ -280,6 +283,52 @@ local mainFrame = CreateFrame("Frame", "ATTGoGoMainFrame", UIParent, "BasicFrame
 local expTabY = -25
 local zoneTabY = -45
 local summaryY = -70  -- Below both rows of tabs
+
+-- Background pre-warm of grids some time after the UI is first shown
+local gridWarmupScheduled = false
+local gridWarmupQueue = {}
+local gridWarmupTicker = nil
+
+local function BuildGridWarmupQueue()
+    wipe(gridWarmupQueue)
+    -- Use tabOrder so we process tabs in a deterministic order
+    for idx = 1, #tabOrder do
+        local tabId = tabOrder[idx]
+        local tab = tabButtons[tabId]
+        local content = tab and tab.content
+        local scroll = content and content.scroll
+        if scroll and scroll.Refresh then
+            gridWarmupQueue[#gridWarmupQueue + 1] = scroll
+        end
+    end
+end
+
+function StartGridWarmup()
+    if gridWarmupScheduled then return end -- only schedule once
+    gridWarmupScheduled = true
+
+    -- start 5 seconds later to avoid impacting initial UI responsiveness
+    C_Timer.After(5, function()
+        BuildGridWarmupQueue()
+        if #gridWarmupQueue == 0 then return end
+
+        local index = 1
+        gridWarmupTicker = C_Timer.NewTicker(0.05, function()
+            local scroll = gridWarmupQueue[index]
+            index = index + 1
+
+            if scroll and scroll.Refresh then scroll:Refresh() end
+
+            if index > #gridWarmupQueue then
+                if gridWarmupTicker then
+                    gridWarmupTicker:Cancel()
+                    gridWarmupTicker = nil
+                    print(CTITLE .. "Grid warmup complete")
+                end
+            end
+        end)
+    end)
+end
 
 function Tabs.CreateTabs(mainFrame, tabButtons, tabOrder, tabs, yOffset, isZone, startIndex, SelectTab)
     local lastTab = nil
@@ -376,23 +425,11 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
 end
 
 function Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, tabs, contentY, isZone, filterFunc, sortFunc, gridFunc)
-    -- Zones: snapshot each zone entry that we present as a widget
-    -- Instances: snapshot each instance entry that has an instanceID
-    local saveFn = isZone and Util.SaveZoneProgressByMapID
-                           or Util.SaveInstanceProgressByNode
-
     for i, t in ipairs(tabs) do
         local tabId = t.id  -- use the exact id used when creating the tab
         local entries = PrepareTabData(t, isZone, filterFunc, sortFunc)
 
-        for _, e in ipairs(entries) do
-            if isZone then
-                saveFn(e.mapID)
-            else
-                saveFn(e.attNode)
-            end
-        end
-
+        -- tiles will compute progress on-demand via Tile.CreateProgressWidget
         CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, gridFunc, sortFunc)
     end
 end
@@ -617,9 +654,8 @@ local done = AGGPerf.auto("SetupMainUI")
     Tabs.CreateTabs(mainFrame, tabButtons, tabOrder, zones, zoneTabY, true, #expansions + 1, SelectTab)
 
     Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, expansions, summaryY - 35, false, nil, nil, Grid.Create)
-    Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, zones, -105, true,
-        function(entry) local done = AGGPerf.auto("tab factory Util.ResolveMapProgress"); local _, t = Util.ResolveMapProgress(entry.mapID); done(); return (t or 0) > 0 end,
-        Tabs.ZoneEntrySort, Grid.Create)
+    -- Zone tabs: no eager ResolveMapProgress; tiles compute progress on demand
+    Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, zones, -105, true, nil, nil, Grid.Create)
 
     Tabs.InitialTabSelection(mainFrame, tabOrder, SelectTab)
     RegisterMainFrameEvents()
