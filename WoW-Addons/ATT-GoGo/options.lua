@@ -12,13 +12,15 @@ OptionsUI = {
 -- Forward decls --------------------------------------------------------------
 local CreateGroup, AddCheckbox
 
+local function RefreshPopupForCurrentData() local popup = _G.ATTGoGoUncollectedPopup; if popup:IsShown() then ShowUncollectedPopup(popup.currentData) end end
+
 -- Frame factory --------------------------------------------------------------
 local function SetupOptionsFrame()
   if OptionsUI.frame then return OptionsUI.frame end
   local f = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
   f:SetSize(300, 570)
   f:Hide()
-  Util.EnableDragPersist(f, "optionsWindowPos")                                     -- replaces the custom drag code
+  Util.EnableDragPersist(f, "optionsWindowPos")
 
   f.TitleText:SetText(TITLE .. " options")
 
@@ -159,8 +161,7 @@ function OptionsUI.BuildAccountGroup(parent)
     function() return GetSetting("includeRemoved", false) end,
     function(v) SetSetting("includeRemoved", v) end,
     function()
-      local popup = _G.ATTGoGoUncollectedPopup
-      if popup:IsShown() then ShowUncollectedPopup(popup.currentData) end
+      RefreshPopupForCurrentData()
       RefreshActiveTab()
     end,
     "Include removed/retired/future content in the uncollected popup list."
@@ -265,10 +266,7 @@ function OptionsUI.BuildPerCharGroup(parent)
     { "TOPLEFT", g, "TOPLEFT", 12, -16 },
     function() return GetCharSetting("expandAchievementCriteria", false) end,
     function(v) SetCharSetting("expandAchievementCriteria", v) end,
-    function()
-      local popup = _G.ATTGoGoUncollectedPopup
-      if popup:IsShown() then ShowUncollectedPopup(popup.currentData) end
-    end,
+    RefreshPopupForCurrentData,
     "When ON, show every uncompleted criterion separately.",
     "When OFF, show only the parent achievement."
   )
@@ -281,10 +279,7 @@ function OptionsUI.BuildPerCharGroup(parent)
     { "TOPLEFT", criteriaCheckbox, "BOTTOMLEFT", 0, -6 },
     function() return GetCharSetting("groupByVisualID", true) end,
     function(v) SetCharSetting("groupByVisualID", v) end,
-    function()
-      local popup = _G.ATTGoGoUncollectedPopup
-      if popup:IsShown() then ShowUncollectedPopup(popup.currentData) end
-    end,
+    RefreshPopupForCurrentData,
     "Collapse duplicate appearances and show one representative item."
   )
   OptionsUI.controls.groupVisualsCheckbox = groupVisualsCheckbox
@@ -316,8 +311,7 @@ function OptionsUI.BuildFilterCheckboxes(group, anchor)
     cb:SetChecked(ATTGoGoCharDB.popupIdFilters[key])
     cb:SetScript("OnClick", function(self)
       Util.SetPopupIdFilter(self.key, bool(self:GetChecked()))
-      local popup = _G.ATTGoGoUncollectedPopup
-      if popup:IsShown() then ShowUncollectedPopup(popup.currentData) end
+      RefreshPopupForCurrentData()
     end)
     Util.SetTooltip(cb, "ANCHOR_RIGHT", "", "Include "..(COLLECTIBLE_ID_LABELS[key] or key).." entries in the popup.")
     OptionsUI.filterCheckboxes[key] = cb
