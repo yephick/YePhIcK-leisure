@@ -200,6 +200,7 @@ local function PrintSlashCmdHelp()
     print("/gogo list        - Open Uncollected for current instance/zone")
 --    print("/gogo dump        - Debug: path + recursive dump for current context")
 --    print("/gogo add <text>  - Append <text> into ATT-GoGo debug log")
+--    print("/gogo perf <0|1|reset> - performance stats disable|enable|reset")
     print("alternatively you can use /agg or /attgogo")
 end
 
@@ -226,6 +227,15 @@ local function test()
   end
 end
 
+local function Perf(verb)
+    if verb == "reset" then
+        AGGPerf.reset()
+        print(CTITLE .. "Performance data reset")
+    else
+        AGGPerf.on(verb == "1")
+    end
+end
+
 local function SetupSlashCmd()
     SlashCmdList["ATTGOGO"] = function(msg)
         local raw = (msg or ""):trim()
@@ -246,7 +256,7 @@ local function SetupSlashCmd()
         if LIST[cmd]    then OpenUncollectedForHere()   return end
         if DUMP[cmd]    then DumpCurrentCtx()           return end
         if TEST[cmd]    then test()                     return end
-        if PERF[cmd]    then AGGPerf.on(rest == "1")    return end
+        if PERF[cmd]    then Perf(rest)                 return end
         if cmd == "add" then DebugLog(rest)             return end
 
         print(CTITLE .. "Unknown command. Type '/gogo help' for options.")
@@ -262,6 +272,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     ATTGoGoDB.minimap = ATTGoGoDB.minimap or { minimapPos = 128, hide = false }
 
     Debug_Init()
+    AGGPerf.loadStatsFromDB()
     AGGPerf.on(true)
 
     -- === Wait for ATT ("All The Things") ===

@@ -372,13 +372,20 @@ end
 -- perf.lua — lightweight profiling for WoW Lua 5.1 (MoP Classic)
 local perf_en = false
 local Perf = {}
-function Perf.on(en) perf_en = en end
+function Perf.on(en) if GetSetting("TP_en", false) == true then perf_en = en; print(CTITLE .. "perf_en set to " .. tostring(perf_en)) end end
 
 local now_ms = function() return GetTimePreciseSec()*1000 end
 
 local SITES, ACTIVE, NEXT_ID = {}, {}, 0
 local SAMPLE_N = 128
 
+local function ensure_stats_root()
+  ATTGoGoDB = ATTGoGoDB or {}
+  local stats = ATTGoGoDB.stats or {}
+  ATTGoGoDB.stats = stats
+  stats.perf = stats.perf or {}
+  return stats.perf
+end
 
 local function add_sample(st, dt)
   if not perf_en then return end
@@ -386,10 +393,6 @@ local function add_sample(st, dt)
   st.total = st.total + dt
   if dt < st.min then st.min = dt end
   if dt > st.max then st.max = dt end
-  -- Welford variance
-  local delta = dt - st.mean
-  st.mean = st.mean + delta / st.count
-  st.M2   = st.M2   + delta * (dt - st.mean)
   -- ring buffer
   local si = st.si + 1; if si > SAMPLE_N then si = 1 end
   st.samples[si] = dt; st.si = si
@@ -400,11 +403,53 @@ local function ensure_site(label)
   local st = SITES[key]
   if not st then
     st = { label=label or "",
-           count=0, total=0, min=math.huge, max=0, mean=0, M2=0,
+           count=0, total=0, min=math.huge, max=0,
            samples={}, si=0 }
     SITES[key] = st
   end
   return key, st
+end
+
+-- load persisted perf stats from SavedVariables into SITES
+function Perf.loadStatsFromDB()
+  local perfStats = ensure_stats_root()
+  for label, saved in pairs(perfStats) do
+    local key, st = ensure_site(label)
+    if type(saved) == "table" then
+      st.count  = saved.count or 0
+      st.total  = saved.total or 0
+      st.min    = (saved.min ~= nil) and saved.min or math.huge
+      st.max    = saved.max or 0
+      if type(saved.samples) == "table" then
+        st.samples = saved.samples
+        st.si      = saved.si or 0
+      end
+    end
+  end
+end
+
+-- Save current SITES into ATTGoGoDB.stats.perf (aggregated across sessions)
+local function save_stats_to_db()
+  local perfStats = ensure_stats_root()
+  wipe(perfStats)
+  for label, st in pairs(SITES) do
+    perfStats[label] = {
+      label   = st.label,
+      count   = st.count or 0,
+      total   = st.total or 0,
+      min     = st.min   or math.huge,
+      max     = st.max   or 0,
+      samples = st.samples,
+      si      = st.si or 0,
+    }
+  end
+end
+
+function Perf.reset()
+  SITES   = {}
+  ACTIVE  = {}
+  NEXT_ID = 0
+  wipe(ensure_stats_root())
 end
 
 function Perf.begin(label)
@@ -461,18 +506,15 @@ end
 local function summary_lines()
   local entries = {}
   for _,st in pairs(SITES) do entries[#entries+1] = st end
-  table.sort(entries, function(a,b)
-    return a.total > b.total
-  end)
+  table.sort(entries, function(a,b) return a.total > b.total end)
 
   local lines = {}
-  lines[#lines+1] = ("%-7s  %-7s  %-7s  %-7s  %-7s  %-7s  %s"):format("count","avg","p95","max","std","total", "label")
+  lines[#lines+1] = ("%-7s  %-7s  %-7s  %-7s  %-7s  %s"):format("count","avg","p95","max","total", "label")
   for _,st in ipairs(entries) do
     if st.count > 0 then
-      local std = (st.count>1) and math.sqrt(st.M2/(st.count-1)) or 0
       local p95 = pct_from_samples(st.samples, st.count, 95)
       local avg = st.total / st.count
-      lines[#lines+1] = ("%7d  %7.3f  %7.3f  %7.3f  %7.3f  %7.3f  %s"):format(st.count, avg, p95, st.max, std, st.total, st.label)
+      lines[#lines+1] = ("%7d  %7.3f  %7.3f  %7.3f  %7.3f  %s"):format(st.count, avg, p95, st.max, st.total, st.label)
     end
   end
   return lines, entries
@@ -484,10 +526,9 @@ local function log_summary()
   for _,ln in ipairs(lines) do DebugLog(ln, "perf") end
 end
 
--- Auto summary on logout (same pattern as your TP_summary)
 local perf_lof = CreateFrame("Frame")
 perf_lof:RegisterEvent("PLAYER_LOGOUT")
-perf_lof:SetScript("OnEvent", log_summary)
+perf_lof:SetScript("OnEvent", function() save_stats_to_db(); log_summary() end)
 
 -- Export global
 _G.AGGPerf = Perf

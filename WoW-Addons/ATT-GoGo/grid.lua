@@ -313,7 +313,7 @@ function StartGridWarmup()
         if #gridWarmupQueue == 0 then return end
 
         local index = 1
-        gridWarmupTicker = C_Timer.NewTicker(0.05, function()
+        gridWarmupTicker = C_Timer.NewTicker(0.30, function()
             local scroll = gridWarmupQueue[index]
             index = index + 1
 
