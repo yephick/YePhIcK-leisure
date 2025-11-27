@@ -284,50 +284,63 @@ local expTabY = -25
 local zoneTabY = -45
 local summaryY = -70  -- Below both rows of tabs
 
--- Background pre-warm of grids some time after the UI is first shown
-local gridWarmupScheduled = false
-local gridWarmupQueue = {}
-local gridWarmupTicker = nil
+-- ---------------------------------------------------------
+-- Tile-level background warm-up of ATT progress/snapshots
+-- ---------------------------------------------------------
+local tileWarmupQueue = {}
 
-local function BuildGridWarmupQueue()
-    wipe(gridWarmupQueue)
-    -- Use tabOrder so we process tabs in a deterministic order
-    for idx = 1, #tabOrder do
-        local tabId = tabOrder[idx]
-        local tab = tabButtons[tabId]
+local function BuildTileWarmupQueue()
+    wipe(tileWarmupQueue)
+
+    for idx = 1, #tabOrder do -- walk tabs in display order
+        local tabId   = tabOrder[idx]
+        local tab     = tabButtons[tabId]
         local content = tab and tab.content
-        local scroll = content and content.scroll
-        if scroll and scroll.Refresh then
-            gridWarmupQueue[#gridWarmupQueue + 1] = scroll
+
+        local isZone = content.isZone
+        for _, entry in ipairs(content.entries) do
+            -- skip removed stuff; if the user wants it, they’ll pay the cost on demand
+            if not entry.removed then
+                tileWarmupQueue[#tileWarmupQueue + 1] = { isZone = isZone, entry = entry }
+            end
         end
     end
 end
 
+-- Called from main.lua after SetupMainUI()
 function StartGridWarmup()
-    if gridWarmupScheduled then return end -- only schedule once
-    gridWarmupScheduled = true
+    BuildTileWarmupQueue()
+    local total = #tileWarmupQueue
+    print(CTITLE .. "Grid warmup start (" .. total .. " tiles)")
 
-    -- start 5 seconds later to avoid impacting initial UI responsiveness
-    C_Timer.After(5, function()
-        BuildGridWarmupQueue()
-        if #gridWarmupQueue == 0 then return end
+    local index = 1
 
-        local index = 1
-        gridWarmupTicker = C_Timer.NewTicker(0.30, function()
-            local scroll = gridWarmupQueue[index]
-            index = index + 1
+    local function Step()
+        if index > total then
+            print(CTITLE .. "Grid warmup complete")
+            return
+        end
 
-            if scroll and scroll.Refresh then scroll:Refresh() end
+        local job = tileWarmupQueue[index] -- one tile's worth of work
+        if job.isZone then
+            local perf = AGGPerf.auto("Grid.WarmupTile:zone")
+            local mapID = job.entry.mapID
+            Util.ResolveMapProgress(mapID)      -- warm ATT cache
+            Util.SaveZoneProgressByMapID(mapID) -- and persist snapshot for other-toons overlay
+            perf()
+        else
+            local perf = AGGPerf.auto("Grid.WarmupTile:instance")
+            local node = job.entry.attNode or job.entry
+            Util.ATTGetProgress(node)
+            if node.instanceID then Util.SaveInstanceProgressByNode(node) end
+            perf()
+        end
 
-            if index > #gridWarmupQueue then
-                if gridWarmupTicker then
-                    gridWarmupTicker:Cancel()
-                    gridWarmupTicker = nil
-                    print(CTITLE .. "Grid warmup complete")
-                end
-            end
-        end)
-    end)
+        index = index + 1
+        C_Timer.After(0.005, Step)   -- a few ms gap between job starts
+    end
+
+    Step()
 end
 
 function Tabs.CreateTabs(mainFrame, tabButtons, tabOrder, tabs, yOffset, isZone, startIndex, SelectTab)
@@ -362,7 +375,7 @@ function Tabs.CreateTabs(mainFrame, tabButtons, tabOrder, tabs, yOffset, isZone,
 end
 
 -- Prepare tab data based on type
-local function PrepareTabData(t, isZone, filterFunc, sortFunc)
+local function PrepareTabData(t, isZone)
     local entries = {}
     if isZone then
         for i, child in pairs(t.node.g or {}) do
@@ -373,20 +386,17 @@ local function PrepareTabData(t, isZone, filterFunc, sortFunc)
                     name    = child.text or child.name,
                     removed = Util.IsNodeRemoved(child),
                 }
-                if (not filterFunc) or filterFunc(entry) then entries[#entries+1] = entry end
+                entries[#entries+1] = entry
             end
         end
     else
         entries = GetInstancesForExpansion(t.id)
     end
-    if sortFunc then
-        table.sort(entries, sortFunc)
-    end
     return entries
 end
 
 -- Create UI content for a tab
-local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, gridFunc, sortFunc)
+local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone)
     local tabContent = CreateFrame("Frame", nil, mainFrame)
     tabContent:SetPoint("TOPLEFT", 5, contentY)
     tabContent:SetPoint("BOTTOMRIGHT", -5, 5)
@@ -397,7 +407,6 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
       local fa = Util.IsFavoriteKey(Util.FavKey(a, isZone))
       local fb = Util.IsFavoriteKey(Util.FavKey(b, isZone))
       if fa ~= fb then return fa end
-      if sortFunc then return sortFunc(a, b) end
       return (a.name or "") < (b.name or "")
     end
 
@@ -416,21 +425,25 @@ local function CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, g
       return Tile.CreateProgressWidget(existing, content, data, x, y, widgetSize, padding, isZone, attNode, ResortAndRefresh)
     end
 
-    local scroll = gridFunc(tabContent, entries, tileFactory, 160, 10)
+    local scroll = Grid.Create(tabContent, entries, tileFactory, 160, 10)
     -- expose direct refresh on the tab content so callers don't have to hunt children
     tabContent.scroll  = scroll
     tabContent.Refresh = scroll.Refresh
 
+    -- remember what this tab shows, so warm-up can work per tile
+    tabContent.entries = entries
+    tabContent.isZone  = isZone
+
     tabButtons[tabId].content = tabContent
 end
 
-function Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, tabs, contentY, isZone, filterFunc, sortFunc, gridFunc)
+function Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, tabs, contentY, isZone)
     for i, t in ipairs(tabs) do
         local tabId = t.id  -- use the exact id used when creating the tab
-        local entries = PrepareTabData(t, isZone, filterFunc, sortFunc)
+        local entries = PrepareTabData(t, isZone)
 
         -- tiles will compute progress on-demand via Tile.CreateProgressWidget
-        CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone, gridFunc, sortFunc)
+        CreateTabContentUI(mainFrame, tabId, entries, contentY, isZone)
     end
 end
 
@@ -653,9 +666,9 @@ local done = AGGPerf.auto("SetupMainUI")
     Tabs.CreateTabs(mainFrame, tabButtons, tabOrder, expansions, expTabY, false, 1, SelectTab)
     Tabs.CreateTabs(mainFrame, tabButtons, tabOrder, zones, zoneTabY, true, #expansions + 1, SelectTab)
 
-    Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, expansions, summaryY - 35, false, nil, nil, Grid.Create)
+    Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, expansions, summaryY - 35, false)
     -- Zone tabs: no eager ResolveMapProgress; tiles compute progress on demand
-    Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, zones, -105, true, nil, nil, Grid.Create)
+    Tabs.CreateTabContents(mainFrame, tabButtons, tabOrder, zones, -105, true)
 
     Tabs.InitialTabSelection(mainFrame, tabOrder, SelectTab)
     RegisterMainFrameEvents()

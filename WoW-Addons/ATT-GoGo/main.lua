@@ -279,7 +279,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     ATT.AddEventHandler("OnReady", function()
         Util.CanonicalizePopupIdFilters()
         SetupMainUI()
-        StartGridWarmup() -- kick off background pre-warm of all grids after a short delay
+        StartGridWarmup()
         SetupMinimapIcon()
         EnsurePreviewDock(); EnsurePopup() -- create the preview dock before the uncollected list popup that uses it
         OptionsUI.Init()

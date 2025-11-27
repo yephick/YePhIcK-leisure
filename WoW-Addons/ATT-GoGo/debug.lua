@@ -377,7 +377,6 @@ function Perf.on(en) if GetSetting("TP_en", false) == true then perf_en = en; pr
 local now_ms = function() return GetTimePreciseSec()*1000 end
 
 local SITES, ACTIVE, NEXT_ID = {}, {}, 0
-local SAMPLE_N = 128
 
 local function ensure_stats_root()
   ATTGoGoDB = ATTGoGoDB or {}
@@ -393,18 +392,13 @@ local function add_sample(st, dt)
   st.total = st.total + dt
   if dt < st.min then st.min = dt end
   if dt > st.max then st.max = dt end
-  -- ring buffer
-  local si = st.si + 1; if si > SAMPLE_N then si = 1 end
-  st.samples[si] = dt; st.si = si
 end
 
 local function ensure_site(label)
   local key = label
   local st = SITES[key]
   if not st then
-    st = { label=label or "",
-           count=0, total=0, min=math.huge, max=0,
-           samples={}, si=0 }
+    st = { label=label or "", count=0, total=0, min=math.huge, max=0 }
     SITES[key] = st
   end
   return key, st
@@ -420,10 +414,6 @@ function Perf.loadStatsFromDB()
       st.total  = saved.total or 0
       st.min    = (saved.min ~= nil) and saved.min or math.huge
       st.max    = saved.max or 0
-      if type(saved.samples) == "table" then
-        st.samples = saved.samples
-        st.si      = saved.si or 0
-      end
     end
   end
 end
@@ -439,8 +429,6 @@ local function save_stats_to_db()
       total   = st.total or 0,
       min     = st.min   or math.huge,
       max     = st.max   or 0,
-      samples = st.samples,
-      si      = st.si or 0,
     }
   end
 end
@@ -494,27 +482,17 @@ function Perf.wrap(label, fn, ...)
   return r1, r2, r3, r4, r5
 end
 
-local function pct_from_samples(samples, count, p)
-  if count == 0 then return 0 end
-  local arr, n = {}, 0
-  for _,v in pairs(samples) do n=n+1; arr[n]=v end
-  table.sort(arr)
-  local idx = math.max(1, math.min(n, math.floor((p/100)*n + 0.5)))
-  return arr[idx]
-end
-
 local function summary_lines()
   local entries = {}
   for _,st in pairs(SITES) do entries[#entries+1] = st end
   table.sort(entries, function(a,b) return a.total > b.total end)
 
   local lines = {}
-  lines[#lines+1] = ("%-7s  %-7s  %-7s  %-7s  %-7s  %s"):format("count","avg","p95","max","total", "label")
+  lines[#lines+1] = ("%-7s  %-7s  %-7s  %-7s  %-7s  %s"):format("count","avg","min","max","total", "label")
   for _,st in ipairs(entries) do
     if st.count > 0 then
-      local p95 = pct_from_samples(st.samples, st.count, 95)
       local avg = st.total / st.count
-      lines[#lines+1] = ("%7d  %7.3f  %7.3f  %7.3f  %7.3f  %s"):format(st.count, avg, p95, st.max, st.total, st.label)
+      lines[#lines+1] = ("%7d  %7.3f  %7.3f  %7.3f  %7.3f  %s"):format(st.count, avg, st.min, st.max, st.total, st.label)
     end
   end
   return lines, entries
