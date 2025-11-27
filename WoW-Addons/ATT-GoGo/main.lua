@@ -311,7 +311,5 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         ATT.AddEventHandler("OnThingCollected", OnThingCollected)
 
         PrintStartup()
-        AGGPerf.on(true)
     end)
 end)
-

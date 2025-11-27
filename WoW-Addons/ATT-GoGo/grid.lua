@@ -210,7 +210,6 @@ end
 
 -- Main: Create a progress widget for grid
 function Tile.CreateProgressWidget(existing, content, data, x, y, widgetSize, padding, isZone, attNode, onFavToggled)
-return AGGPerf.wrap("Tile.CreateProgressWidget", function() -- 214    0.629    1.148    1.669    0.297  134.556  Tile.CreateProgressWidget
     local f = existing
     if not f then
       f = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
@@ -274,7 +273,6 @@ return AGGPerf.wrap("Tile.CreateProgressWidget", function() -- 214    0.629    1
 
     f:Show()
     return f
-end)
 end
 
 
@@ -311,29 +309,21 @@ end
 function StartGridWarmup()
     BuildTileWarmupQueue()
     local total = #tileWarmupQueue
-    print(CTITLE .. "Grid warmup start (" .. total .. " tiles)")
 
     local index = 1
 
     local function Step()
-        if index > total then
-            print(CTITLE .. "Grid warmup complete")
-            return
-        end
+        if index > total then return end -- done
 
         local job = tileWarmupQueue[index] -- one tile's worth of work
         if job.isZone then
-            local perf = AGGPerf.auto("Grid.WarmupTile:zone")
             local mapID = job.entry.mapID
             Util.ResolveMapProgress(mapID)      -- warm ATT cache
             Util.SaveZoneProgressByMapID(mapID) -- and persist snapshot for other-toons overlay
-            perf()
         else
-            local perf = AGGPerf.auto("Grid.WarmupTile:instance")
             local node = job.entry.attNode or job.entry
             Util.ATTGetProgress(node)
             if node.instanceID then Util.SaveInstanceProgressByNode(node) end
-            perf()
         end
 
         index = index + 1
@@ -520,14 +510,12 @@ end
 
 -- Helper: Populate a frame with widgets in a grid
 function Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll)
-local done = AGGPerf.auto("Grid.Populate")
   local includeRemoved = GetSetting("includeRemoved", false)
   local frameWidth     = scroll:GetWidth()
   local cols           = Util.GetGridCols(frameWidth, widgetSize, padding)
   local x, y           = 0, 0
   local visibleCount   = 0
 
-  local perf = AGGPerf.auto("Grid.Populate:tileFactory")
   for _, entry in ipairs(dataset) do
     if includeRemoved or (not entry.removed) then
       visibleCount = visibleCount + 1
@@ -547,7 +535,6 @@ local done = AGGPerf.auto("Grid.Populate")
       if x >= cols then x = 0; y = y + 1 end
     end
   end
-  perf()
 
   -- hide any now-unused pooled widgets
   for i = visibleCount + 1, #widgets do
@@ -556,7 +543,6 @@ local done = AGGPerf.auto("Grid.Populate")
   end
 
   content:SetSize(frameWidth, (y + 1) * (60 + padding) + 80)
-done()
 end
 
 -- Factory: Create a scrolling grid for any dataset and widget factory
@@ -569,14 +555,13 @@ function Grid.Create(parent, dataset, tileFactory, widgetSize, padding)
     content:SetSize(1, 1)
     scroll:SetScrollChild(content)
 
-    local widgets = {}
+    local widgets = {} -- pool of widgets for Grid.Populate to reuse
 
-    local Debounced = Util.Debounce(function() Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll) end, 0.08)
+    scroll.Refresh = function() local done = AGGPerf.auto("Grid.Populate"); Grid.Populate(content, dataset, tileFactory, widgets, widgetSize, padding, scroll); done() end
 
-    scroll:SetScript("OnShow", Debounced)
-    parent:HookScript("OnSizeChanged", Debounced)
+    scroll:SetScript("OnShow", scroll.Refresh)
+    parent:HookScript("OnSizeChanged", scroll.Refresh)
 
-    scroll.Refresh = Debounced
     return scroll
 end
 
@@ -650,7 +635,6 @@ function RefreshActiveTab()
 end
 
 function SetupMainUI()
-local done = AGGPerf.auto("SetupMainUI")
     RequestRaidInfo()
     Util.ClearATTSearchCache()
 
@@ -672,5 +656,4 @@ local done = AGGPerf.auto("SetupMainUI")
 
     Tabs.InitialTabSelection(mainFrame, tabOrder, SelectTab)
     RegisterMainFrameEvents()
-done()
 end

@@ -264,10 +264,9 @@ end
 
 local requestedOnce = {}
 
-local function SetupNodeTooltip(btn, boundNode)
+local function SetupNodeTooltip(btn)
     btn:SetScript("OnEnter", function(self)
-    AGGPerf.wrap("SetupNodeTooltip:OnEnter", function()
-        local node = self.node or boundNode
+        local node = self.node
         currentTooltipNode = node
 
         ShowPreviewForNode(node)
@@ -284,14 +283,10 @@ local function SetupNodeTooltip(btn, boundNode)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:ClearLines()
         local matched = passKeysByNode[node]
-        local perf = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info")
         if node.itemID then
-            local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:itemID")
             local id = node.itemID
             if GetItemInfo(id) then
-                local in2 = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:itemID:SetItemByID")
                 GameTooltip:SetItemByID(id)
-                in2()
             else
                 GameTooltip:SetText(("Item %d"):format(id))
                 if not requestedOnce[id] and not C_Item.IsItemDataCachedByID(id) then
@@ -299,9 +294,7 @@ local function SetupNodeTooltip(btn, boundNode)
                     C_Item.RequestLoadItemDataByID(id)
                 end
             end
-            inner()
         elseif node.questID then
-            local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:questID")
             local hadRealObjectives = RenderQuestTooltip(node)
             if not hadRealObjectives then
                 C_Timer.After(0.50, function()
@@ -312,9 +305,7 @@ local function SetupNodeTooltip(btn, boundNode)
                     end
                 end)
             end
-            inner()
         elseif node.achievementID then
-            local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:achievementID")
             local aID = node.achievementID
             local link = GetAchievementLink(aID)
             if link then
@@ -326,21 +317,14 @@ local function SetupNodeTooltip(btn, boundNode)
             end
 
             AddUncollectedChildrenToTooltip(node)
-            inner()
         elseif node.creatureID or node.npcID then
-            local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:npcID")
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
             AddUncollectedChildrenToTooltip(node)
-            inner()
         else
-            local inner = AGGPerf.auto("SetupNodeTooltip:OnEnter:set_row_info:else")
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
             AddUncollectedChildrenToTooltip(node)
-            inner()
         end
-        perf()
         GameTooltip:Show()
-    end)
     end)
     btn:SetScript("OnLeave", function()
         currentTooltipNode = nil
@@ -370,6 +354,7 @@ local function EnsureRetryTicker()
     if retryTicker then return end
     retryCount = 0
     retryTicker = C_Timer.NewTicker(0.5, function()
+    TP(retryCount, achLabelsByID,spellLabelsByID)
     AGGPerf.wrap("EnsureRetryTicker:retryTicker", function()
         retryCount = retryCount + 1
         for id, label in pairs(achLabelsByID) do
@@ -623,10 +608,10 @@ end
 local SKIP_FULLY_COLLECTED = true    -- feature flag (toggle for A/B)
 local VISITS, EMITS, SKIPS = 0, 0, 0 -- lightweight visit stats
 
-local function GatherUncollectedNodes(node, out, keys, seen, d)
-local depth = (d or 0) + 1
-local site = "GatherUncollectedNodes:" .. (d or 0)
-AGGPerf.wrap(site, function()
+local function GatherUncollectedNodes(node, out, keys, seen)--, d)
+--local depth = (d or 0) + 1
+--local site = "GatherUncollectedNodes:" .. (d or 0)
+--AGGPerf.wrap(site, function()
     if type(node) ~= "table" then TP(node); return end
 
     seen = seen or setmetatable({}, { __mode = "k" })
@@ -654,17 +639,16 @@ AGGPerf.wrap(site, function()
 
     local kids = node.g
     if type(kids) == "table" then
-    local recursion = AGGPerf.auto(site .. ":recursion with " .. #kids .. " children")
---    if #kids > 100 then local path = DebugGetNodePath(node.g); DebugLogf("%s: %s has %d children", (node.name or node.text or "noname"), path, #kids); TP(node.parent) end
+--    local recursion = AGGPerf.auto(site .. ":recursion with " .. #kids .. " children")
         for i = 1, #kids do
             local child = kids[i]
             if type(child) == "table" and child ~= node.parent then
-                GatherUncollectedNodes(child, out, keys, seen, depth)
+                GatherUncollectedNodes(child, out, keys, seen)--, depth)
             end
         end
-    recursion()
+--    recursion()
     end
-end)
+--end)
 end
 
 -- Build + filter list
@@ -679,10 +663,10 @@ return AGGPerf.wrap("BuildNodeList", function()
 
     -- Gather raw leaves per active filters
     local nodes = {}
-    AGGPerf.wrap("BuildNodeList:GatherUncollectedNodes", function()
+--    AGGPerf.wrap("BuildNodeList:GatherUncollectedNodes", function()
         VISITS, EMITS, SKIPS = 0, 0, 0
         GatherUncollectedNodes(root, nodes, activeKeys)
-    end)
+--    end)
 
     -- one-line summary
     DebugLogf("GatherUncollectedNodes:stats visits=%d emits=%d skips=%d keys=%d skip_full=%s", VISITS, EMITS, SKIPS, #ACTIVE_KEYS, tostring(SKIP_FULLY_COLLECTED))
@@ -803,7 +787,6 @@ local function RenderRowAt(scrollContent, row, dataIndex, nodes)
 end
 
 local function UpdateVirtualList()
-local done = AGGPerf.auto("UpdateVirtualList")
     local nodes = uncollectedPopup.currentNodes or {}
     local scroller = uncollectedPopup.scrollFrame
     local content  = uncollectedPopup.scrollContent
@@ -818,7 +801,6 @@ local done = AGGPerf.auto("UpdateVirtualList")
         local row = AcquireRow(content, i)
         RenderRowAt(content, row, first + (i - 1), nodes)
     end
-done()
 end
 
 ------------------------------------------------------------
@@ -915,7 +897,6 @@ end
 ------------------------------------------------------------
 -- Populate & refresh (virtualized)
 local function PopulateUncollectedPopup(scrollContent, nodes)
-local done = AGGPerf.auto("PopulateUncollectedPopup")
     -- Adjust content height / empty state
     if #nodes == 0 then
         scrollContent.emptyLine = scrollContent.emptyLine or scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -940,7 +921,6 @@ local done = AGGPerf.auto("PopulateUncollectedPopup")
     scroll.ScrollBar:SetValue(prevOffset)
 
     UpdateVirtualList()
-done()
 end
 
 ------------------------------------------------------------
@@ -978,15 +958,13 @@ end)
 -- Build + show
 ------------------------------------------------------------
 local function RefreshPopup(data)
-local done = AGGPerf.auto("RefreshPopup")
     uncollectedPopup.currentData = data
 
-    local nodes, activeKeys = AGGPerf.wrap("RefreshPopup:BuildNodeList", BuildNodeList, data)
+    local nodes, activeKeys = BuildNodeList(data)
     uncollectedPopup.currentNodes = nodes
     PopulateUncollectedPopup(uncollectedPopup.scrollContent, nodes)
 
     uncollectedPopup.title:SetText(("%s (%d)"):format(Util.NodeDisplayName(data), #nodes))
-done()
 end
 
 function ShowUncollectedPopup(data)

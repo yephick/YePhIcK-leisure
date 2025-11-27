@@ -69,17 +69,6 @@ function Util.PlayerFactionID()
   end
 end
 
-function Util.Debounce(fn, delay)
-  local pending = false
-  delay = delay or 0.05
-  return function(...)
-    local args = { ... }
-    if pending then return end
-    pending = true
-    C_Timer.After(delay, function() pending = false; fn(unpack(args)) end)
-  end
-end
-
 function Util.FormatTime(seconds)
   local days    = math.floor(seconds / 86400)
   local hours   = math.floor((seconds % 86400) / 3600)
@@ -142,7 +131,7 @@ end
 
 -- Progress straight from the map package (matches /attmini totals)
 function Util.ResolveMapProgress(mapID)
-return AGGPerf.wrap("Util.ResolveMapProgress", function() -- 3380    0.373    0.009   94.670    3.023  1261.040  Util.ResolveMapProgress
+return AGGPerf.wrap("Util.ResolveMapProgress", function()
   local hit = _MAP_PROG_CACHE[mapID]
   if hit then return hit[1], hit[2], hit[3] end
   local root = Util.GetMapRoot(mapID)
@@ -192,7 +181,7 @@ function Util.InvalidateProgressCache(node)
 end
 
 function Util.ATTGetProgress(node)
-return AGGPerf.wrap("Util.ATTGetProgress", function() -- 72371    0.030    0.012   51.860    0.358  2180.288  Util.ATTGetProgress
+return AGGPerf.wrap("Util.ATTGetProgress", function()
   local hit = _PROG_CACHE[node]
   if hit then return hit[1], hit[2], hit[3] end
 
@@ -860,12 +849,10 @@ function Util.GetInstanceProgressKey(node)
 end
 
 function GetInstancesForExpansion(expansionID)
-return AGGPerf.wrap("GetInstancesForExpansion", function() -- 13    1.685    1.882    3.064    0.468   21.902  GetInstancesForExpansion
   local root = ATT:GetDataCache()
   local out = {}
 
   local function scanContainer(cat)
-  return AGGPerf.wrap("GetInstancesForExpansion:scanContainer", function() -- 325    0.064    0.169    1.631    0.179   20.761  GetInstancesForExpansion:scanContainer
     if type(cat.g) ~= "table" then return end
     for _, exp in pairs(cat.g) do
       if type(exp.g) == "table" then
@@ -895,13 +882,11 @@ return AGGPerf.wrap("GetInstancesForExpansion", function() -- 13    1.685    1.8
         end
       end
     end
-  end)
   end
 
   for _, cat in pairs(root.g) do scanContainer(cat) end
   table.sort(out, function(a,b) return (a.name or "") < (b.name or "") end)
   return out
-end)
 end
 
 function BuildZoneList()
@@ -957,8 +942,8 @@ function Tooltip.CreateTooltip(frame, anchor, contentFunc)
     frame:SetScript("OnLeave", function(self) GameTooltip:Hide() end)
 end
 
-function Tooltip.AddHeader(title, r, g, b) GameTooltip:AddLine(title, r or 0, g or 1, b or 0) end
-function Tooltip.AddLine(text, r, g, b)   GameTooltip:AddLine(text, r or 1, g or 1, b or 1) end
+function Tooltip.AddHeader(title) GameTooltip:AddLine(title, 0, 1, 0) end
+function Tooltip.AddLine  (text)  GameTooltip:AddLine(text,  1, 1, 1) end
 
 function Tooltip.AddInstanceLockoutTo(tooltip, data)
     local isLocked, numDown, numBosses, lockoutIndex = IsInstanceLockedOut(data)

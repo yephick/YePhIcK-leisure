@@ -423,13 +423,15 @@ local function save_stats_to_db()
   local perfStats = ensure_stats_root()
   wipe(perfStats)
   for label, st in pairs(SITES) do
-    perfStats[label] = {
-      label   = st.label,
-      count   = st.count or 0,
-      total   = st.total or 0,
-      min     = st.min   or math.huge,
-      max     = st.max   or 0,
-    }
+    if st.count > 0 then
+      perfStats[label] = {
+        label   = st.label,
+        count   = st.count or 0,
+        total   = st.total or 0,
+        min     = st.min   or math.huge,
+        max     = st.max   or 0,
+      }
+    end
   end
 end
 
