@@ -457,6 +457,7 @@ function Util.FocusMapForNode(node)
   if not mapID then return false end
 
   ShowUIPanel(WorldMapFrame); WorldMapFrame:SetMapID(mapID) -- open WorldMap for the `mapID`'s zone
+  _G.ATTGoGoUncollectedPopup:Show() -- make sure to re-open our uncollected popup which was auto-closed by the WorldMap
 
   if x and y then Util.TryTomTomWaypoint(mapID, x, y, node.text or node.name or (TITLE .. " waypoint")) end
   return true
