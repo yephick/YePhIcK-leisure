@@ -4,8 +4,9 @@
 ## Author: |cffffff40YePhIcK|r
 ## X-CoAuthor: GenAI
 ## X-IconMain: icon-dragon2
-## X-PayPalMeQR: paypal-me-qr-code
-## X-DiscordQR: discord-qr-code
+## X-PayPalMeQR: qr-paypal-me
+## X-DiscordQR: qr-discord
+## X-DiscordQR-ATT: qr-discord-att
 ## Version: 0.83
 ## Dependencies: AllTheThings
 ## OptionalDeps: LibStub LibDataBroker-1.1 LibDBIcon-1.0

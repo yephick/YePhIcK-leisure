@@ -5,9 +5,11 @@ TITLE = GetAddOnMetadata(addonName, "Title")
 CTITLE = "|cff00ff00" .. TITLE .. "|r "
 
 local ADDON_PATH = "Interface\\AddOns\\" .. addonName .. "\\"
+local QR_PATH = ADDON_PATH .. "QR\\"
 ICON_MAIN = ADDON_PATH .. GetAddOnMetadata(addonName, "X-IconMain") .. ".tga"
-ICON_PPME = ADDON_PATH .. GetAddOnMetadata(addonName, "X-PayPalMeQR")
-ICON_DISC = ADDON_PATH .. GetAddOnMetadata(addonName, "X-DiscordQR")
+ICON_PPME = QR_PATH    .. GetAddOnMetadata(addonName, "X-PayPalMeQR")
+ICON_DISC = QR_PATH    .. GetAddOnMetadata(addonName, "X-DiscordQR")
+ICON_ATT  = QR_PATH    .. GetAddOnMetadata(addonName, "X-DiscordQR-ATT")
 
 AboutUI = {
   frame = nil,
@@ -42,19 +44,24 @@ local function BuildBodyText()
   end
 
   add(CTITLE .. "is a companion addon for |cffffd200AllTheThings|r.")
-  add("It focuses on dungeon and raid collection progress and shows it in a compact grid by expansion or zone.")
+  add("")
+  add("|cffffff00Purpose|r")
+  add("Show dungeon and raid collection progress in a compact grid. List instance lockouts across all toons.")
   add("")
   add("|cffffff00What it does|r")
   add(" - Shows per-instance/per-zone tiles with collected versus missing achievements, appearances, quests, and other collectibles.")
-  add(" - Lets you quickly see where you still have work to do.")
+  add(" - Quickly see where you still have work to do.")
   add(" - Helps you decide where to go next when you feel like farming.")
   add(" - Uses |cffffd200AllTheThings|r data and services, so most features require ATT to be enabled.")
   add("")
   add("|cffffff00Basic usage|r")
   add(" - Open the main " .. CTITLE .. "window from the minimap button or via a slash command.")
-  add(" - Use the expansion tabs to switch between eras. Or choose a continent to see its zones.")
+  add(" - Use the expansion tabs to switch between eras.")
+  add(" - Or choose a continent to see its zones.")
+  add(" - Set \"favorite\" tiles to sort them on top.")
   add(" - Mouse over a tile to see detailed progress in the tooltip. Instances show lockouts for this and other toons.")
   add(" - Click a tile to open a popup of still uncollected items.")
+  add(" - Many items in Uncollected List popup are clickable to show their location on World Map.")
   add("")
   add("|cffffff00Slash commands|r")
   add(table.concat(BuildSlashCommandsText(), "\n"))
@@ -140,8 +147,9 @@ function SetupAboutFrame()
   ---------------------------------------------------------------------------
   -- QR codes (PayPal + Discord) – placed low so they are out of immediate view
   ---------------------------------------------------------------------------
+  local QR_SZ = 96
   local qrPayPal = content:CreateTexture(nil, "ARTWORK")
-  qrPayPal:SetSize(96, 96)
+  qrPayPal:SetSize(QR_SZ, QR_SZ)
   qrPayPal:SetPoint("TOPLEFT", qrSubText, "BOTTOMLEFT", 0, -16)
   qrPayPal:SetTexture(ICON_PPME)
 
@@ -150,13 +158,22 @@ function SetupAboutFrame()
   qrPayPalLabel:SetText("PayPal.me/YePhIcK")
 
   local qrDiscord = content:CreateTexture(nil, "ARTWORK")
-  qrDiscord:SetSize(96, 96)
+  qrDiscord:SetSize(QR_SZ, QR_SZ)
   qrDiscord:SetPoint("LEFT", qrPayPal, "RIGHT", 40, 0)
   qrDiscord:SetTexture(ICON_DISC)
 
   local qrDiscordLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   qrDiscordLabel:SetPoint("TOPLEFT", qrDiscord, "BOTTOMLEFT", 0, -4)
-  qrDiscordLabel:SetText("ATT-GoGo Discord")
+  qrDiscordLabel:SetText("ATT-GoGo Discord\n|c44444400https://discord.gg/|r\nQWMSk9NaJv")
+
+  local qrDiscordAtt = content:CreateTexture(nil, "ARTWORK")
+  qrDiscordAtt:SetSize(QR_SZ, QR_SZ)
+  qrDiscordAtt:SetPoint("LEFT", qrDiscord, "RIGHT", 40, 0)
+  qrDiscordAtt:SetTexture(ICON_ATT)
+
+  local qrDiscordAttLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  qrDiscordAttLabel:SetPoint("TOPLEFT", qrDiscordAtt, "BOTTOMLEFT", 0, -4)
+  qrDiscordAttLabel:SetText("ATT Discord\n|c44444400https://discord.gg/|r\nallthethings")
 
   -- Make sure the scroll child is tall enough
   local totalHeight =
