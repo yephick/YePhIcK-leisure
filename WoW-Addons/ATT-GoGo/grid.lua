@@ -602,7 +602,7 @@ local function CreateAboutButton()
 
     btn:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -10, -28)
 
-    btn:SetNormalTexture(ICON_FILE)
+    btn:SetNormalTexture(ICON_MAIN)
     btn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 
     btn:SetScript("OnEnter", function(self) Util.SetTooltip( self, "ANCHOR_RIGHT", "About " .. TITLE ) end)

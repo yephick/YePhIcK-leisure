@@ -37,7 +37,7 @@ end
 
 local function ShowMinimapTooltip(tooltip)
     RequestRaidInfo()
-    tooltip:AddLine(CTITLE, 0, 1, 0)
+    tooltip:AddLine("|T" .. ICON_MAIN .. ":32:32|t  " .. CTITLE, 1, 1, 1)
     tooltip:AddLine("Left-click: Open main grid window", 1, 1, 1)
     tooltip:AddLine("Right-click: Uncollected for current instance/zone", 1, 1, 1)
     tooltip:AddLine("Shift-click: Open options", 1, 1, 1)
@@ -51,7 +51,7 @@ local function SetupMinimapIcon()
     local dataObj = ldb:NewDataObject(addonName, {
         type = "data source",
         text = TITLE,
-        icon = ICON_FILE,
+        icon = ICON_MAIN,
         OnClick = function(self, button)
             if button == "LeftButton" then
                 if IsShiftKeyDown() then
@@ -191,15 +191,7 @@ SLASH_ATTGOGO3 = "/agg"
 
 local function PrintSlashCmdHelp()
     print(CTITLE .. "Commands")
-    print("/gogo help    - Show this help")
-    print("/gogo options - Options window")
-    print("/gogo show    - Main window")
-    print("/gogo list    - Uncollected List for current instance/zone")
-    print("/gogo about   - \"About\" window")
---    print("/gogo dump        - Debug: path + recursive dump for current context")
---    print("/gogo add <text>  - Append <text> into ATT-GoGo debug log")
---    print("/gogo perf <0|1|reset> - performance stats disable|enable|reset")
-    print("alternatively you can use /agg or /attgogo")
+    for _, line in pairs(BuildSlashCommandsText()) do print(line) end
 end
 
 local function test()

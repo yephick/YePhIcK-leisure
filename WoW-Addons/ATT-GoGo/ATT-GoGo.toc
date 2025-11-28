@@ -3,7 +3,9 @@
 ## Notes: Companion addon for 'AllTheThings' to show instance farming status in a grid. Use /attgogo to see available commands.
 ## Author: |cffffff40YePhIcK|r
 ## X-CoAuthor: GenAI
-## X-IconFile: Interface\AddOns\ATT-GoGo\icon-dragon2.tga
+## X-IconMain: icon-dragon2
+## X-PayPalMeQR: paypal-me-qr-code
+## X-DiscordQR: discord-qr-code
 ## Version: 0.83
 ## Dependencies: AllTheThings
 ## OptionalDeps: LibStub LibDataBroker-1.1 LibDBIcon-1.0
