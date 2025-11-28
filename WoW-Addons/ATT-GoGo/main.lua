@@ -1,7 +1,4 @@
 ﻿local addonName = ...
-local ICON_FILE = "Interface\\AddOns\\ATT-GoGo\\icon-dragon2.tga"
-TITLE = GetAddOnMetadata(addonName, "Title") or "UNKNOWN"
-CTITLE = "|cff00ff00" .. TITLE .. "|r "
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
@@ -194,10 +191,11 @@ SLASH_ATTGOGO3 = "/agg"
 
 local function PrintSlashCmdHelp()
     print(CTITLE .. "Commands")
-    print("/gogo help        - Show this help")
-    print("/gogo options     - Open the options window")
-    print("/gogo show        - Show the main window")
-    print("/gogo list        - Open Uncollected for current instance/zone")
+    print("/gogo help    - Show this help")
+    print("/gogo options - Options window")
+    print("/gogo show    - Main window")
+    print("/gogo list    - Uncollected List for current instance/zone")
+    print("/gogo about   - \"About\" window")
 --    print("/gogo dump        - Debug: path + recursive dump for current context")
 --    print("/gogo add <text>  - Append <text> into ATT-GoGo debug log")
 --    print("/gogo perf <0|1|reset> - performance stats disable|enable|reset")
@@ -243,6 +241,7 @@ local function SetupSlashCmd()
         cmd = (cmd or ""):lower()
 
         local HELP    = { h = true, help = true, ["?"] = true, [""]  = true }
+        local ABOUT   = { a = true, about = true }
         local OPTIONS = { o = true, options = true }
         local SHOW    = { s = true, show = true }
         local LIST    = { l = true, list = true }
@@ -251,6 +250,7 @@ local function SetupSlashCmd()
         local TEST    = { t = true, test = true }
 
         if HELP[cmd]    then PrintSlashCmdHelp()        return end
+        if ABOUT[cmd]   then AboutUI.Show()             return end
         if OPTIONS[cmd] then OptionsUI.Show()           return end
         if SHOW[cmd]    then ShowMainFrame()            return end
         if LIST[cmd]    then OpenUncollectedForHere()   return end

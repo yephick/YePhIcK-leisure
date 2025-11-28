@@ -592,9 +592,23 @@ local function CreateOptionsButton()
     optionsBtn:SetNormalTexture("Interface\\Icons\\INV_Misc_Gear_01")
     optionsBtn:SetHighlightTexture("Interface\\Icons\\INV_Misc_Gear_01", "ADD")
     Util.SetTooltip(optionsBtn, "ANCHOR_LEFT", "Options", "Open " .. TITLE .. " options")
-    optionsBtn:SetScript("OnClick", function() OptionsUI.Show() end)
+    optionsBtn:SetScript("OnClick", OptionsUI.Show)
 end
 
+-- Helper: Create About button in the main frame header
+local function CreateAboutButton()
+    local btn = CreateFrame("Button", nil, mainFrame)
+    btn:SetSize(80, 80)
+
+    btn:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -10, -28)
+
+    btn:SetNormalTexture(ICON_FILE)
+    btn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+
+    btn:SetScript("OnEnter", function(self) Util.SetTooltip( self, "ANCHOR_RIGHT", "About " .. TITLE ) end)
+    btn:SetScript("OnLeave", function(self) GameTooltip:Hide() end)
+    btn:SetScript("OnClick", AboutUI.Show)
+end
 
 local function SelectTab(tabID)
     if currentTab then currentTab:Hide() end
@@ -640,6 +654,7 @@ function SetupMainUI()
 
     CreateMainFrame()
     CreateOptionsButton()
+    CreateAboutButton()
     table.insert(UISpecialFrames, "ATTGoGoMainFrame") -- Escape closes window
     Summary.Create(mainFrame, summaryY)
 
