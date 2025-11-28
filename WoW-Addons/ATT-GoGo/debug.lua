@@ -378,6 +378,53 @@ local now_ms = function() return GetTimePreciseSec()*1000 end
 
 local SITES, ACTIVE, NEXT_ID = {}, {}, 0
 
+-- Histogram bucket upper bounds in milliseconds.
+-- Buckets: <1, 1–2, 2–4, 4–8, 8–16, 16–32, 32–64, 64–128, 128–256, 256–512, 512-1024+
+local BUCKET_BOUNDS = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 }
+
+local function ensure_buckets(st)
+  local b = st.buckets
+  if not b then
+    b = {}
+    for i = 1, #BUCKET_BOUNDS do
+      b[i] = 0
+    end
+    st.buckets = b
+  end
+  return b
+end
+
+local function record_bucket(st, dt)
+  local b = ensure_buckets(st)
+  local idx
+  for i, limit in ipairs(BUCKET_BOUNDS) do
+    if dt < limit then
+      idx = i
+      break
+    end
+  end
+  if not idx then
+    idx = #BUCKET_BOUNDS
+  end
+  b[idx] = (b[idx] or 0) + 1
+end
+
+local function estimate_p95(st)
+  local buckets = st.buckets
+  local total = st.count or 0
+  if not buckets or total <= 0 then return 0 end
+
+  local target = total * 0.95
+  local acc = 0
+  for i, limit in ipairs(BUCKET_BOUNDS) do
+    acc = acc + (buckets[i] or 0)
+    if acc >= target then return limit end
+  end
+
+  -- fallback: everything ended up in the last bucket
+  return BUCKET_BOUNDS[#BUCKET_BOUNDS]
+end
+
 local function ensure_stats_root()
   ATTGoGoDB = ATTGoGoDB or {}
   local stats = ATTGoGoDB.stats or {}
@@ -392,15 +439,17 @@ local function add_sample(st, dt)
   st.total = st.total + dt
   if dt < st.min then st.min = dt end
   if dt > st.max then st.max = dt end
+  record_bucket(st, dt) -- histogram bucket
 end
 
 local function ensure_site(label)
   local key = label
   local st = SITES[key]
   if not st then
-    st = { label=label or "", count=0, total=0, min=math.huge, max=0 }
+    st = { label=label or "", count=0, total=0, min=math.huge, max=0, buckets = nil }
     SITES[key] = st
   end
+  ensure_buckets(st)
   return key, st
 end
 
@@ -414,6 +463,15 @@ function Perf.loadStatsFromDB()
       st.total  = saved.total or 0
       st.min    = (saved.min ~= nil) and saved.min or math.huge
       st.max    = saved.max or 0
+
+      if type(saved.buckets) == "table" then
+        -- restore histogram counts, normalizing to our BUCKET_BOUNDS length
+        local b = {}
+        for i, _ in ipairs(BUCKET_BOUNDS) do b[i] = saved.buckets[i] or 0 end
+        st.buckets = b
+      else
+        ensure_buckets(st)
+      end
     end
   end
 end
@@ -430,6 +488,7 @@ local function save_stats_to_db()
         total   = st.total or 0,
         min     = st.min   or math.huge,
         max     = st.max   or 0,
+        buckets = st.buckets,
       }
     end
   end
@@ -490,11 +549,12 @@ local function summary_lines()
   table.sort(entries, function(a,b) return a.total > b.total end)
 
   local lines = {}
-  lines[#lines+1] = ("%-7s  %-7s  %-7s  %-7s  %-7s  %s"):format("count","avg","min","max","total", "label")
+  lines[#lines+1] = ("%-7s  %-7s  %-7s  %-7s  %-7s  %-7s  %s"):format("count","avg","min","p95~","max","total", "label")
   for _,st in ipairs(entries) do
     if st.count > 0 then
       local avg = st.total / st.count
-      lines[#lines+1] = ("%7d  %7.3f  %7.3f  %7.3f  %7.3f  %s"):format(st.count, avg, st.min, st.max, st.total, st.label)
+      local p95  = (estimate_p95(st) or 0) * 0.75 -- adjust for overestimation (assume the value is in the middle of the bucket)
+      lines[#lines+1] = ("%7d  %7.3f  %7.3f  %7.3f  %7.3f  %7.3f  %s"):format(st.count, avg, st.min, p95, st.max, st.total, st.label)
     end
   end
   return lines, entries
