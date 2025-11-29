@@ -661,7 +661,6 @@ function SetupMainUI()
     expansions = BuildExpansionList() -- dynamically built 1-based list
     local zones = BuildZoneList()
 
-    Util.ClearChildrenOrTabs(tabButtons) -- Remove all old tabs/buttons/content from previous runs (in case of reload)
     Tabs.CreateTabs(mainFrame, tabButtons, tabOrder, expansions, expTabY, false, 1, SelectTab)
     Tabs.CreateTabs(mainFrame, tabButtons, tabOrder, zones, zoneTabY, true, #expansions + 1, SelectTab)
 

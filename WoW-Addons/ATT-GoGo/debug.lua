@@ -537,6 +537,8 @@ function Perf.wrap(label, fn, ...)
   local ok, r1, r2, r3, r4, r5 = xpcall(fn, _trace, ...)
   local dt = done()
   if not ok then
+    local args = {...}
+    if select('#', args) > 0 then DebugPrintNodePath(args[1], {verbose = true}) end
     DebugLogf("[Perf][%s] errored after %.2f ms:\n%s", label or "", dt or 0, r1)
     error(r1, 2)
   end

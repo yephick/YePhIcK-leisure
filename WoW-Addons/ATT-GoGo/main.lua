@@ -143,13 +143,10 @@ local function FlushCollectedBatch()
     collectedBatch.count, collectedBatch.timer = 0, nil
 
     if cnt >= THRESHOLD then
-    local perf1 = AGGPerf.auto("FlushCollectedBatch:BigWave")
         -- Big wave => assume whole-DB refresh; rebuild everything
         DebugLog("BIG wave, cnt = " .. cnt)
         Util.InvalidateProgressCache()
         Util.InvalidateMapProgress()
-        SetupMainUI()           -- full rebuild of main frame widgets (also refreshes data)
-    perf1()
     else
         -- Small wave => do a context snapshot + popup/active-tab refresh
         local node, info = Util.ResolveContextNode()
@@ -159,14 +156,13 @@ local function FlushCollectedBatch()
             local child = Util.SelectDifficultyChild(node, curDiff) or node
             Util.InvalidateProgressCache(child)
         else
-            -- Zone context: just nuke this map’s memo row
-            if info.uiMapID then Util.InvalidateMapProgress(info.uiMapID) else TP(node, info) end
+            Util.InvalidateMapProgress(info.uiMapID) -- Zone context: just nuke this map’s memo row
         end
 
         Util.SaveCurrentContextProgress()
         RefreshUncollectedPopupForContextIfShown(true)
-        RefreshActiveTab()
     end
+    RefreshActiveTab()
 end
 
 local function OnThingCollected(data, etype)
