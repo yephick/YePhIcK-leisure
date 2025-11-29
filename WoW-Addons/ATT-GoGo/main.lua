@@ -3,21 +3,17 @@
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 
+local function Ver() return "v" .. GetAddOnMetadata(addonName, "Version") end
 local function PrintStartup()
     local version = GetAddOnMetadata(addonName, "Version")
     local author = GetAddOnMetadata(addonName, "Author")
     local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor")
-    print(CTITLE .. "v" .. version .. ", vibed by: " .. author .. " & " .. coauthor)
+    print(CTITLE .. Ver() .. ", vibed by: " .. author .. " & " .. coauthor)
 end
 
 local function OpenUncollectedForHere()
     local target = Util.ResolvePopupTargetForCurrentContext()
-    if target then
-        ShowUncollectedPopup(target)
-    else
-        TP()
-        print(CTITLE .. "Nothing to show for this location.")
-    end
+    ShowUncollectedPopup(target)
 end
 
 -- Refresh the Uncollected popup to the *current* context, if visible and allowed.
@@ -29,19 +25,24 @@ local function RefreshUncollectedPopupForContextIfShown(force)
     if not (force or GetSetting("autoRefreshPopupOnZone", true)) then return end
 
     local target = Util.ResolvePopupTargetForCurrentContext()
-    if target and (force or popup.currentData ~= target) then
+    if force or popup.currentData ~= target then
       ShowUncollectedPopup(target)
     end
 
 end
 
 local function ShowMinimapTooltip(tooltip)
+    local function AddActionLine(action, text) tooltip:AddLine("|cffaaaaaa" .. action .. "|r: |cffeded44" .. text .. "|r") end
     RequestRaidInfo()
-    tooltip:AddLine("|T" .. ICON_MAIN .. ":32:32|t  " .. CTITLE, 1, 1, 1)
-    tooltip:AddLine("Left-click: Open main grid window", 1, 1, 1)
-    tooltip:AddLine("Right-click: Uncollected for current instance/zone", 1, 1, 1)
-    tooltip:AddLine("Shift-click: Open options", 1, 1, 1)
-    tooltip:AddLine("Left-drag: Move icon", 1, 1, 1)
+    tooltip:AddLine("|T" .. ICON_MAIN .. ":40:40|t " .. CTITLE .. Ver(), 1, 1, 1)
+    AddActionLine("Left Click", "Open main grid window")
+    AddActionLine("Right Click", "Uncollected for current instance/zone")
+    AddActionLine("Shift + Left Click", "Options")
+    AddActionLine("Drag", "Move icon")
+    if GetSetting("DBG_en", false) == true then
+        AddActionLine("Alt + Left Click", "Toggle ScriptErrors")
+    end
+    tooltip:AddLine(" ")
     Tooltip.AddContextProgressTo(tooltip)
 end
 
@@ -190,31 +191,31 @@ SLASH_ATTGOGO2 = "/gogo"
 SLASH_ATTGOGO3 = "/agg"
 
 local function PrintSlashCmdHelp()
-    print(CTITLE .. "Commands")
+    print(CTITLE .. "commands:")
     for _, line in pairs(BuildSlashCommandsText()) do print(line) end
 end
 
 local function test()
-  if GetSetting("TP_en", false) ~= true then return end
+    if GetSetting("DBG_en", false) ~= true then return end
 
-  local ctx = Util.ResolvePopupTargetForCurrentContext() -- provides instance per-difficulty subset
-  local mapID = C_Map.GetBestMapForUnit("player")
-  local pkg = ATT.GetCachedDataForMapID(mapID)          -- always provides a combined set
-  local node, info = Util.ResolveContextNode()
-  print("mapID: " .. mapID)
+    local ctx = Util.ResolvePopupTargetForCurrentContext() -- provides instance per-difficulty subset
+    local mapID = C_Map.GetBestMapForUnit("player")
+    local pkg = ATT.GetCachedDataForMapID(mapID)          -- always provides a combined set
+    local node, info = Util.ResolveContextNode()
+    print("mapID: " .. mapID)
 
-  local function nt(o, c, t) return ("name=%s; text=%s; %d/%d"):format(tostring(o and o.name or "noname"), tostring(o and o.text or "notext"), (c or 0), (t or 0)) end
+    local function nt(o, c, t) return ("name=%s; text=%s; %d/%d"):format(tostring(o and o.name or "noname"), tostring(o and o.text or "notext"), (c or 0), (t or 0)) end
 
     print("ctx: " .. nt(ctx,  Util.ATTGetProgress(ctx)))
     print("pkg: " .. nt(pkg,  Util.ResolveMapProgress(mapID)))
     print("dfc: " .. nt(node, Util.ATTGetProgress(node)))
 
-  if IsInInstance() then
-    local name, instType, difficultyID, difficultyName, maxPlayers, dynDifficulty, isDyn, instMapID, grpSize = GetInstanceInfo()
-    print(name .. ", " .. instType .. ", difficulty=" .. difficultyID .. " (" .. difficultyName .. "), max players=" .. maxPlayers .. ", instMapID=" .. instMapID .. ", group size=" .. grpSize)
-    local mi = ATT.CurrentMapInfo
-    print("mapID=" .. mi.mapID .. ", name=" .. mi.name .. ", mapType=" .. mi.mapType .. ", parentMapID=" .. mi.parentMapID)
-  end
+    if IsInInstance() then
+        local name, instType, difficultyID, difficultyName, maxPlayers, dynDifficulty, isDyn, instMapID, grpSize = GetInstanceInfo()
+        print(name .. ", " .. instType .. ", difficulty=" .. difficultyID .. " (" .. difficultyName .. "), max players=" .. maxPlayers .. ", instMapID=" .. instMapID .. ", group size=" .. grpSize)
+        local mi = ATT.CurrentMapInfo
+        print("mapID=" .. mi.mapID .. ", name=" .. mi.name .. ", mapType=" .. mi.mapType .. ", parentMapID=" .. mi.parentMapID)
+    end
 end
 
 local function Perf(verb)

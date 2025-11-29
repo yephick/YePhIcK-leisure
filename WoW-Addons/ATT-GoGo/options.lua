@@ -30,8 +30,8 @@ local function SetupOptionsFrame()
   resetBtn:SetPoint("BOTTOM", f, "BOTTOM", 0, 12)
   resetBtn:SetText("Reset window sizes/positions")
   Util.SetTooltip(resetBtn, "ANCHOR_TOPLEFT",
-    "Reset window sizes/positions",
-    "Clear saved sizes/positions for the main, popup, and options windows and restore defaults.")
+    "Reset all " .. CTITLE .. "windows",
+    "Clear saved sizes and positions for the main grid, Uncollected popup, and Options window and restore their defaults.")
   resetBtn:SetScript("OnClick", function()
     ATTGoGoCharDB = ATTGoGoCharDB or {}
     ATTGoGoCharDB.mainWindowPos    = nil
@@ -137,7 +137,8 @@ function OptionsUI.BuildAccountGroup(parent)
       if v then icon:Show(TITLE) else icon:Hide(TITLE) end
     end,
     nil,
-    "Shows a movable launcher icon near the minimap."
+    "Show a draggable " .. CTITLE .. "button near the minimap.",
+    "Recommended ON for quick access to the main window, options, and Uncollected popup."
   )
   OptionsUI.controls.minimapCheckbox = minimapCheckbox
 
@@ -149,7 +150,8 @@ function OptionsUI.BuildAccountGroup(parent)
     function() return GetSetting("showInstanceIconOnWidgets", true) end,
     function(v) SetSetting("showInstanceIconOnWidgets", v) end,
     RefreshActiveTab,
-    "Adds the instance’s icon to each tile."
+    "Show the instance or zone icon on each grid tile.",
+    "Useful if you recognize places by icon; turn OFF for a cleaner text-only grid."
   )
   OptionsUI.controls.instIconCheckbox = instIconCheckbox
 
@@ -164,7 +166,8 @@ function OptionsUI.BuildAccountGroup(parent)
       RefreshPopupForCurrentData()
       RefreshActiveTab()
     end,
-    "Include removed/retired/future content in the uncollected popup list."
+    "Show removed, retired, and future-dated content in the Uncollected popup.",
+    "For completionists only – most players can leave this OFF to focus on obtainable rewards."
   )
   OptionsUI.controls.removedCheckbox = removedCheckbox
 
@@ -179,7 +182,8 @@ function OptionsUI.BuildAccountGroup(parent)
       if not v then _G.ATTGoGoPreviewDock:Hide() end
     end,
     nil,
-    "Show 3D model when hovering mouse over uncollected creatures."
+    "Open a small 3D preview when you hover uncollected creatures in the popup.",
+    "Disable if it feels too noisy or if you notice any performance impact."
   )
   OptionsUI.controls.hover3DCheckbox = hover3DCheckbox
 
@@ -191,8 +195,9 @@ function OptionsUI.BuildAccountGroup(parent)
     function() return GetSetting("dressUpNaked", true) end,
     function(v) SetSetting("dressUpNaked", v) end,
     nil,
-    "When ON, undress the character first in Dressing Room.",
-    "When OFF, layer the item onto the current outfit."
+    "ON: undress your character first in the Dressing Room, then apply the item.",
+    "OFF: keep your current outfit and layer the item on top.",
+    "Visual only – does not change any saved transmog sets."
   )
   OptionsUI.controls.nakedTryOnCheckbox = nakedTryOnCheckbox
 
@@ -204,7 +209,8 @@ function OptionsUI.BuildAccountGroup(parent)
     function() return GetSetting("autoRefreshPopupOnZone", true) end,
     function(v) SetSetting("autoRefreshPopupOnZone", v) end,
     nil,
-    "If the Uncollected popup is open, retarget it when you change zone or enter an instance."
+    "Keep the Uncollected popup synced to your current zone or instance.",
+    "Recommended ON so the list always follows where you are; turn OFF if you want a fixed comparison list."
   )
   OptionsUI.controls.autoRefreshPopupCheckbox = autoRefreshPopupCheckbox
 
@@ -218,9 +224,9 @@ function OptionsUI.BuildAccountGroup(parent)
   UIDropDownMenu_SetWidth(otherToonsDD, 210)
 
   local OT_CHOICES = {
-    { text = "Don’t show", value = 0 },
-    { text = "Only with lockouts (instances)", value = 1 },
-    { text = "Show all (zones & instances)", value = 2 },
+    { text = "Don’t show others",           value = 0 },
+    { text = "Only with instance lockouts", value = 1 },
+    { text = "Show for zones & instances",  value = 2 },
   }
 
   local function SyncOtherToonsDropdown()
@@ -267,8 +273,9 @@ function OptionsUI.BuildPerCharGroup(parent)
     function() return GetCharSetting("expandAchievementCriteria", false) end,
     function(v) SetCharSetting("expandAchievementCriteria", v) end,
     RefreshPopupForCurrentData,
-    "When ON, show every uncompleted criterion separately.",
-    "When OFF, show only the parent achievement."
+    "ON: show each missing achievement criterion as its own entry in the Uncollected popup.",
+    "OFF: only show the parent achievement line, even if several criteria are missing.",
+    "Turn OFF if big meta-achievements make the list too noisy."
   )
   OptionsUI.controls.criteriaCheckbox = criteriaCheckbox
 
@@ -280,7 +287,8 @@ function OptionsUI.BuildPerCharGroup(parent)
     function() return GetCharSetting("groupByVisualID", true) end,
     function(v) SetCharSetting("groupByVisualID", v) end,
     RefreshPopupForCurrentData,
-    "Collapse duplicate appearances and show one representative item."
+    "Show one entry per transmog appearance, even if several itemIDs share it.",
+    "Recommended ON for transmog farming; OFF if you care about every distinct item."
   )
   OptionsUI.controls.groupVisualsCheckbox = groupVisualsCheckbox
 
@@ -313,7 +321,7 @@ function OptionsUI.BuildFilterCheckboxes(group, anchor)
       Util.SetPopupIdFilter(self.key, bool(self:GetChecked()))
       RefreshPopupForCurrentData()
     end)
-    Util.SetTooltip(cb, "ANCHOR_RIGHT", "", "Include "..(COLLECTIBLE_ID_LABELS[key] or key).." entries in the popup.")
+    Util.SetTooltip(cb, "ANCHOR_RIGHT", "", "Show uncollected " .. (COLLECTIBLE_ID_LABELS[key] or key) .. " in the Uncollected popup list.", "Uncheck to hide this type and reduce clutter.")
     OptionsUI.filterCheckboxes[key] = cb
   end
 

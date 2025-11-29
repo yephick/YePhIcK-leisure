@@ -598,7 +598,7 @@ end
 -- Helper: Create About button in the main frame header
 local function CreateAboutButton()
     local btn = CreateFrame("Button", nil, mainFrame)
-    btn:SetSize(80, 80)
+    btn:SetSize(40, 40)
 
     btn:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -10, -28)
 

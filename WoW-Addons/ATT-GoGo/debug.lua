@@ -44,7 +44,7 @@ local TP_CACHE = {}
 
 -- test point
 function TP(...)
-  if GetSetting("TP_en", false) ~= true then return end
+  if GetSetting("DBG_en", false) ~= true then return end
   local level = 1 + 1               -- 1 = TP itself; +1 = its caller
   local s = debugstack(level, 1, 0) -- example stack line: Interface\AddOns\ATT-GoGo\util.lua:91: in function ...
   local file, line = s:match("([^\n]+):(%d+):")
@@ -372,7 +372,7 @@ end
 -- perf.lua — lightweight profiling for WoW Lua 5.1 (MoP Classic)
 local perf_en = false
 local Perf = {}
-function Perf.on(en) if GetSetting("TP_en", false) == true then perf_en = en; print(CTITLE .. "perf_en set to " .. tostring(perf_en)) end end
+function Perf.on(en) if GetSetting("DBG_en", false) == true then perf_en = en; print(CTITLE .. "perf_en set to " .. tostring(perf_en)) end end
 
 local now_ms = function() return GetTimePreciseSec()*1000 end
 
