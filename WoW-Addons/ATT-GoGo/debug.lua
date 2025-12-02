@@ -44,7 +44,7 @@ local TP_CACHE = {}
 
 -- test point
 function TP(...)
-  if GetSetting("TP_en", false) ~= true then return end
+  if GetSetting("DBG_en", false) ~= true then return end
   local level = 1 + 1               -- 1 = TP itself; +1 = its caller
   local s = debugstack(level, 1, 0) -- example stack line: Interface\AddOns\ATT-GoGo\util.lua:91: in function ...
   local file, line = s:match("([^\n]+):(%d+):")
@@ -372,13 +372,66 @@ end
 -- perf.lua — lightweight profiling for WoW Lua 5.1 (MoP Classic)
 local perf_en = false
 local Perf = {}
-function Perf.on(en) perf_en = en end
+function Perf.on(en) if GetSetting("DBG_en", false) == true then perf_en = en; print(CTITLE .. "perf_en set to " .. tostring(perf_en)) end end
 
 local now_ms = function() return GetTimePreciseSec()*1000 end
 
 local SITES, ACTIVE, NEXT_ID = {}, {}, 0
-local SAMPLE_N = 128
 
+-- Histogram bucket upper bounds in milliseconds.
+-- Buckets: <1, 1–2, 2–4, 4–8, 8–16, 16–32, 32–64, 64–128, 128–256, 256–512, 512-1024+
+local BUCKET_BOUNDS = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 }
+
+local function ensure_buckets(st)
+  local b = st.buckets
+  if not b then
+    b = {}
+    for i = 1, #BUCKET_BOUNDS do
+      b[i] = 0
+    end
+    st.buckets = b
+  end
+  return b
+end
+
+local function record_bucket(st, dt)
+  local b = ensure_buckets(st)
+  local idx
+  for i, limit in ipairs(BUCKET_BOUNDS) do
+    if dt < limit then
+      idx = i
+      break
+    end
+  end
+  if not idx then
+    idx = #BUCKET_BOUNDS
+  end
+  b[idx] = (b[idx] or 0) + 1
+end
+
+local function estimate_p95(st)
+  local buckets = st.buckets
+  local total = st.count or 0
+  if not buckets or total <= 0 then return 0 end
+
+  local target = total * 0.95
+  local acc = 0
+  for i, limit in ipairs(BUCKET_BOUNDS) do
+    acc = acc + (buckets[i] or 0)
+    if acc >= target then return limit end
+  end
+
+  -- fallback: everything ended up in the last bucket
+  return BUCKET_BOUNDS[#BUCKET_BOUNDS]
+end
+
+local function ensure_stats_root()
+  ATTGoGoDB = ATTGoGoDB or {}
+  local stats = ATTGoGoDB.stats or {}
+  ATTGoGoDB.stats = stats
+  stats.perf = stats.perf or {}
+  return stats.perf
+end
 
 local function add_sample(st, dt)
   if not perf_en then return end
@@ -386,25 +439,66 @@ local function add_sample(st, dt)
   st.total = st.total + dt
   if dt < st.min then st.min = dt end
   if dt > st.max then st.max = dt end
-  -- Welford variance
-  local delta = dt - st.mean
-  st.mean = st.mean + delta / st.count
-  st.M2   = st.M2   + delta * (dt - st.mean)
-  -- ring buffer
-  local si = st.si + 1; if si > SAMPLE_N then si = 1 end
-  st.samples[si] = dt; st.si = si
+  record_bucket(st, dt) -- histogram bucket
 end
 
 local function ensure_site(label)
   local key = label
   local st = SITES[key]
   if not st then
-    st = { label=label or "",
-           count=0, total=0, min=math.huge, max=0, mean=0, M2=0,
-           samples={}, si=0 }
+    st = { label=label or "", count=0, total=0, min=math.huge, max=0, buckets = nil }
     SITES[key] = st
   end
+  ensure_buckets(st)
   return key, st
+end
+
+-- load persisted perf stats from SavedVariables into SITES
+function Perf.loadStatsFromDB()
+  local perfStats = ensure_stats_root()
+  for label, saved in pairs(perfStats) do
+    local key, st = ensure_site(label)
+    if type(saved) == "table" then
+      st.count  = saved.count or 0
+      st.total  = saved.total or 0
+      st.min    = (saved.min ~= nil) and saved.min or math.huge
+      st.max    = saved.max or 0
+
+      if type(saved.buckets) == "table" then
+        -- restore histogram counts, normalizing to our BUCKET_BOUNDS length
+        local b = {}
+        for i, _ in ipairs(BUCKET_BOUNDS) do b[i] = saved.buckets[i] or 0 end
+        st.buckets = b
+      else
+        ensure_buckets(st)
+      end
+    end
+  end
+end
+
+-- Save current SITES into ATTGoGoDB.stats.perf (aggregated across sessions)
+local function save_stats_to_db()
+  local perfStats = ensure_stats_root()
+  wipe(perfStats)
+  for label, st in pairs(SITES) do
+    if st.count > 0 then
+      perfStats[label] = {
+        label   = st.label,
+        count   = st.count or 0,
+        total   = st.total or 0,
+        min     = st.min   or math.huge,
+        max     = st.max   or 0,
+        buckets = st.buckets,
+      }
+    end
+  end
+end
+
+function Perf.reset()
+  SITES   = {}
+  ACTIVE  = {}
+  NEXT_ID = 0
+  wipe(ensure_stats_root())
 end
 
 function Perf.begin(label)
@@ -443,36 +537,26 @@ function Perf.wrap(label, fn, ...)
   local ok, r1, r2, r3, r4, r5 = xpcall(fn, _trace, ...)
   local dt = done()
   if not ok then
+    local args = {...}
+    if select('#', args) > 0 then DebugPrintNodePath(args[1], {verbose = true}) end
     DebugLogf("[Perf][%s] errored after %.2f ms:\n%s", label or "", dt or 0, r1)
     error(r1, 2)
   end
   return r1, r2, r3, r4, r5
 end
 
-local function pct_from_samples(samples, count, p)
-  if count == 0 then return 0 end
-  local arr, n = {}, 0
-  for _,v in pairs(samples) do n=n+1; arr[n]=v end
-  table.sort(arr)
-  local idx = math.max(1, math.min(n, math.floor((p/100)*n + 0.5)))
-  return arr[idx]
-end
-
 local function summary_lines()
   local entries = {}
   for _,st in pairs(SITES) do entries[#entries+1] = st end
-  table.sort(entries, function(a,b)
-    return a.total > b.total
-  end)
+  table.sort(entries, function(a,b) return a.total > b.total end)
 
   local lines = {}
-  lines[#lines+1] = ("%-7s  %-7s  %-7s  %-7s  %-7s  %-7s  %s"):format("count","avg","p95","max","std","total", "label")
+  lines[#lines+1] = ("%-7s  %-7s  %-7s  %-7s  %-7s  %-7s  %s"):format("count","avg","min","p95~","max","total", "label")
   for _,st in ipairs(entries) do
     if st.count > 0 then
-      local std = (st.count>1) and math.sqrt(st.M2/(st.count-1)) or 0
-      local p95 = pct_from_samples(st.samples, st.count, 95)
       local avg = st.total / st.count
-      lines[#lines+1] = ("%7d  %7.3f  %7.3f  %7.3f  %7.3f  %7.3f  %s"):format(st.count, avg, p95, st.max, std, st.total, st.label)
+      local p95  = (estimate_p95(st) or 0) * 0.75 -- adjust for overestimation (assume the value is in the middle of the bucket)
+      lines[#lines+1] = ("%7d  %7.3f  %7.3f  %7.3f  %7.3f  %7.3f  %s"):format(st.count, avg, st.min, p95, st.max, st.total, st.label)
     end
   end
   return lines, entries
@@ -484,10 +568,9 @@ local function log_summary()
   for _,ln in ipairs(lines) do DebugLog(ln, "perf") end
 end
 
--- Auto summary on logout (same pattern as your TP_summary)
 local perf_lof = CreateFrame("Frame")
 perf_lof:RegisterEvent("PLAYER_LOGOUT")
-perf_lof:SetScript("OnEvent", log_summary)
+perf_lof:SetScript("OnEvent", function() save_stats_to_db(); log_summary() end)
 
 -- Export global
 _G.AGGPerf = Perf

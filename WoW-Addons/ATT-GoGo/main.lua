@@ -1,7 +1,41 @@
 ﻿local addonName = ...
-local ICON_FILE = "Interface\\AddOns\\ATT-GoGo\\icon-Go2.tga"
-TITLE = GetAddOnMetadata(addonName, "Title") or "UNKNOWN"
-CTITLE = "|cff00ff00" .. TITLE .. "|r "
+
+local AGG_VER = GetAddOnMetadata(addonName, "Version")
+
+-- ---------------------------------------------------------------------------
+-- Minimal version check (addon messages on local zone channel 1)
+-- ---------------------------------------------------------------------------
+local VC_PREFIX     = "ATTGOGO"          -- <=16 chars, unique for your addon
+local VC_CHANNEL_ID = 1                  -- "1" = General/local zone
+
+C_ChatInfo.RegisterAddonMessagePrefix(VC_PREFIX)
+
+local function VC_ParseVersion(ver)
+    local a, b, c = tostring(ver):match("^(%d+)%.(%d+)%.?(%d*)$") -- M.mm.ppp
+    return ((tonumber(a) or 0) * 100 + (tonumber(b) or 0)) * 1000 + (tonumber(c) or 0)
+end
+
+local function VC_SendMyVersion() C_ChatInfo.SendAddonMessage(VC_PREFIX, "V:" .. AGG_VER, "CHANNEL", tostring(VC_CHANNEL_ID)) end
+local VC_HIGHEST = VC_ParseVersion(AGG_VER)
+
+local VC_WARNED_FOR = nil
+local vcFrame = CreateFrame("Frame")
+vcFrame:RegisterEvent("CHAT_MSG_ADDON")
+vcFrame:SetScript("OnEvent", function(_, event, prefix, message)--, channel, sender)
+    if event ~= "CHAT_MSG_ADDON" or prefix ~= VC_PREFIX then return end
+
+    local cmd, ver = message:match("^(%u+):(.+)$")
+    if cmd ~= "V" or not ver then return end
+
+    local ver_parsed = VC_ParseVersion(ver)
+    if ver_parsed > VC_HIGHEST then
+        VC_HIGHEST = ver_parsed
+        if VC_WARNED_FOR ~= ver_parsed then
+            VC_WARNED_FOR = ver_parsed
+            print(CTITLE .. "version " .. ver .. " is available, consider upgrading.")
+        end
+    end
+end)
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
@@ -10,17 +44,12 @@ local function PrintStartup()
     local version = GetAddOnMetadata(addonName, "Version")
     local author = GetAddOnMetadata(addonName, "Author")
     local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor")
-    print(CTITLE .. "v" .. version .. ", vibed by: " .. author .. " & " .. coauthor)
+    print(CTITLE .. "v" .. AGG_VER .. ", vibed by: " .. author .. " & " .. coauthor)
 end
 
 local function OpenUncollectedForHere()
     local target = Util.ResolvePopupTargetForCurrentContext()
-    if target then
-        ShowUncollectedPopup(target)
-    else
-        TP()
-        print(CTITLE .. "Nothing to show for this location.")
-    end
+    ShowUncollectedPopup(target)
 end
 
 -- Refresh the Uncollected popup to the *current* context, if visible and allowed.
@@ -32,19 +61,24 @@ local function RefreshUncollectedPopupForContextIfShown(force)
     if not (force or GetSetting("autoRefreshPopupOnZone", true)) then return end
 
     local target = Util.ResolvePopupTargetForCurrentContext()
-    if target and (force or popup.currentData ~= target) then
+    if force or popup.currentData ~= target then
       ShowUncollectedPopup(target)
     end
 
 end
 
 local function ShowMinimapTooltip(tooltip)
+    local function AddActionLine(action, text) tooltip:AddLine("|cffaaaaaa" .. action .. "|r: |cffeded44" .. text .. "|r") end
     RequestRaidInfo()
-    tooltip:AddLine(CTITLE, 0, 1, 0)
-    tooltip:AddLine("Left-click: Open main grid window", 1, 1, 1)
-    tooltip:AddLine("Right-click: Uncollected for current instance/zone", 1, 1, 1)
-    tooltip:AddLine("Shift-click: Open options", 1, 1, 1)
-    tooltip:AddLine("Left-drag: Move icon", 1, 1, 1)
+    tooltip:AddLine("|T" .. ICON_MAIN .. ":40:40|t " .. CTITLE .. "v" .. AGG_VER, 1, 1, 1)
+    AddActionLine("Left Click", "Open main grid window")
+    AddActionLine("Right Click", "Uncollected for current instance/zone")
+    AddActionLine("Shift + Left Click", "Options")
+    AddActionLine("Drag", "Move icon")
+    if GetSetting("DBG_en", false) == true then
+        AddActionLine("Alt + Left Click", "Toggle ScriptErrors")
+    end
+    tooltip:AddLine(" ")
     Tooltip.AddContextProgressTo(tooltip)
 end
 
@@ -54,7 +88,7 @@ local function SetupMinimapIcon()
     local dataObj = ldb:NewDataObject(addonName, {
         type = "data source",
         text = TITLE,
-        icon = ICON_FILE,
+        icon = ICON_MAIN,
         OnClick = function(self, button)
             if button == "LeftButton" then
                 if IsShiftKeyDown() then
@@ -145,13 +179,10 @@ local function FlushCollectedBatch()
     collectedBatch.count, collectedBatch.timer = 0, nil
 
     if cnt >= THRESHOLD then
-    local perf1 = AGGPerf.auto("FlushCollectedBatch:BigWave")
         -- Big wave => assume whole-DB refresh; rebuild everything
         DebugLog("BIG wave, cnt = " .. cnt)
         Util.InvalidateProgressCache()
         Util.InvalidateMapProgress()
-        SetupMainUI()           -- full rebuild of main frame widgets (also refreshes data)
-    perf1()
     else
         -- Small wave => do a context snapshot + popup/active-tab refresh
         local node, info = Util.ResolveContextNode()
@@ -161,14 +192,13 @@ local function FlushCollectedBatch()
             local child = Util.SelectDifficultyChild(node, curDiff) or node
             Util.InvalidateProgressCache(child)
         else
-            -- Zone context: just nuke this map’s memo row
-            if info.uiMapID then Util.InvalidateMapProgress(info.uiMapID) else TP(node, info) end
+            Util.InvalidateMapProgress(info.uiMapID) -- Zone context: just nuke this map’s memo row
         end
 
         Util.SaveCurrentContextProgress()
         RefreshUncollectedPopupForContextIfShown(true)
-        RefreshActiveTab()
     end
+    RefreshActiveTab()
 end
 
 local function OnThingCollected(data, etype)
@@ -193,37 +223,40 @@ SLASH_ATTGOGO2 = "/gogo"
 SLASH_ATTGOGO3 = "/agg"
 
 local function PrintSlashCmdHelp()
-    print(CTITLE .. "Commands")
-    print("/gogo help        - Show this help")
-    print("/gogo options     - Open the options window")
-    print("/gogo show        - Show the main window")
-    print("/gogo list        - Open Uncollected for current instance/zone")
---    print("/gogo dump        - Debug: path + recursive dump for current context")
---    print("/gogo add <text>  - Append <text> into ATT-GoGo debug log")
-    print("alternatively you can use /agg or /attgogo")
+    print(CTITLE .. "commands:")
+    for _, line in pairs(BuildSlashCommandsText()) do print(line) end
 end
 
 local function test()
-  if GetSetting("TP_en", false) ~= true then return end
+    if GetSetting("DBG_en", false) ~= true then return end
 
-  local ctx = Util.ResolvePopupTargetForCurrentContext() -- provides instance per-difficulty subset
-  local mapID = C_Map.GetBestMapForUnit("player")
-  local pkg = ATT.GetCachedDataForMapID(mapID)          -- always provides a combined set
-  local node, info = Util.ResolveContextNode()
-  print("mapID: " .. mapID)
+    local ctx = Util.ResolvePopupTargetForCurrentContext() -- provides instance per-difficulty subset
+    local mapID = C_Map.GetBestMapForUnit("player")
+    local pkg = ATT.GetCachedDataForMapID(mapID)          -- always provides a combined set
+    local node, info = Util.ResolveContextNode()
+    print("mapID: " .. mapID)
 
-  local function nt(o, c, t) return ("name=%s; text=%s; %d/%d"):format(tostring(o and o.name or "noname"), tostring(o and o.text or "notext"), (c or 0), (t or 0)) end
+    local function nt(o, c, t) return ("name=%s; text=%s; %d/%d"):format(tostring(o and o.name or "noname"), tostring(o and o.text or "notext"), (c or 0), (t or 0)) end
 
     print("ctx: " .. nt(ctx,  Util.ATTGetProgress(ctx)))
     print("pkg: " .. nt(pkg,  Util.ResolveMapProgress(mapID)))
     print("dfc: " .. nt(node, Util.ATTGetProgress(node)))
 
-  if IsInInstance() then
-    local name, instType, difficultyID, difficultyName, maxPlayers, dynDifficulty, isDyn, instMapID, grpSize = GetInstanceInfo()
-    print(name .. ", " .. instType .. ", difficulty=" .. difficultyID .. " (" .. difficultyName .. "), max players=" .. maxPlayers .. ", instMapID=" .. instMapID .. ", group size=" .. grpSize)
-    local mi = ATT.CurrentMapInfo
-    print("mapID=" .. mi.mapID .. ", name=" .. mi.name .. ", mapType=" .. mi.mapType .. ", parentMapID=" .. mi.parentMapID)
-  end
+    if IsInInstance() then
+        local name, instType, difficultyID, difficultyName, maxPlayers, dynDifficulty, isDyn, instMapID, grpSize = GetInstanceInfo()
+        print(name .. ", " .. instType .. ", difficulty=" .. difficultyID .. " (" .. difficultyName .. "), max players=" .. maxPlayers .. ", instMapID=" .. instMapID .. ", group size=" .. grpSize)
+        local mi = ATT.CurrentMapInfo
+        print("mapID=" .. mi.mapID .. ", name=" .. mi.name .. ", mapType=" .. mi.mapType .. ", parentMapID=" .. mi.parentMapID)
+    end
+end
+
+local function Perf(verb)
+    if verb == "reset" then
+        AGGPerf.reset()
+        print(CTITLE .. "Performance data reset")
+    else
+        AGGPerf.on(verb == "1")
+    end
 end
 
 local function SetupSlashCmd()
@@ -233,6 +266,7 @@ local function SetupSlashCmd()
         cmd = (cmd or ""):lower()
 
         local HELP    = { h = true, help = true, ["?"] = true, [""]  = true }
+        local ABOUT   = { a = true, about = true }
         local OPTIONS = { o = true, options = true }
         local SHOW    = { s = true, show = true }
         local LIST    = { l = true, list = true }
@@ -241,12 +275,13 @@ local function SetupSlashCmd()
         local TEST    = { t = true, test = true }
 
         if HELP[cmd]    then PrintSlashCmdHelp()        return end
+        if ABOUT[cmd]   then AboutUI.Show()             return end
         if OPTIONS[cmd] then OptionsUI.Show()           return end
         if SHOW[cmd]    then ShowMainFrame()            return end
         if LIST[cmd]    then OpenUncollectedForHere()   return end
         if DUMP[cmd]    then DumpCurrentCtx()           return end
         if TEST[cmd]    then test()                     return end
-        if PERF[cmd]    then AGGPerf.on(rest == "1")    return end
+        if PERF[cmd]    then Perf(rest)                 return end
         if cmd == "add" then DebugLog(rest)             return end
 
         print(CTITLE .. "Unknown command. Type '/gogo help' for options.")
@@ -262,12 +297,14 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     ATTGoGoDB.minimap = ATTGoGoDB.minimap or { minimapPos = 128, hide = false }
 
     Debug_Init()
+    AGGPerf.loadStatsFromDB()
     AGGPerf.on(true)
 
     -- === Wait for ATT ("All The Things") ===
     ATT.AddEventHandler("OnReady", function()
         Util.CanonicalizePopupIdFilters()
         SetupMainUI()
+        StartGridWarmup()
         SetupMinimapIcon()
         EnsurePreviewDock(); EnsurePopup() -- create the preview dock before the uncollected list popup that uses it
         OptionsUI.Init()
@@ -299,7 +336,6 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         ATT.AddEventHandler("OnThingCollected", OnThingCollected)
 
         PrintStartup()
-        AGGPerf.on(true)
+        C_Timer.After(9, VC_SendMyVersion)
     end)
 end)
-
