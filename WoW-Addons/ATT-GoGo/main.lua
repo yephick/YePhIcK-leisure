@@ -1,14 +1,50 @@
 ﻿local addonName = ...
 
+local AGG_VER = GetAddOnMetadata(addonName, "Version")
+
+-- ---------------------------------------------------------------------------
+-- Minimal version check (addon messages on local zone channel 1)
+-- ---------------------------------------------------------------------------
+local VC_PREFIX     = "ATTGOGO"          -- <=16 chars, unique for your addon
+local VC_CHANNEL_ID = 1                  -- "1" = General/local zone
+
+C_ChatInfo.RegisterAddonMessagePrefix(VC_PREFIX)
+
+local function VC_ParseVersion(ver)
+    local a, b, c = tostring(ver):match("^(%d+)%.(%d+)%.?(%d*)$") -- M.mm.ppp
+    return ((tonumber(a) or 0) * 100 + (tonumber(b) or 0)) * 1000 + (tonumber(c) or 0)
+end
+
+local function VC_SendMyVersion() C_ChatInfo.SendAddonMessage(VC_PREFIX, "V:" .. AGG_VER, "CHANNEL", tostring(VC_CHANNEL_ID)) end
+local VC_HIGHEST = VC_ParseVersion(AGG_VER)
+
+local VC_WARNED_FOR = nil
+local vcFrame = CreateFrame("Frame")
+vcFrame:RegisterEvent("CHAT_MSG_ADDON")
+vcFrame:SetScript("OnEvent", function(_, event, prefix, message)--, channel, sender)
+    if event ~= "CHAT_MSG_ADDON" or prefix ~= VC_PREFIX then return end
+
+    local cmd, ver = message:match("^(%u+):(.+)$")
+    if cmd ~= "V" or not ver then return end
+
+    local ver_parsed = VC_ParseVersion(ver)
+    if ver_parsed > VC_HIGHEST then
+        VC_HIGHEST = ver_parsed
+        if VC_WARNED_FOR ~= ver_parsed then
+            VC_WARNED_FOR = ver_parsed
+            print(CTITLE .. "version " .. ver .. " is available, consider upgrading.")
+        end
+    end
+end)
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 
-local function Ver() return "v" .. GetAddOnMetadata(addonName, "Version") end
 local function PrintStartup()
     local version = GetAddOnMetadata(addonName, "Version")
     local author = GetAddOnMetadata(addonName, "Author")
     local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor")
-    print(CTITLE .. Ver() .. ", vibed by: " .. author .. " & " .. coauthor)
+    print(CTITLE .. "v" .. AGG_VER .. ", vibed by: " .. author .. " & " .. coauthor)
 end
 
 local function OpenUncollectedForHere()
@@ -34,7 +70,7 @@ end
 local function ShowMinimapTooltip(tooltip)
     local function AddActionLine(action, text) tooltip:AddLine("|cffaaaaaa" .. action .. "|r: |cffeded44" .. text .. "|r") end
     RequestRaidInfo()
-    tooltip:AddLine("|T" .. ICON_MAIN .. ":40:40|t " .. CTITLE .. Ver(), 1, 1, 1)
+    tooltip:AddLine("|T" .. ICON_MAIN .. ":40:40|t " .. CTITLE .. "v" .. AGG_VER, 1, 1, 1)
     AddActionLine("Left Click", "Open main grid window")
     AddActionLine("Right Click", "Uncollected for current instance/zone")
     AddActionLine("Shift + Left Click", "Options")
@@ -300,5 +336,6 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         ATT.AddEventHandler("OnThingCollected", OnThingCollected)
 
         PrintStartup()
+        C_Timer.After(9, VC_SendMyVersion)
     end)
 end)

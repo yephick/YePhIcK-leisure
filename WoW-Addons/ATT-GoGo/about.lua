@@ -6,10 +6,10 @@ CTITLE = "|cff40fd11" .. TITLE .. "|r "
 
 local ADDON_PATH = "Interface\\AddOns\\" .. addonName .. "\\"
 local QR_PATH = ADDON_PATH .. "QR\\"
+local ICON_PPME = QR_PATH .. GetAddOnMetadata(addonName, "X-QrPayPalMe")
+local ICON_DISC = QR_PATH .. GetAddOnMetadata(addonName, "X-QrDiscord")
+local ICON_ATT  = QR_PATH .. GetAddOnMetadata(addonName, "X-QrDiscord-ATT")
 ICON_MAIN = ADDON_PATH .. GetAddOnMetadata(addonName, "X-IconMain") .. ".tga"
-ICON_PPME = QR_PATH    .. GetAddOnMetadata(addonName, "X-PayPalMeQR")
-ICON_DISC = QR_PATH    .. GetAddOnMetadata(addonName, "X-DiscordQR")
-ICON_ATT  = QR_PATH    .. GetAddOnMetadata(addonName, "X-DiscordQR-ATT")
 
 AboutUI = {
   frame = nil,
@@ -46,6 +46,8 @@ local function BuildBodyText()
 
   add(CTITLE .. "is a companion addon for |cffffd200AllTheThings|r.")
   add("")
+--  add("|T" .. ICON_MAIN .. ":48:48|t")
+--  add("")
   hdr("Purpose")
   add("It focuses on answering \"where should I go next?\" for collectors who farm old and current content.")
   add("")
