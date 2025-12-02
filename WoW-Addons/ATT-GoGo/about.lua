@@ -46,8 +46,6 @@ local function BuildBodyText()
 
   add(CTITLE .. "is a companion addon for |cffffd200AllTheThings|r.")
   add("")
---  add("|T" .. ICON_MAIN .. ":48:48|t")
---  add("")
   hdr("Purpose")
   add("It focuses on answering \"where should I go next?\" for collectors who farm old and current content.")
   add("")
