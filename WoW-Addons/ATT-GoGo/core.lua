@@ -17,7 +17,6 @@ COLLECTIBLE_ID_FIELDS = {
     mapID = false,
     questID = false,
     titleID = true,
-    visualID = true,
 }
 
 COLLECTIBLE_ID_LABELS = {
@@ -29,7 +28,6 @@ COLLECTIBLE_ID_LABELS = {
     mapID = "map",
     questID = "quest",
     titleID = "title",
-    visualID = "visual",
 }
 
 function bool(v) return v and true or false end

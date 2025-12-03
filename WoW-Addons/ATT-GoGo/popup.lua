@@ -37,6 +37,8 @@ local INCLUDE_REMOVED = false       -- set per-run in BuildNodeList
 local ACTIVE_KEYS = nil             -- set per-run in BuildNodeList
 
 local function IsAllowedLeaf(node, activeKeys)
+    if node.visible == false or node.collected then return false, nil end
+
     if OPPOSITE_FACTION ~= 0 and node.r == OPPOSITE_FACTION then
         return false, nil
     end
@@ -53,15 +55,7 @@ local function IsAllowedLeaf(node, activeKeys)
         if not ok then return false, nil end
     end
 
-    -- Removed gate (setting once, no per-node GetSetting)
-    if not INCLUDE_REMOVED and Util.IsNodeRemoved(node) then
-        return false, nil
-    end
-
-    -- visibility/uncollected flags
-    if node.visible == false or node.collected then
-        return false, nil
-    end
+    if not INCLUDE_REMOVED and Util.IsNodeRemoved(node) then return false, nil end
 
     -- quick sanity check: ANY match (no allocations)
     local anyMatch = false
@@ -376,10 +370,7 @@ end
 ------------------------------------------------------------
 -- Data gathering (filter-aware) + sorting
 ------------------------------------------------------------
-local CATEGORY_ORDER = {
-    "titleID","achievementID","flightpathID","explorationID","instanceID",
-    "visualID","creatureID","mapID","itemID","questID",
-}
+local CATEGORY_ORDER = { "titleID","achievementID","flightpathID","explorationID","instanceID","creatureID","mapID","itemID","questID" }
 local CATEGORY_RANK = {}
 for i, key in ipairs(CATEGORY_ORDER) do CATEGORY_RANK[key] = i end
 
@@ -621,9 +612,8 @@ local function AcquireRow(scrollContent, i)
 
     -- hide "button" border art
     do
-      local t = btn:GetNormalTexture(); t:SetTexture(nil); t:SetAlpha(0); t:Hide()
-      local p = btn:GetPushedTexture(); p:SetTexture(nil); p:SetAlpha(0); p:Hide()
-      local h = btn:GetHighlightTexture(); h:SetTexture(nil); h:SetAlpha(0); h:Hide()
+      local function hideBorder(tex) tex:SetTexture(nil); tex:SetAlpha(0); tex:Hide() end
+      hideBorder(btn:GetNormalTexture()); hideBorder(btn:GetPushedTexture()); hideBorder(btn:GetHighlightTexture()); 
     end
 
     btn:RegisterForClicks("AnyUp")

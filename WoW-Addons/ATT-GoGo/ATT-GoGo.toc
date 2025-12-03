@@ -1,7 +1,7 @@
 ﻿## Interface: 50502
 ## Title: ATT-GoGo
 ## Notes: Companion addon for 'AllTheThings' to show instance farming status in a grid. Use /attgogo to see available commands.
-## Author: |cffffffd0YePhIcK|r
+## Author: |cffff8000YePhlcK|r
 ## X-CoAuthor: GenAI
 ## X-IconMain: icon-dragon2
 ## X-QrPayPalMe: qr-paypal-me

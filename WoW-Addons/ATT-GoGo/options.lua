@@ -304,7 +304,7 @@ function OptionsUI.BuildFilterCheckboxes(group, anchor)
 
   local ORDER = {
     "achievementID", "creatureID", "explorationID", "flightpathID",
-    "itemID", "mapID", "questID", "titleID", "visualID",
+    "itemID", "mapID", "questID", "titleID",
   }
 
   local colWidth, rowHeight = 120, 24
