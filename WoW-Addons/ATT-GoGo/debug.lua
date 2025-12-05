@@ -86,13 +86,18 @@ function ldt_nv(name, val)
     local t = type(val)
     local hkey = "<" .. t .. ">" .. name
     if ldt_cache[hkey] then ldt_cache[hkey].count = ldt_cache[hkey].count + 1; return end
-    ldt_cache[hkey] = { v = tostring(val), count = 0 }
+    ldt_cache[hkey] = { v = tostring(val), count = 1 }
 end
 
 function ldt_nk(node, key) ldt_nv(key, node[key]) end
+function ldt_node(node) for k, v in pairs(node) do ldt_nv(k, v) end end
 
-local function log_ldt()
-  for k, v in pairs(ldt_cache) do
+function log_ldt()
+  local sorted = {}
+  for k, v in pairs(ldt_cache) do sorted[#sorted + 1] = { k = k, v = v } end
+  table.sort(sorted, function(a, b) return a.v.count > b.v.count end)
+  for i = 1, #sorted do
+    local k, v = sorted[i].k, sorted[i].v
     DebugLogf(v.count .. ": [".. k .. "], sample value: " .. v.v)
   end
 end
