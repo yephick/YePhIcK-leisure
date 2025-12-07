@@ -115,6 +115,92 @@ local function BuildBodyText()
   return table.concat(t, "\n")
 end
 
+local function BuildQrCodes(content, anchor)
+  local QR_SZ = 96
+  local qrPayPal = content:CreateTexture(nil, "ARTWORK")
+  qrPayPal:SetSize(QR_SZ, QR_SZ)
+  qrPayPal:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -16)
+  qrPayPal:SetTexture(ICON_PPME)
+
+  local qrPayPalLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  qrPayPalLabel:SetPoint("TOPLEFT", qrPayPal, "BOTTOMLEFT", 0, -4)
+  qrPayPalLabel:SetText("PayPal.me/YePhIcK")
+
+  local qrDiscord = content:CreateTexture(nil, "ARTWORK")
+  qrDiscord:SetSize(QR_SZ, QR_SZ)
+  qrDiscord:SetPoint("LEFT", qrPayPal, "RIGHT", 40, 0)
+  qrDiscord:SetTexture(ICON_DISC)
+
+  local qrDiscordLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  qrDiscordLabel:SetPoint("TOPLEFT", qrDiscord, "BOTTOMLEFT", 0, -4)
+  qrDiscordLabel:SetText(TITLE .. " Discord\n|cee999999https://discord.gg/|r\nQWMSk9NaJv")
+
+  local qrDiscordAtt = content:CreateTexture(nil, "ARTWORK")
+  qrDiscordAtt:SetSize(QR_SZ, QR_SZ)
+  qrDiscordAtt:SetPoint("LEFT", qrDiscord, "RIGHT", 40, 0)
+  qrDiscordAtt:SetTexture(ICON_ATT)
+
+  local qrDiscordAttLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  qrDiscordAttLabel:SetPoint("TOPLEFT", qrDiscordAtt, "BOTTOMLEFT", 0, -4)
+  qrDiscordAttLabel:SetText("ATT Discord\n|cee999999https://discord.gg/|r\nallthethings")
+
+  ---------------------------------------------------------------------------
+  -- Copy-paste link block under the whole QR section
+  ---------------------------------------------------------------------------
+  local linksLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  linksLabel:SetPoint("TOPLEFT", qrPayPalLabel, "BOTTOMLEFT", 0, -32)
+  linksLabel:SetText("Same links in plain text (for copy/paste):")
+
+  local linkWidth = 192
+
+  local function MakeLinkEdit(prev, text)
+    local edit = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+    edit:SetAutoFocus(false)
+    edit:SetSize(linkWidth, 20)
+    if prev then
+      edit:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 0, -4)
+    else
+      edit:SetPoint("TOPLEFT", linksLabel, "BOTTOMLEFT", 4, -4)
+    end
+    edit:SetText(text)
+    edit:SetCursorPosition(0)
+    edit:SetScript("OnEscapePressed", edit.ClearFocus)
+    edit:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+
+    -- “Read-only” behaviour: store canonical value and revert any user edits
+    edit._value = text
+
+    edit:SetScript("OnEscapePressed", edit.ClearFocus)
+    edit:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+    edit:SetScript("OnTextChanged", function(self, userInput)
+      if userInput then
+        self:SetText(self._value)
+        self:HighlightText()
+      end
+    end)
+
+    return edit
+  end
+
+  -- One line per link
+  local editPayPal = MakeLinkEdit(nil, "https://paypal.me/YePhIcK")
+  local editGoGo   = MakeLinkEdit(editPayPal, "https://discord.gg/QWMSk9NaJv")
+  local editATT    = MakeLinkEdit(editGoGo,   "https://discord.gg/allthethings")
+
+  ---------------------------------------------------------------------------
+  -- Height for scroll child: QR block + labels + link block
+  ---------------------------------------------------------------------------
+  local qrLabelHeight = math.max(qrDiscordLabel:GetStringHeight(), qrDiscordAttLabel:GetStringHeight())
+  local linkBlockHeight = 12 + linksLabel:GetStringHeight()
+                        + 4  + editPayPal:GetHeight()
+                        + 4  + editGoGo:GetHeight()
+                        + 4  + editATT:GetHeight()
+
+  local totalBlockHeight = 16 + QR_SZ + 8 + qrLabelHeight + linkBlockHeight
+
+  return totalBlockHeight
+end
+
 function SetupAboutFrame()
   if AboutUI.frame then return AboutUI.frame end
 
@@ -171,39 +257,10 @@ function SetupAboutFrame()
   ---------------------------------------------------------------------------
   -- QR codes (PayPal + Discord) – placed low so they are out of immediate view
   ---------------------------------------------------------------------------
-  local QR_SZ = 96
-  local qrPayPal = content:CreateTexture(nil, "ARTWORK")
-  qrPayPal:SetSize(QR_SZ, QR_SZ)
-  qrPayPal:SetPoint("TOPLEFT", msg, "BOTTOMLEFT", 0, -16)
-  qrPayPal:SetTexture(ICON_PPME)
-
-  local qrPayPalLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  qrPayPalLabel:SetPoint("TOPLEFT", qrPayPal, "BOTTOMLEFT", 0, -4)
-  qrPayPalLabel:SetText("PayPal.me/YePhIcK")
-
-  local qrDiscord = content:CreateTexture(nil, "ARTWORK")
-  qrDiscord:SetSize(QR_SZ, QR_SZ)
-  qrDiscord:SetPoint("LEFT", qrPayPal, "RIGHT", 40, 0)
-  qrDiscord:SetTexture(ICON_DISC)
-
-  local qrDiscordLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  qrDiscordLabel:SetPoint("TOPLEFT", qrDiscord, "BOTTOMLEFT", 0, -4)
-  qrDiscordLabel:SetText(TITLE .. " Discord\n|cee999999https://discord.gg/|r\nQWMSk9NaJv")
-
-  local qrDiscordAtt = content:CreateTexture(nil, "ARTWORK")
-  qrDiscordAtt:SetSize(QR_SZ, QR_SZ)
-  qrDiscordAtt:SetPoint("LEFT", qrDiscord, "RIGHT", 40, 0)
-  qrDiscordAtt:SetTexture(ICON_ATT)
-
-  local qrDiscordAttLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  qrDiscordAttLabel:SetPoint("TOPLEFT", qrDiscordAtt, "BOTTOMLEFT", 0, -4)
-  qrDiscordAttLabel:SetText("ATT Discord\n|cee999999https://discord.gg/|r\nallthethings")
+  local qrBlockHeight = BuildQrCodes(content, msg)
 
   -- Make sure the scroll child is tall enough
-  local totalHeight =
-      msg:GetStringHeight()
-      + 16 + QR_SZ
-      + 8  + qrDiscordLabel:GetStringHeight()
+  local totalHeight = msg:GetStringHeight() + qrBlockHeight
 
   content:SetHeight(totalHeight)
 
