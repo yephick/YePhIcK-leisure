@@ -191,7 +191,7 @@ function Util.ATTGetProgress(node)
     return c, t, p
   end
 
-return AGGPerf.wrap("Util.ATTGetProgress: cache miss", function()
+  local perf_cache_miss = AGGPerf.auto("Util.ATTGetProgress: cache miss")
   -- Roll up children
   local ac, at = 0, 0
   for _, ch in pairs(node.g or {}) do
@@ -201,8 +201,9 @@ return AGGPerf.wrap("Util.ATTGetProgress: cache miss", function()
 
   local ap = (at > 0) and (ac / at * 100) or 0
   _PROG_CACHE[node] = { ac, at, ap }
+
+  perf_cache_miss()
   return ac, at, ap
-end)
 end
 
 function Util.GetCollectionProgress(dataset)

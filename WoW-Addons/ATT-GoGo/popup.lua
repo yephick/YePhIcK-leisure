@@ -577,7 +577,7 @@ local function BuildNodeList(root)
     -- set hot-path locals for this traversal
     INCLUDE_REMOVED = GetSetting("includeRemoved", false)
 
-return AGGPerf.wrap("BuildNodeList", function()
+    local perf_build_node_list = AGGPerf.auto("BuildNodeList")
     local activeKeys = CollectActiveKeys()
     if #activeKeys == 0 then return {}, activeKeys end
 
@@ -591,8 +591,8 @@ return AGGPerf.wrap("BuildNodeList", function()
     nodes = GroupItemsByVisualID(nodes)
     SortPopupNodes(nodes)
 
+    perf_build_node_list()
     return nodes, activeKeys
-end)
 end
 
 ------------------------------------------------------------
