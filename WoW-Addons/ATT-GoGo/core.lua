@@ -662,7 +662,7 @@ end
 --   ATTGoGoDB.progress[<realm>][<char>].zones[mapID] = { [1]=c, [2]=t }
 -- ============================================================
 
--- Cached DB bucket (immutable after first build for this session) (XXX: even though we do mutate it to add `instanceID`...)
+-- Cached DB bucket (immutable after first build for this session)
 local _AGG_ProgressCache -- { me=<table>, realm=<string>, char=<string> }
 
 function Util.EnsureProgressDB()
@@ -680,7 +680,6 @@ function Util.EnsureProgressDB()
   local byChar = prog[realm]
   -- always reset this toon’s layout (new schema every load)
   byChar[charName] = {
---    locks = {},        -- [instanceID] = lock snapshot
     instances  = {},   -- ["<instanceID>:<era>"] = { c, t }
     zones = {},        -- [mapID] = { c, t }
   }
