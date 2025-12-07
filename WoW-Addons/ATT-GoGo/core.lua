@@ -191,7 +191,7 @@ function Util.ATTGetProgress(node)
     return c, t, p
   end
 
-return AGGPerf.wrap("Util.ATTGetProgress: cache miss", function()
+  local perf_cache_miss = AGGPerf.auto("Util.ATTGetProgress: cache miss")
   -- Roll up children
   local ac, at = 0, 0
   for _, ch in pairs(node.g or {}) do
@@ -201,8 +201,9 @@ return AGGPerf.wrap("Util.ATTGetProgress: cache miss", function()
 
   local ap = (at > 0) and (ac / at * 100) or 0
   _PROG_CACHE[node] = { ac, at, ap }
+
+  perf_cache_miss()
   return ac, at, ap
-end)
 end
 
 function Util.GetCollectionProgress(dataset)
@@ -661,7 +662,7 @@ end
 --   ATTGoGoDB.progress[<realm>][<char>].zones[mapID] = { [1]=c, [2]=t }
 -- ============================================================
 
--- Cached DB bucket (immutable after first build for this session) (XXX: even though we do mutate it to add `instanceID`...)
+-- Cached DB bucket (immutable after first build for this session)
 local _AGG_ProgressCache -- { me=<table>, realm=<string>, char=<string> }
 
 function Util.EnsureProgressDB()
@@ -679,7 +680,6 @@ function Util.EnsureProgressDB()
   local byChar = prog[realm]
   -- always reset this toon’s layout (new schema every load)
   byChar[charName] = {
---    locks = {},        -- [instanceID] = lock snapshot
     instances  = {},   -- ["<instanceID>:<era>"] = { c, t }
     zones = {},        -- [mapID] = { c, t }
   }

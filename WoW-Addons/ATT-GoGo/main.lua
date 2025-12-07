@@ -298,7 +298,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
 
     Debug_Init()
     AGGPerf.loadStatsFromDB()
-    AGGPerf.on(true)
+    if GetSetting("DBG_en", false) == true then AGGPerf.on(true) end
 
     -- === Wait for ATT ("All The Things") ===
     ATT.AddEventHandler("OnReady", function()
