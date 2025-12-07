@@ -119,7 +119,7 @@ local function CollectIdFields(node)
 end
 
 local function AddMatchedIDLines(node)
-    local keys = CollectIdFields(node) or print(CTITLE .. "trying node.parent") or node.parent and CollectIdFields(node.parent)
+    local keys = CollectIdFields(node) or TP(node.parent) or node.parent and CollectIdFields(node.parent)
     table.sort(keys)
     if #keys == 0 then return end
 

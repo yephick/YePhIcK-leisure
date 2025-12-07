@@ -515,7 +515,7 @@ function Perf.begin(label)
 end
 
 function Perf.finish(id)
-  local a = ACTIVE[id]; if not a then TP(id); print("not a: " .. tostring(id)); return end
+  local a = ACTIVE[id]
   ACTIVE[id] = nil
   if perf_en ~= true then return end
   local dt = now_ms() - a.t0
