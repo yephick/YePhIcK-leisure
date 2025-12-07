@@ -5,14 +5,6 @@ It provides a clean grid-style view of dungeon and raid progress, with tabs per 
 
 ---
 
-## Features
-- Per-expansion tabs with progress overview
-- Grid layout for dungeons and raids
-- Integration with ATT’s collection data
-- Lightweight and designed for efficient farming
-
----
-
 ## Requirements
 - [All The Things (ATT)](https://github.com/DFortun81/AllTheThings) addon installed  
 - World of Warcraft: Mists of Pandaria Classic client
