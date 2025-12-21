@@ -663,8 +663,16 @@ local function AcquireRow(scrollContent, i)
             end
         end
 
-        if mouseButton == "RightButton" and IsAltKeyDown() then
-            Util.FocusMapForNode(node)
+        if mouseButton == "RightButton" then
+            if IsAltKeyDown() then
+                Util.FocusMapForNode(node)
+            else
+                if GetSetting("DBG_en", false) == true then
+                    print(DebugGetNodePath(node, {verbose = true}))
+                    DebugRecursive(node, "row dump", 0, 3, false, true)
+                    TP(SafeNodeName(node), node)
+                end
+            end
         end
     end)
     SetupNodeTooltip(btn)

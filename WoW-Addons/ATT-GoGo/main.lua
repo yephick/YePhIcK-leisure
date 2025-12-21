@@ -180,9 +180,10 @@ local function FlushCollectedBatch()
 
     if cnt >= THRESHOLD then
         -- Big wave => assume whole-DB refresh; rebuild everything
-        DebugLog("BIG wave, cnt = " .. cnt)
+        local wave = AGGPerf.auto("BIG wave, cnt = " .. cnt)
         Util.InvalidateProgressCache()
         Util.InvalidateMapProgress()
+        wave()
     else
         -- Small wave => do a context snapshot + popup/active-tab refresh
         local node, info = Util.ResolveContextNode()
