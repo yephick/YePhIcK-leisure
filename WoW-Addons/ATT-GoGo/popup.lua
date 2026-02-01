@@ -16,13 +16,13 @@ local spellLabelsByID = {}      -- [spellID]     = FontString
 local passKeysByNode  = setmetatable({}, { __mode = "k" })
 
 -- Virtual list constants
-local ROW_HEIGHT = 28           -- row height
+local ROW_HEIGHT = 22           -- row height
+local ROW_BTN_SZ = 20           -- ItemButton size
 local ROW_BUFFER = 6            -- render-ahead buffer
 local __rowSerial = 0           -- unique names for ItemButtonTemplate rows
 
 local function SafeNodeName(n)
-    if not n or type(n) ~= "table" then TP(n); return "?" end
-    return n.text or n.name or _G.UNKNOWN or "?"
+    return n.text or n.name or "?"
 end
 
 -- cached faction result
@@ -33,11 +33,14 @@ local OPPOSITE_FACTION = (FACTION == 1 and 2) or (FACTION == 2 and 1) or 0
 -- 6=Death Knight, 7=Shaman, 8=Mage, 9=Warlock, 10=Monk, 11=Druid, 12=Demon Hunter, 13=Evoker)
 local CLASS_ID = select(3, UnitClass("player"))
 
+local INCLUDE_REMOVED = false       -- set per-run in BuildNodeList
+local ACTIVE_KEYS = nil             -- set per-run in BuildNodeList
+
 local function IsAllowedLeaf(node, activeKeys)
-    if type(node) ~= "table" then TP(node); return false end
+    if node.visible == false or node.collected then return false, nil end
 
     if OPPOSITE_FACTION ~= 0 and node.r == OPPOSITE_FACTION then
-        return false, {}
+        return false, nil
     end
 
     -- Class gate (ATT 'c' field)
@@ -49,35 +52,37 @@ local function IsAllowedLeaf(node, activeKeys)
         else
             ok = (nc == CLASS_ID)
         end
-        if not ok then return false, {} end
+        if not ok then return false, nil end
     end
 
-    if not GetSetting("includeRemoved", false) then
-        if Util.IsNodeRemoved(node) then
-            return false, {}   -- filtered out as 'removed'
-        end
+    if not INCLUDE_REMOVED and Util.IsNodeRemoved(node) then return false, nil end
+
+    -- quick sanity check: ANY match (no allocations)
+    local anyMatch = false
+    local ak       = ACTIVE_KEYS           -- cache upvalues to locals
+    local n        = #ak
+    for i = 1, n do
+        local k = ak[i]
+        local v = node[k]
+        if v and v ~= 0 then anyMatch = true; break end
+    end
+    if not anyMatch then
+        return false, nil
     end
 
+    -- build the 'matched' list we store for emitted nodes
     local matched = {}
-    -- respect current filter selection
-    for i = 1, #activeKeys do
-        local k = activeKeys[i]
+    for i = 1, #ACTIVE_KEYS do
+        local k = ACTIVE_KEYS[i]
         local v = node[k]
         if v ~= nil and v ~= 0 then matched[#matched + 1] = k end
     end
-
-    local isVisible     = (node.visible ~= false)
-    local isUncollected = not node.collected
-
-    if isUncollected and isVisible and #matched > 0 then
-        return true, matched
-    end
-    return false, matched
+    return #matched > 0, matched
 end
 
 local RETRIEVING = "Retrieving data"
 local function IsPlaceholderTitle(t)
-    return (not t) or t == "" or t == RETRIEVING or (t and t:lower():find("retrieving"))
+    return t == nil or t == "" or t == RETRIEVING or t:lower():find("retrieving")
 end
 
 -- Short display name for a collectible leaf
@@ -96,36 +101,52 @@ local function NodeShortName(n)
         local c = Util.ATTSearchOne("creatureID", n.creatureID) or Util.ATTSearchOne("npcID", n.npcID)
         return c and c.name or ("Creature " .. (n.creatureID or n.npcID))
     end
+    TP(n)
     return "Collectible"
 end
 
 ------------------------------------------------------------
 -- Tooltip helpers
 ------------------------------------------------------------
-local function AddMatchedIDLines(node, matchedKeys)
-    if not matchedKeys or #matchedKeys == 0 then return false end
-    GameTooltip:AddLine(" ")
-    for _, k in ipairs(matchedKeys) do
-        local v = node[k]
-        local label = COLLECTIBLE_ID_LABELS[k] or k
-        GameTooltip:AddLine(label .. " ID: " .. v, 1, 1, 1)
+local function CollectIdFields(node)
+    local keys = {}
+    for k, v in pairs(node) do
+        if v ~= nil and v ~= "" and type(k) == "string" and k:find("ID", 1, true) then
+            keys[#keys + 1] = k
+        end
     end
-    return true
+    return keys
 end
 
--- One-time hook to re-append our lines whenever the item tooltip is rebuilt
+local function AddMatchedIDLines(node)
+    if GetSetting("DBG_en", false) ~= true then return end
+    local keys = CollectIdFields(node) or TP(node.parent) or node.parent and CollectIdFields(node.parent)
+    table.sort(keys)
+    if #keys == 0 then return end
+
+    GameTooltip:AddLine(" ")
+    for _, k in ipairs(keys) do
+        local v = node[k]
+        GameTooltip:AddLine(k .. ": " .. v, 1, 1, 1)
+        print(CTITLE .. "added " .. k .. ": " .. v .. " to tooltip")
+    end
+end
+
+-- One-time hook to re-append our lines whenever the item tooltip is rebuilt. N.B.: items in bags (for instance) don't have/need our tooltip hook
 if not GameTooltip.__ATTGoGoHooked then
     GameTooltip:HookScript("OnTooltipSetItem", function(tt)
-        if not currentTooltipNode then return end
-        if not tt.__ATTGoGoReentrant then
-            tt.__ATTGoGoReentrant = true
-            local matched = passKeysByNode[currentTooltipNode]
-            AddMatchedIDLines(currentTooltipNode, matched)
-            tt.__ATTGoGoReentrant = nil
-        else
-            TP(tt.__ATTGoGoReentrant)
+        if currentTooltipNode then
+            AddMatchedIDLines(currentTooltipNode)
         end
     end)
+
+    -- Quests/objects/spells/etc. that arrive via SetHyperlink (these often rebuild a tick later)
+    hooksecurefunc(GameTooltip, "SetHyperlink", function(tt, link)
+        if tt:IsShown() and currentTooltipNode then
+            AddMatchedIDLines(currentTooltipNode)
+        end
+    end)
+
     GameTooltip.__ATTGoGoHooked = true
 end
 
@@ -176,13 +197,13 @@ local function ShowPreviewForNode(node)
     previewDock:Show()
 end
 
--- List up to 31 dependent uncollected child collectibles on the tooltip (sub-achievements, item rewards, etc.)
+-- List up to N dependent uncollected child collectibles on the tooltip (sub-achievements, item rewards, etc.)
 local function AddUncollectedChildrenToTooltip(node)
     if type(node) ~= "table" or type(node.g) ~= "table" or next(node.g) == nil then return end
     local shown, extra = 0, 0
     for _, ch in pairs(node.g) do
         if type(ch) == "table" and ch.collectible and ch.collected ~= true then
-            if shown < 31 then
+            if shown < 21 then
                 GameTooltip:AddLine("• " .. NodeShortName(ch), 1, 1, 1, true)
                 shown = shown + 1
             else
@@ -191,31 +212,25 @@ local function AddUncollectedChildrenToTooltip(node)
         end
     end
     if shown > 0 and extra > 0 then
-        GameTooltip:AddLine(string.format("And %d more...", extra), 0.85, 0.85, 0.85, true)
+        GameTooltip:AddLine(("And %d more..."):format(extra), 0.85, 0.85, 0.85, true)
     end
 end
 
 -- Returns a single-line compact description of quest objectives, or nil if unavailable.
-local function GetQuestObjectivesText(qid)
+local function AddQuestObjectivesText(qid)
     local objs = C_QuestLog.GetQuestObjectives(qid)
-    if type(objs) ~= "table" then return Util.ATTSearchOne("questID", qid).name end
-    if #objs == 0 then return nil end
-    local parts = {}
-    for i = 1, #objs do
-        local o = objs[i]
-        if o and o.text and o.text ~= "" then parts[#parts+1] = o.text end
+    if not objs then GameTooltip:AddLine(Util.ATTSearchOne("questID", qid).name, 1, 1, 1, true); return false end
+    for _, o in pairs(objs) do
+        if o.text and o.text ~= "" then GameTooltip:AddLine(o.text, 1, 1, 1, true) end
     end
-    if #parts == 0 then return nil end
-    return (table.concat(parts, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
+    return #objs > 0
 end
 
 -- Renders the quest tooltip once (no retry). Returns true if it printed real objectives.
-local function RenderQuestTooltip(node, matched, owner)
-    local line = GetQuestObjectivesText(node.questID)
-    GameTooltip:AddLine(line or node.name or TP(node, node.text) or "Objective(s) unavailable", 1, 1, 1, true)
+local function RenderQuestTooltip(node)
+    local hasLines = AddQuestObjectivesText(node.questID)
     AddUncollectedChildrenToTooltip(node)
-    AddMatchedIDLines(node, matched)
-    return line ~= nil
+    return hasLines
 end
 
 -- === World Map ping (brief highlight at coords) ===
@@ -240,15 +255,14 @@ local function PingMapAt(mapID, x, y)
   PingFrame:ClearAllPoints()
   PingFrame:SetPoint("CENTER", child, "TOPLEFT", x * w, -y * h)
   PingFrame:Show()
-  C_Timer.After(0.75, function() PingFrame:Hide() end)
+  C_Timer.After(3.5, function() PingFrame:Hide() end)
 end
 
 local requestedOnce = {}
 
-local function SetupNodeTooltip(btn, boundNode)
+local function SetupNodeTooltip(btn)
     btn:SetScript("OnEnter", function(self)
-        local node = self.node or boundNode
-        if not node then TP(btn, boundNode, self, self.node, node); return end
+        local node = self.node
         currentTooltipNode = node
 
         ShowPreviewForNode(node)
@@ -277,37 +291,25 @@ local function SetupNodeTooltip(btn, boundNode)
                 end
             end
         elseif node.questID then
-            local hadRealObjectives = RenderQuestTooltip(node, matched, self)
+            local hadRealObjectives = RenderQuestTooltip(node)
             if not hadRealObjectives then
                 C_Timer.After(0.50, function()
                     if currentTooltipNode == node and self:IsMouseOver() then
                         GameTooltip:ClearLines()
-                        RenderQuestTooltip(node, passKeysByNode[node], self)
+                        RenderQuestTooltip(node)
                         GameTooltip:Show()
                     end
                 end)
             end
         elseif node.achievementID then
-            local aID = node.achievementID
-            local link = GetAchievementLink(aID)
-            if link then
-                GameTooltip:SetHyperlink(link)
-            else
-                TP(aID)
-                local _, aName = GetAchievementInfo(aID)
-                GameTooltip:AddLine(aName or ("Achievement " .. aID), 1, 1, 1, true)
-            end
-
+            GameTooltip:SetHyperlink(GetAchievementLink(node.achievementID))
             AddUncollectedChildrenToTooltip(node)
-            AddMatchedIDLines(node, matched)
         elseif node.creatureID or node.npcID then
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
             AddUncollectedChildrenToTooltip(node)
-            AddMatchedIDLines(node, matched)
         else
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
             AddUncollectedChildrenToTooltip(node)
-            AddMatchedIDLines(node, matched)
         end
         GameTooltip:Show()
     end)
@@ -334,82 +336,49 @@ local function PrimeItemInfo(itemID)
     hiddenTT:Hide()
 end
 
-local retryTicker, retryCount
-local function EnsureRetryTicker()
-    if retryTicker then return end
-    retryCount = 0
-    retryTicker = C_Timer.NewTicker(0.5, function()
-        retryCount = retryCount + 1
-        for id, label in pairs(achLabelsByID) do
-            local _, name = GetAchievementInfo(id)
-            if name and name ~= "" then label:SetText(name); achLabelsByID[id] = nil end
-        end
-        for id, label in pairs(spellLabelsByID) do
-            local name = GetSpellInfo(id)
-            if name then label:SetText(name); spellLabelsByID[id] = nil else TP(id, label, name) end
-        end
-        if (not next(achLabelsByID)) and (not next(spellLabelsByID)) or retryCount >= 20 then
-            retryTicker:Cancel(); retryTicker = nil
-        end
-    end)
-end
-
 ------------------------------------------------------------
 -- Display text
 ------------------------------------------------------------
 local function ResolveDisplayForNode(node, label, btn)
-    local display = NodeShortName(node)
+    local display = RETRIEVING -- this is a very hot function, so don't pre-fetch `NodeShortName(node)` which is overwritten most of the time
 
     if node.itemID then
         local name, link = GetItemInfo(node.itemID)
         if link or name then
-            display = link or display or name
+            display = link or NodeShortName(node) or name
             Util.ApplyNodeIcon(btn, node)
         else
-            display = display or ("Item " .. node.itemID)
+            display = NodeShortName(node) or ("Item " .. node.itemID)
             itemLabelsByID[node.itemID] = { label = label, btn = btn }
             PrimeItemInfo(node.itemID)
         end
     elseif node.achievementID then
         local _, name = GetAchievementInfo(node.achievementID)
-        if name and name ~= "" then
-            display = name
-            Util.ApplyNodeIcon(btn, node)
-        else
-            display = display or ("Achievement " .. node.achievementID)
-            achLabelsByID[node.achievementID] = label
-            EnsureRetryTicker()
-        end
+        display = name
+        Util.ApplyNodeIcon(btn, node)
     elseif node.spellID then
-        local link = GetSpellInfo(node.spellID)
-        if link then
-            display = link
-        else
-            display = display or ("Spell " .. node.spellID)
-            spellLabelsByID[node.spellID] = label
-            EnsureRetryTicker()
-        end
+        display = GetSpellInfo(node.spellID)
     elseif node.questID then
         local qid = node.questID
         local qname = (node.name and not IsPlaceholderTitle(node.name)) and node.name or C_QuestLog.GetQuestInfo(qid) or ("Quest " .. qid)
         display = qname
+    else
+        display = NodeShortName(node)
     end
 
-    label:SetText(display or "Waiting for data...")
+    label:SetText(display)
 end
 
 ------------------------------------------------------------
 -- Data gathering (filter-aware) + sorting
 ------------------------------------------------------------
-local CATEGORY_ORDER = {
-    "titleID","achievementID","flightpathID","explorationID","instanceID",
-    "visualID","creatureID","mapID","itemID","questID",
-}
+local CATEGORY_ORDER = { "titleID","achievementID","flightpathID","explorationID","instanceID","creatureID","mapID","itemID","questID" }
 local CATEGORY_RANK = {}
 for i, key in ipairs(CATEGORY_ORDER) do CATEGORY_RANK[key] = i end
 
 local function GetNodePrimaryKey(node)
-    local matched = passKeysByNode and passKeysByNode[node]
+    --local matched = passKeysByNode and passKeysByNode[node]
+    local matched = passKeysByNode[node]
     if matched and #matched > 0 then
         local bestKey, bestRank
         for _, k in ipairs(matched) do
@@ -423,37 +392,6 @@ local function GetNodePrimaryKey(node)
     end
     TP(node, matched, #matched)
     return "zz_fallback"
-end
-
--- so far is only used in SortPopupNodes(nodes)
-local function GetNodeDisplayName(node)
-    local display = node.text or node.name
-    if display and display ~= "" then return display:lower() end
-
-    if node.itemID then
-        local name = GetItemInfo(node.itemID) -- this may fail on first call
-        return name and name:lower() or ("item %d"):format(node.itemID)
-    end
-    if node.achievementID then
-        local _, name = GetAchievementInfo(node.achievementID)
-        return name and name ~= "" and name:lower() or TP(node, display, node.achievementID, name) or ("achievement %d"):format(node.achievementID)
-    end
-    if node.questID then return ("quest %d"):format(node.questID) end
-    if node.mapID then return ("map %d"):format(node.mapID) end
-    if node.instanceID then return ("instance %d"):format(node.instanceID) end
-    if node.visualID then return ("visual %d"):format(node.visualID) end
-    if node.flightpathID then return ("flight path %d"):format(node.flightpathID) end
-    if node.explorationID then return ("exploration %d"):format(node.explorationID) end
-    if node.titleID then return ("title %d"):format(node.titleID) end
-
-    local ids = {}
-    for k, v in pairs(node) do
-        if type(k) == "string" and k:match("ID$") and v ~= nil and v ~= "" then
-            ids[#ids+1] = k .. "=" .. v
-        end
-    end
-    table.sort(ids)
-    return (#ids > 0) and table.concat(ids, ", ") or TP(node.parent.parent, node.parent, node, node.g) or "zzz, item has no *ID fields"
 end
 
 -- De-duplicate achievements by achievementID, preferring a richer "meta" node over stubs.
@@ -529,14 +467,11 @@ local function CollapseAchievementFamilies(root, nodes)
     -- 2) prefer real meta achievement nodes from the ATT tree
     local metas = {}
     local function scan_for_metas(t)
-        if type(t) ~= "table" then TP(t); return end
         if t.achievementID and not t.achID then
             metas[t.achievementID] = metas[t.achievementID] or t
         end
         local g = rawget(t, "g")
-        if type(g) == "table" then
-            for i = 1, #g do scan_for_metas(g[i]) end
-        end
+        for _, child in pairs(g or {}) do scan_for_metas(child) end
     end
     scan_for_metas(root)
 
@@ -556,13 +491,7 @@ end
 
 -- Map ATT/Item API qualities to a numeric rank (higher = better)
 local function QualityRank(node)
-    -- Prefer ATT's 'q' (already numeric, 0..7). Fallback to GetItemInfo.
-    local q = node and node.q
-    if q == nil and node and node.itemID then
-        TP(node)
-        q = select(3, GetItemInfo(node.itemID))
-    end
-    return q or 0
+    return node and node.q or 0
 end
 
 -- Group items by visualID, keeping the first item among the highest-quality tier
@@ -571,19 +500,18 @@ local function GroupItemsByVisualID(nodes)
 
     local keep, byVid = {}, {}
     for _, n in ipairs(nodes) do
-        local vid = n and n.visualID
+        local vid = n.visualID
         if vid and n.itemID then
-            local g = byVid[vid]
-            if not g then
-                byVid[vid] = n
-                keep[#keep + 1] = n
+            local rec = byVid[vid]
+            if not rec then
+                local idx = #keep + 1
+                keep[idx] = n
+                byVid[vid] = { idx = idx, q = QualityRank(n) }
             else
-                local qNew, qOld = QualityRank(n), QualityRank(g)
-                if qNew > qOld then
-                    byVid[vid] = n
-                    for i = 1, #keep do
-                        if keep[i] == g then keep[i] = n; break end
-                    end
+                local q = QualityRank(n)
+                if q > rec.q then
+                    keep[rec.idx] = n
+                    rec.q = q
                 end
                 -- same quality -> keep existing (deterministic "first of best")
             end
@@ -598,9 +526,8 @@ end
 local function DedupItemsByItemID(nodes)
     if #nodes <= 1 then return nodes end
     local seen, keep = {}, {}
-    for i = 1, #nodes do
-        local n = nodes[i]
-        local id = n and n.itemID
+    for _, n in pairs(nodes) do
+        local id = n.itemID
         if id then
             if not seen[id] then
                 seen[id] = true
@@ -621,18 +548,14 @@ local function SortPopupNodes(nodes)
         local ak, bk = GetNodePrimaryKey(a), GetNodePrimaryKey(b)
         local ar, br = (CATEGORY_RANK[ak] or TP(ak) or 999), (CATEGORY_RANK[bk] or TP(bk) or 999)
         if ar ~= br then return ar < br end
---        local an, bn = GetNodeDisplayName(a), GetNodeDisplayName(b)
---        if an ~= bn then return an < bn end
         return getID(a) < getID(b)
     end)
 end
 
-local function GatherUncollectedNodes(node, out, keys, seen)
-    if type(node) ~= "table" then TP(node); return end
-
-    seen = seen or setmetatable({}, { __mode = "k" })
-    if seen[node] then TP(seen[node]); return end
-    seen[node] = true
+local function GatherUncollectedNodes(node, out, keys)
+    -- subtree fast-skip: if nothing uncollected lives here, don’t recurse
+    local prog, total = Util.ATTGetProgress(node)
+    if total and (total == 0 or prog >= total) then return end
 
     local isAllowed, matched = IsAllowedLeaf(node, keys)
     if isAllowed then
@@ -643,8 +566,9 @@ local function GatherUncollectedNodes(node, out, keys, seen)
     local kids = node.g
     if type(kids) == "table" then
         for i = 1, #kids do
-            if type(kids[i]) == "table" and kids[i] ~= node.parent then
-                GatherUncollectedNodes(kids[i], out, keys, seen)
+            local child = kids[i]
+            if type(child) == "table" and child ~= node.parent then
+                GatherUncollectedNodes(child, out, keys)
             end
         end
     end
@@ -652,20 +576,25 @@ end
 
 -- Build + filter list
 local function BuildNodeList(root)
+    -- set hot-path locals for this traversal
+    INCLUDE_REMOVED = GetSetting("includeRemoved", false)
+
+    local perf_build_node_list = AGGPerf.auto("BuildNodeList")
     local activeKeys = CollectActiveKeys()
     if #activeKeys == 0 then return {}, activeKeys end
 
-    -- Gather raw leaves per active filters
+    ACTIVE_KEYS = activeKeys -- remember the keys for hot path in IsAllowedLeaf()
+
     local nodes = {}
     GatherUncollectedNodes(root, nodes, activeKeys)
 
-    -- Transformations (in order)
     nodes = CollapseAchievementFamilies(root, nodes)
     nodes = DedupItemsByItemID(nodes)
     nodes = GroupItemsByVisualID(nodes)
     SortPopupNodes(nodes)
 
-  return nodes, activeKeys
+    perf_build_node_list()
+    return nodes, activeKeys
 end
 
 ------------------------------------------------------------
@@ -681,15 +610,12 @@ local function AcquireRow(scrollContent, i)
 
     -- Create the button+label pair once
     local btn = CreateFrame("Button", btnName, scrollContent, "ItemButtonTemplate")
-    btn:SetSize(24, 24)
+    btn:SetSize(ROW_BTN_SZ, ROW_BTN_SZ)
 
     -- hide "button" border art
     do
-      local t = btn:GetNormalTexture(); t:SetTexture(nil); t:SetAlpha(0); t:Hide()
-
-      local p = btn:GetPushedTexture(); p:SetTexture(nil); p:SetAlpha(0); p:Hide()
-
-      local h = btn:GetHighlightTexture(); h:SetTexture(nil); h:SetAlpha(0); h:Hide()
+      local function hideBorder(tex) tex:SetTexture(nil); tex:SetAlpha(0); tex:Hide() end
+      hideBorder(btn:GetNormalTexture()); hideBorder(btn:GetPushedTexture()); hideBorder(btn:GetHighlightTexture()); 
     end
 
     btn:RegisterForClicks("AnyUp")
@@ -735,12 +661,20 @@ local function AcquireRow(scrollContent, i)
             end
             -- 3) POI rows that can focus the map
             if node.mapID or node.explorationID or node.instanceID or node.flightpathID or node.questID or node.creatureID or node.npcID or node.itemID then
-                if Util.FocusMapForNode(node) then return end
+                Util.FocusMapForNode(node)
             end
         end
 
-        if mouseButton == "RightButton" and IsAltKeyDown() then
-            Util.FocusMapForNode(node)
+        if mouseButton == "RightButton" then
+            if IsAltKeyDown() then
+                Util.FocusMapForNode(node)
+            else
+                if GetSetting("DBG_en", false) == true then
+                    print(DebugGetNodePath(node, {verbose = true}))
+                    DebugRecursive(node, "row dump", 0, 3, false, true)
+                    TP(SafeNodeName(node), node)
+                end
+            end
         end
     end)
     SetupNodeTooltip(btn)
@@ -812,13 +746,15 @@ function EnsurePopup()
         tile = true, tileSize = 16, edgeSize = 16,
         insets = { left = 4, right = 4, top = 4, bottom = 4 }
     })
-    uncollectedPopup:SetFrameStrata("DIALOG")
-    uncollectedPopup:SetFrameLevel(200)
+    uncollectedPopup:SetFrameStrata("MEDIUM")
     table.insert(UISpecialFrames, "ATTGoGoUncollectedPopup")
 
     -- title + close
-    uncollectedPopup.title = uncollectedPopup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    uncollectedPopup.title:SetPoint("TOP", 0, -10)
+    uncollectedPopup.title = uncollectedPopup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    uncollectedPopup.title:SetPoint("TOPLEFT", 12, -10)
+    uncollectedPopup.title:SetPoint("TOPRIGHT", -24, -10)
+    uncollectedPopup.title:SetWordWrap(true)
+    uncollectedPopup.title:SetNonSpaceWrap(false)
     uncollectedPopup.title:SetText("Missing Items")
 
     local closeBtn = CreateFrame("Button", nil, uncollectedPopup, "UIPanelCloseButton")
@@ -895,7 +831,7 @@ local function PopulateUncollectedPopup(scrollContent, nodes)
         scrollContent:SetHeight(40)
     else
         if scrollContent.emptyLine then scrollContent.emptyLine:Hide() end
-        scrollContent:SetHeight(#nodes * ROW_HEIGHT + 10)
+        scrollContent:SetHeight(#nodes * ROW_HEIGHT + 8)
     end
 
     -- Preserve current scroll offset
@@ -925,7 +861,7 @@ updater:SetScript("OnEvent", function(_, event, ...)
         local name, link = GetItemInfo(itemID)
         if link or name then
             entry.label:SetText(link or name)
-            if entry.btn then Util.ApplyNodeIcon(entry.btn, entry.btn.node) else TP() end
+            Util.ApplyNodeIcon(entry.btn, entry.btn.node)
             itemLabelsByID[itemID] = nil
             requestedOnce[itemID] = nil
         end
@@ -951,7 +887,7 @@ local function RefreshPopup(data)
     uncollectedPopup.currentNodes = nodes
     PopulateUncollectedPopup(uncollectedPopup.scrollContent, nodes)
 
-    uncollectedPopup.title:SetText(string.format("%s (%d)", Util.NodeDisplayName(data), #nodes))
+    uncollectedPopup.title:SetText(("%s (%d)"):format(Util.NodeDisplayName(data), #nodes))
 end
 
 function ShowUncollectedPopup(data)
