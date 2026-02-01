@@ -149,6 +149,11 @@ function Util.ToggleFavoriteKey(key)
   SetSetting("favorites", t)
 end
 
+-- Account-wide: use map package data in instances (ignore difficulty filtering)
+function Util.UseMapPackageInInstances()
+  return GetSetting("useMapPackageInInstances", true)
+end
+
 -- Stable keys per widget
 function Util.FavKey(obj, isZone)
   if isZone then
@@ -628,6 +633,13 @@ end
 
 function Util.ResolvePopupTargetForCurrentContext()
   local node, info = Util.ResolveContextNode()
+
+  -- If we can resolve a mapID, the map package is the most consistent source.
+  -- Optional behavior in instances, controlled by account-wide setting.
+  if info.uiMapID and info.kind == "instance" and Util.UseMapPackageInInstances() then
+    return Util.GetMapRoot(info.uiMapID)
+  end
+
   if info.kind == "instance" then
     return node
   else
@@ -982,11 +994,20 @@ function Tooltip.AddContextProgressTo(tooltip)
   local node, info = Util.ResolveContextNode()
 
   if info.kind == "instance" then
+    tooltip:AddLine("|cffffd200" .. Util.NodeDisplayName(node) .. "|r")
+
     local curDiff = ATT.GetCurrentDifficultyID()
     local child   = Util.SelectDifficultyChild(node, curDiff) or node
-    local c, t, p = Util.ATTGetProgress(child)
-    tooltip:AddLine("|cffffd200" .. Util.NodeDisplayName(node) .. "|r")
-    Tooltip.AddProgress(tooltip, child, c, t, p, false, node, child)
+
+    if info.uiMapID and Util.UseMapPackageInInstances() then
+      -- Progress from map package (consistent totals), but still show lockout info
+      local c, t, p = Util.ResolveMapProgress(info.uiMapID)
+      Tooltip.AddProgress(tooltip, child, c, t, p, false, node, child)
+    else
+      -- per-difficulty subset progress
+      local c, t, p = Util.ATTGetProgress(child)
+      Tooltip.AddProgress(tooltip, child, c, t, p, false, node, child)
+    end
   else
     local zoneName = GetRealZoneText()
     local subZone  = GetSubZoneText()

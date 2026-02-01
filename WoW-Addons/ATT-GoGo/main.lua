@@ -45,6 +45,10 @@ local function PrintStartup()
     local author = GetAddOnMetadata(addonName, "Author")
     local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor")
     print(CTITLE .. "v" .. AGG_VER .. ", vibed by: " .. author .. " & " .. coauthor)
+    if GetSetting("DBG_en", false) == true then
+        local BUILD_NO = select(4, GetBuildInfo())
+        print("WoW client build# is " .. BUILD_NO)
+    end
 end
 
 local function OpenUncollectedForHere()
@@ -180,9 +184,10 @@ local function FlushCollectedBatch()
 
     if cnt >= THRESHOLD then
         -- Big wave => assume whole-DB refresh; rebuild everything
-        DebugLog("BIG wave, cnt = " .. cnt)
+        local wave = AGGPerf.auto("BIG wave, cnt = " .. cnt)
         Util.InvalidateProgressCache()
         Util.InvalidateMapProgress()
+        wave()
     else
         -- Small wave => do a context snapshot + popup/active-tab refresh
         local node, info = Util.ResolveContextNode()

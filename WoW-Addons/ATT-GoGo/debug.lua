@@ -223,10 +223,10 @@ local function clamp_string(s)
   return s
 end
 
-local function print_one_line_table(k, t, depth)
+local function print_one_line_table(k, t, depth, fn_out)
   local n = 0
   for _ in pairs(t) do n = n + 1 end
-  DebugLog(string.rep("  ", depth+1) .. "["..tostring(k).."] = {...} (n="..n..")")
+  fn_out(string.rep("  ", depth+1) .. "["..tostring(k).."] = {...} (n="..n..")")
 end
 
 local function is_noise_label(key)
@@ -251,44 +251,45 @@ function DebugLogf(fmt, ...)
 end
 
 -- Helper: recursive dump, depth-limited
-function DebugRecursive(tbl, tblname, depth, maxDepth, showFuncs)
+function DebugRecursive(tbl, tblname, depth, maxDepth, showFuncs, usePrint)
+    local fn_out = usePrint and print or DebugLog
     maxDepth = maxDepth or 2
     depth = depth or 0
     showFuncs = showFuncs == true
     if type(tbl) ~= "table" then
-        DebugLog(string.rep("  ", depth) .. tblname .. " = " .. clamp_string(tbl))
+        fn_out(string.rep("  ", depth) .. tblname .. " = " .. clamp_string(tbl))
         return
     end
     if depth > maxDepth then
         local n = 0
         for _ in pairs(tbl) do n = n + 1 end
-        DebugLog(string.rep("  ", depth) .. tblname .. " = {.} (max depth reached; has " .. n .. " children)")
+        fn_out(string.rep("  ", depth) .. tblname .. " = {.} (max depth reached; has " .. n .. " children)")
         return
     end
-    DebugLog(string.rep("  ", depth) .. tblname .. " {")
+    fn_out(string.rep("  ", depth) .. tblname .. " {")
 
     for k, v in pairs(tbl) do
         -- skip noisy keys entirely
         if not SKIP_FIELDS[k] then
             if type(v) == "function" then
                 if showFuncs then
-                    DebugLog(string.rep("  ", depth+1) .. "["..tostring(k).."] = <function>")
+                    fn_out(string.rep("  ", depth+1) .. "["..tostring(k).."] = <function>")
                 end
             elseif type(v) == "table" then
                 if ONE_LINE_FIELDS[k] then
-                    print_one_line_table(k, v, depth)
+                    print_one_line_table(k, v, depth, fn_out)
                 elseif tostring(k) == "parent" then
-                    DebugLog(string.rep("  ", depth+1) .. "[parent] = {...} (skipped)")
+                    fn_out(string.rep("  ", depth+1) .. "[parent] = {...} (skipped)")
                 else
-                    DebugRecursive(v, "[" .. tostring(k) .. "]", depth+1, maxDepth, showFuncs)
+                    DebugRecursive(v, "[" .. tostring(k) .. "]", depth+1, maxDepth, showFuncs, usePrint)
                 end
             else
-                DebugLog(string.rep("  ", depth+1) .. "[" .. tostring(k) .. "] = " .. clamp_string(v))
+                fn_out(string.rep("  ", depth+1) .. "[" .. tostring(k) .. "] = " .. clamp_string(v))
+            end
         end
     end
-end
 
-    DebugLog(string.rep("  ", depth) .. "}")
+    fn_out(string.rep("  ", depth) .. "}")
 end
 
 -- ---------- Debug: print ATT path from root to a node ----------

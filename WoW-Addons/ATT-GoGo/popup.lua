@@ -119,6 +119,7 @@ local function CollectIdFields(node)
 end
 
 local function AddMatchedIDLines(node)
+    if GetSetting("DBG_en", false) ~= true then return end
     local keys = CollectIdFields(node) or TP(node.parent) or node.parent and CollectIdFields(node.parent)
     table.sort(keys)
     if #keys == 0 then return end
@@ -127,6 +128,7 @@ local function AddMatchedIDLines(node)
     for _, k in ipairs(keys) do
         local v = node[k]
         GameTooltip:AddLine(k .. ": " .. v, 1, 1, 1)
+        print(CTITLE .. "added " .. k .. ": " .. v .. " to tooltip")
     end
 end
 
@@ -663,8 +665,16 @@ local function AcquireRow(scrollContent, i)
             end
         end
 
-        if mouseButton == "RightButton" and IsAltKeyDown() then
-            Util.FocusMapForNode(node)
+        if mouseButton == "RightButton" then
+            if IsAltKeyDown() then
+                Util.FocusMapForNode(node)
+            else
+                if GetSetting("DBG_en", false) == true then
+                    print(DebugGetNodePath(node, {verbose = true}))
+                    DebugRecursive(node, "row dump", 0, 3, false, true)
+                    TP(SafeNodeName(node), node)
+                end
+            end
         end
     end)
     SetupNodeTooltip(btn)
