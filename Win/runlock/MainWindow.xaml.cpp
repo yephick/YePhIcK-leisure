@@ -147,8 +147,7 @@ namespace winrt::runlock::implementation
         using namespace Windows::Storage;
         using namespace Windows::Storage::Streams;
 
-        // Use the Windows.System::DispatcherQueue so resume_foreground accepts it.
-        auto uiDispatcher = winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
+        winrt::apartment_context ui_thread;
 
         auto rulesText = PasswordRulesBox().Text();
         int minLen = static_cast<int>(MinLengthBox().Value());
@@ -195,7 +194,7 @@ namespace winrt::runlock::implementation
         writer.DetachStream();
         stream.Close();
 
-        co_await winrt::resume_foreground(uiDispatcher);
+        co_await ui_thread;
     }
 
     void MainWindow::GenerateRecursive(
