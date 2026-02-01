@@ -1,8 +1,8 @@
 #include "pch.h"
 #include "MainWindow.xaml.h"
-#if __has_include("MainWindow.g.cpp")
+//#if __has_include("MainWindow.g.cpp")
 #include "MainWindow.g.cpp"
-#endif
+//#endif
 
 #include <thread>
 #include <vector>
@@ -16,8 +16,8 @@
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Microsoft.UI.Dispatching.h>
-#include <microsoft.ui.xaml.windowinterop.h>
 #include <shobjidl_core.h>
+#include <windows.h>
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -35,9 +35,7 @@ namespace winrt::runlock::implementation
         uint32_t cores = std::thread::hardware_concurrency();
         if (cores == 0) { cores = 1; }
         for (uint32_t i = 1; i <= cores; ++i)
-        {
             CpuCoresComboBox().Items().Append(box_value(i));
-        }
         CpuCoresComboBox().SelectedIndex(0);
     }
 
@@ -68,14 +66,14 @@ namespace winrt::runlock::implementation
 
     Windows::Foundation::IAsyncAction MainWindow::GeneratePasswords_Click(IInspectable const&, RoutedEventArgs const&)
     {
-        auto hwnd = winrt::Microsoft::UI::Windowing::WindowNative::GetWindowHandle(*this);
         Windows::Storage::Pickers::FileSavePicker picker;
         picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::DocumentsLibrary);
-        picker.FileTypeChoices().Insert(L"Text", single_threaded_vector<hstring>({ L".txt" }));
+        picker.FileTypeChoices().Insert(L"Text", single_threaded_vector<hstring>({ L".tia" }));
 
         auto initialize = picker.as<::IInitializeWithWindow>();
         if (initialize)
         {
+            HWND hwnd = ::GetActiveWindow();
             initialize->Initialize(hwnd);
         }
 
@@ -177,7 +175,7 @@ namespace winrt::runlock::implementation
             std::wstringstream ls(line);
             std::wstring token;
             std::vector<std::wstring> options;
-            while (std::getline(ls, token, L'|'))
+            while (std::getline(ls, token, L'\n'))
             {
                 if (!token.empty())
                 {

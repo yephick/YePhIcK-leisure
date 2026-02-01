@@ -1,15 +1,7 @@
-# ATT-GoGo
+﻿# ATT-GoGo
 
 ATT-GoGo is a companion addon for [All The Things (ATT)](https://github.com/DFortun81/AllTheThings), built for **World of Warcraft: Mists of Pandaria Classic**.  
 It provides a clean grid-style view of dungeon and raid progress, with tabs per expansion and dynamic layouts powered by ATT’s data.
-
----
-
-## Features
-- Per-expansion tabs with progress overview
-- Grid layout for dungeons and raids
-- Integration with ATT’s collection data
-- Lightweight and designed for efficient farming
 
 ---
 
@@ -40,6 +32,6 @@ You are free to use, modify, and distribute it without restriction.
 ---
 
 ## Acknowledgements
-- [All The Things (ATT)](https://github.com/DFortun81/AllTheThings) — the addon ecosystem that makes this project possible  
+- [All The Things (ATT)](https://github.com/DFortun81/AllTheThings) — the addon that makes this project possible  
 - The ATT community for their amazing data and tools  
 - WoW addon developers who keep the ecosystem thriving
