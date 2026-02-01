@@ -59,7 +59,7 @@ local function SetupOptionsFrame()
     local function RefreshControl(cb) cb:GetScript("OnShow")(cb) end
     for _, key in ipairs({
       "minimapCheckbox","instIconCheckbox","nakedTryOnCheckbox",
-      "removedCheckbox","criteriaCheckbox","groupVisualsCheckbox",
+      "removedCheckbox","mapPackageCheckbox","criteriaCheckbox","groupVisualsCheckbox",
     }) do
       RefreshControl(OptionsUI.controls[key])
     end
@@ -214,9 +214,24 @@ function OptionsUI.BuildAccountGroup(parent)
   )
   OptionsUI.controls.autoRefreshPopupCheckbox = autoRefreshPopupCheckbox
 
+  -- Use map package data in instances (ignore difficulty filtering)
+  local mapPackageCheckbox = AddCheckbox(
+    g,
+    "Ignore instance difficulty",
+    { "TOPLEFT", autoRefreshPopupCheckbox, "BOTTOMLEFT", 0, -6 },
+    function() return GetSetting("useMapPackageInInstances", true) end,
+    function(v) SetSetting("useMapPackageInInstances", v) end,
+    function()
+    RefreshPopupForCurrentData()
+    end,
+    "ON: In dungeons/raids, the Uncollected popup and minimap tooltip use the ATT map package list (same totals as /attmini).",
+    "OFF: Use the per-difficulty subset for the current instance difficulty (a bit buggy at times)."
+  )
+  OptionsUI.controls.mapPackageCheckbox = mapPackageCheckbox
+
   -- Other-toons dropdown
   local otherToonsLabel = g:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  otherToonsLabel:SetPoint("TOPLEFT", autoRefreshPopupCheckbox, "BOTTOMLEFT", 0, -8)
+  otherToonsLabel:SetPoint("TOPLEFT", mapPackageCheckbox, "BOTTOMLEFT", 0, -8)
   otherToonsLabel:SetText("Show other characters in tooltips")
 
   local otherToonsDD = CreateFrame("Frame", "ATTGoGoOtherToonsDropdown", g, "UIDropDownMenuTemplate")
@@ -255,7 +270,7 @@ function OptionsUI.BuildAccountGroup(parent)
   OptionsUI.controls.otherToonsDD = otherToonsDD
 
   -- Final group height
-  g:SetHeight(24 + (6 * 20) + (5 * 6) + 18 + 12 + 50)
+  g:SetHeight(24 + (7 * 21) + (5 * 6) + 18 + 12 + 50)
 end
 
 -- Per-character group --------------------------------------------------------
