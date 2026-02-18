@@ -7,6 +7,7 @@
 #include <cwctype>
 #include <iomanip>
 #include <numeric>
+#include <limits>
 #include <sstream>
 #include <string_view>
 #include <vector>
@@ -753,7 +754,8 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
     uint32_t fpsDen{};
     uint32_t videoBitrate{};
     uint32_t audioBitrate{};
-    DWORD videoStreamIndex{DWORD_MAX};
+    constexpr DWORD invalidStreamIndex{std::numeric_limits<DWORD>::max()};
+    DWORD videoStreamIndex{invalidStreamIndex};
     uint32_t allSamplesIndependent{};
     uint32_t maxKeyFrameSpacing{};
 
@@ -846,7 +848,7 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
     result.frameRate = (fpsNum > 0 && fpsDen > 0) ? (FormatRatio(fpsNum, fpsDen) + L" fps") : L"-";
     result.videoBitrate = videoBitrate > 0 ? (std::to_wstring(videoBitrate / 1000) + L" kbps") : L"-";
     result.audioBitrate = audioBitrate > 0 ? (std::to_wstring((audioBitrate * 8) / 1000) + L" kbps") : L"none";
-    if(videoStreamIndex != DWORD_MAX){
+    if(videoStreamIndex != invalidStreamIndex){
         AnalyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen, result);
     }
     result.isValid = true;
