@@ -120,6 +120,70 @@ std::vector<hstring> SplitRecentItems(std::wstring const& source){
     return items;
 }
 
+std::wstring Trim(std::wstring value){
+    const auto first = value.find_first_not_of(L" \t\r\n");
+    if(first == std::wstring::npos){
+        return L"";
+    }
+    const auto last = value.find_last_not_of(L" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+std::vector<double> ParseNumberList(std::wstring const& text){
+    std::vector<double> values;
+    size_t start{};
+    while(start <= text.size()){
+        const auto pos = text.find(L',', start);
+        auto token = Trim(text.substr(start, pos == std::wstring::npos ? std::wstring::npos : pos - start));
+        if(!token.empty()){
+            try{ values.push_back(std::stod(token)); }catch(...){ }
+        }
+        if(pos == std::wstring::npos){ break; }
+        start = pos + 1;
+    }
+    return values;
+}
+
+std::vector<std::pair<double, double>> ParseNumberPairs(std::wstring const& text){
+    std::vector<std::pair<double, double>> pairs;
+    size_t start{};
+    while(start <= text.size()){
+        const auto sep = text.find(L';', start);
+        const auto chunk = Trim(text.substr(start, sep == std::wstring::npos ? std::wstring::npos : sep - start));
+        if(!chunk.empty()){
+            const auto comma = chunk.find(L',');
+            if(comma != std::wstring::npos){
+                try{
+                    const auto a = std::stod(Trim(chunk.substr(0, comma)));
+                    const auto b = std::stod(Trim(chunk.substr(comma + 1)));
+                    pairs.emplace_back(a, b);
+                }catch(...){ }
+            }
+        }
+        if(sep == std::wstring::npos){ break; }
+        start = sep + 1;
+    }
+    return pairs;
+}
+
+std::wstring SerializeNumberList(std::vector<double> const& values){
+    std::wstringstream ss;
+    for(size_t i = 0; i < values.size(); ++i){
+        if(i > 0){ ss << L","; }
+        ss << std::setprecision(15) << values[i];
+    }
+    return ss.str();
+}
+
+std::wstring SerializeNumberPairs(std::vector<std::pair<double, double>> const& values){
+    std::wstringstream ss;
+    for(size_t i = 0; i < values.size(); ++i){
+        if(i > 0){ ss << L";"; }
+        ss << std::setprecision(15) << values[i].first << L"," << values[i].second;
+    }
+    return ss.str();
+}
+
 bool HasDecoderForSubtype(GUID const& subtype){
     MFT_REGISTER_TYPE_INFO inType{};
     inType.guidMajorType = MFMediaType_Video;
@@ -669,6 +733,58 @@ void MainWindow::KeyFrameSnapMode_Checked(IInspectable const& sender, RoutedEven
     m_keyFrameSnapMode = unbox_value<hstring>(radio.Tag()).c_str();
 }
 
+void MainWindow::NewProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    ResetProjectState(false);
+    StatusText().Text(L"New project created");
+}
+
+Windows::Foundation::IAsyncAction MainWindow::OpenProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    Windows::Storage::Pickers::FileOpenPicker picker{};
+    picker.FileTypeFilter().Append(L".llvc");
+    picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::DocumentsLibrary);
+
+    auto initWithWindow{picker.as<IInitializeWithWindow>()};
+    check_hresult(initWithWindow->Initialize(GetWindowHandle()));
+
+    if(const auto file{co_await picker.PickSingleFileAsync()}){
+        co_await OpenProjectFileAsync(file);
+    }
+}
+
+Windows::Foundation::IAsyncAction MainWindow::SaveProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    Windows::Storage::StorageFile target{nullptr};
+
+    if(!m_projectPath.empty()){
+        try{
+            target = co_await Windows::Storage::StorageFile::GetFileFromPathAsync(m_projectPath);
+        }catch(...){
+            target = nullptr;
+        }
+    }
+
+    if(!target){
+        Windows::Storage::Pickers::FileSavePicker picker{};
+        picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::DocumentsLibrary);
+        picker.FileTypeChoices().Insert(L"llvc project", single_threaded_vector<hstring>({L".llvc"}));
+        picker.SuggestedFileName(L"project");
+
+        auto initWithWindow{picker.as<IInitializeWithWindow>()};
+        check_hresult(initWithWindow->Initialize(GetWindowHandle()));
+
+        target = co_await picker.PickSaveFileAsync();
+        if(!target){
+            co_return;
+        }
+    }
+
+    co_await SaveProjectFileAsync(target);
+}
+
+void MainWindow::CloseProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    ResetProjectState(true);
+    StatusText().Text(L"Project closed");
+}
+
 Windows::Foundation::IAsyncAction MainWindow::LoadVideoMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
     co_await PickAndLoadVideoAsync();
 }
@@ -690,6 +806,21 @@ Windows::Foundation::IAsyncAction MainWindow::RecentVideoMenuItem_Click(IInspect
 
     if(openFailed){
         co_await ShowInfoDialogAsync(L"Open failed", L"Could not open selected recent video.");
+    }
+}
+
+Windows::Foundation::IAsyncAction MainWindow::RecentProjectMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&){
+    const auto item{sender.try_as<Controls::MenuFlyoutItem>()};
+    if(!item || !item.Tag()){
+        co_return;
+    }
+
+    const auto path{unbox_value<hstring>(item.Tag())};
+    try{
+        const auto file{co_await Windows::Storage::StorageFile::GetFileFromPathAsync(path)};
+        co_await OpenProjectFileAsync(file);
+    }catch(...){
+        co_await ShowInfoDialogAsync(L"Open failed", L"Could not open selected recent project.");
     }
 }
 
@@ -760,7 +891,8 @@ void MainWindow::RefreshRecentProjectsMenu(){
     for(auto const& path : m_recentProjects){
         Controls::MenuFlyoutItem item{};
         item.Text(path);
-        item.IsEnabled(false);
+        item.Tag(box_value(path));
+        item.Click({this, &MainWindow::RecentProjectMenuItem_Click});
         menu.Items().Append(item);
     }
 }
@@ -791,6 +923,114 @@ void MainWindow::AddRecentProject(hstring const& path){
     }
     RefreshRecentProjectsMenu();
     SaveAppSettings();
+}
+
+void MainWindow::ResetProjectState(const bool clearLoadedVideo){
+    m_projectPath.clear();
+    m_projectUnknownLines.clear();
+    m_selectedKeyFrames.clear();
+    m_cutIntervals.clear();
+    m_keyFrameSnapMode = L"Nearest";
+    NearestSnapRadio().IsChecked(true);
+
+    if(clearLoadedVideo){
+        m_loadedFile = nullptr;
+        m_player.Source(nullptr);
+    }
+}
+
+Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Storage::StorageFile const& file){
+    const auto lines{co_await Windows::Storage::FileIO::ReadLinesAsync(file)};
+
+    std::vector<std::wstring> unknownLines;
+    std::vector<double> selectedKeyFrames;
+    std::vector<std::pair<double, double>> cutIntervals;
+    std::wstring loadedFilePath;
+    std::wstring snapMode{L"Nearest"};
+    double zoomLevel{TimelineZoomSlider().Value()};
+
+    for(auto const& lineH : lines){
+        const std::wstring line{lineH.c_str()};
+        const auto trimmed{Trim(line)};
+        if(trimmed.empty() || trimmed[0] == L'#'){
+            unknownLines.push_back(line);
+            continue;
+        }
+
+        const auto eqPos{line.find(L'=')};
+        if(eqPos == std::wstring::npos){
+            unknownLines.push_back(line);
+            continue;
+        }
+
+        const auto key{Trim(line.substr(0, eqPos))};
+        const auto value{Trim(line.substr(eqPos + 1))};
+
+        if(key == L"file_path"){
+            loadedFilePath = value;
+        }else if(key == L"storyline_zoom"){
+            try{ zoomLevel = std::stod(value); }catch(...){ unknownLines.push_back(line); }
+        }else if(key == L"keyframe_snap_mode"){
+            if(value == L"Left" || value == L"Right" || value == L"Nearest"){
+                snapMode = value;
+            }else{
+                unknownLines.push_back(line);
+            }
+        }else if(key == L"selected_key_frames"){
+            selectedKeyFrames = ParseNumberList(value);
+        }else if(key == L"cut_intervals"){
+            cutIntervals = ParseNumberPairs(value);
+        }else{
+            unknownLines.push_back(line);
+        }
+    }
+
+    if(!loadedFilePath.empty()){
+        try{
+            const auto videoFile{co_await Windows::Storage::StorageFile::GetFileFromPathAsync(loadedFilePath)};
+            co_await LoadVideoFileAsync(videoFile);
+        }catch(...){
+            StatusText().Text(L"Project opened, but referenced video could not be loaded");
+        }
+    }
+
+    zoomLevel = std::clamp(zoomLevel, TimelineZoomSlider().Minimum(), TimelineZoomSlider().Maximum());
+    TimelineZoomSlider().Value(zoomLevel);
+    m_keyFrameSnapMode = snapMode;
+    m_selectedKeyFrames = std::move(selectedKeyFrames);
+    m_cutIntervals = std::move(cutIntervals);
+    m_projectUnknownLines = std::move(unknownLines);
+    m_projectPath = file.Path();
+
+    if(snapMode == L"Left"){
+        LeftSnapRadio().IsChecked(true);
+    }else if(snapMode == L"Right"){
+        RightSnapRadio().IsChecked(true);
+    }else{
+        NearestSnapRadio().IsChecked(true);
+    }
+
+    AddRecentProject(file.Path());
+    StatusText().Text(L"Project loaded");
+}
+
+Windows::Foundation::IAsyncAction MainWindow::SaveProjectFileAsync(Windows::Storage::StorageFile const& file){
+    std::vector<hstring> lines;
+    lines.emplace_back(L"# llvc project file");
+    lines.emplace_back(L"file_path=" + std::wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
+    lines.emplace_back(L"storyline_zoom=" + std::to_wstring(TimelineZoomSlider().Value()));
+    lines.emplace_back(L"keyframe_snap_mode=" + m_keyFrameSnapMode);
+    lines.emplace_back(L"selected_key_frames=" + SerializeNumberList(m_selectedKeyFrames));
+    lines.emplace_back(L"cut_intervals=" + SerializeNumberPairs(m_cutIntervals));
+
+    for(auto const& unknown : m_projectUnknownLines){
+        lines.emplace_back(unknown);
+    }
+
+    co_await Windows::Storage::FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(std::move(lines)));
+    m_projectPath = file.Path();
+    AddRecentProject(file.Path());
+    StatusText().Text(L"Project saved");
 }
 
 Windows::Foundation::IAsyncAction MainWindow::ShowInfoDialogAsync(hstring const& title, hstring const& message){
@@ -1093,7 +1333,6 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
     m_player.Source(source);
     m_loadedFile = file;
     AddRecentVideo(file.Path());
-    AddRecentProject(file.Path());
 
     ThumbnailLayer().Children().Clear();
     TimelineCanvas().Width(640.0);
