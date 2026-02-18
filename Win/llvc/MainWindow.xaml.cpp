@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cwctype>
 
 #include <microsoft.ui.xaml.window.h>
 #include <winrt/Microsoft.UI.Input.h>
@@ -295,10 +296,13 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
     }
 
     if(!DispatcherQueue().HasThreadAccess()){
-        co_await winrt::resume_foreground(DispatcherQueue());
-        if(m_isClosing || !m_loadedFile || m_timelineDurationSeconds <= 0){
-            co_return;
-        }
+        const auto weak{get_weak()};
+        DispatcherQueue().TryEnqueue([weak](){
+            if(const auto self{weak.get()}){
+                self->RenderTimelineAsync();
+            }
+        });
+        co_return;
     }
 
     try{
