@@ -34,12 +34,24 @@
             </StackPanel>
 
             <Border Grid.Row="1" BorderThickness="1" BorderBrush="#404040" Background="#111111" CornerRadius="4" Padding="6">
-                <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled">
-                    <Canvas x:Name="TimelineCanvas" Height="86" PointerPressed="TimelineCanvas_PointerPressed" Background="#111111">
-                        <Canvas x:Name="ThumbnailLayer" Height="86"/>
-                        <Rectangle x:Name="TimelineCursor" Canvas.Left="0" Width="2" Height="86" Fill="White"/>
-                    </Canvas>
-                </ScrollViewer>
+                <Grid RowSpacing="4">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="TimelineScrollViewer_ViewChanged">
+                        <StackPanel Orientation="Vertical" Spacing="4">
+                            <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#111111"/>
+                            <Canvas x:Name="TimelineCanvas" Height="86" PointerPressed="TimelineCanvas_PointerPressed" Background="#111111">
+                                <Canvas x:Name="ThumbnailLayer" Height="86"/>
+                                <Rectangle x:Name="TimelineCursor" Canvas.Left="0" Width="2" Height="86" Fill="White"/>
+                            </Canvas>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <ScrollBar Grid.Row="2" x:Name="TimelineHorizontalScrollBar" Orientation="Horizontal" Minimum="0" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
+                </Grid>
             </Border>
         </Grid>
 
