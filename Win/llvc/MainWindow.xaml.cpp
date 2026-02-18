@@ -5,11 +5,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cwctype>
+#include <vector>
 
 #include <microsoft.ui.xaml.window.h>
 #include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
+#include <winrt/Microsoft.UI.Xaml.Shapes.h>
+#include <winrt/Windows.UI.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <winrt/Windows.Media.Core.h>
 #include <winrt/Windows.Media.Editing.h>
@@ -171,23 +174,101 @@ void MainWindow::TimelineZoomSlider_ValueChanged(IInspectable const&, Controls::
     }
 }
 
-void MainWindow::TimelineCanvas_PointerPressed(IInspectable const&, Input::PointerRoutedEventArgs const& e){
-    if(!m_player || m_timelineDurationSeconds <= 0){
+void MainWindow::TimelineHorizontalScrollBar_ValueChanged(IInspectable const&, Controls::Primitives::RangeBaseValueChangedEventArgs const& args){
+    if(m_isClosing){
         return;
     }
 
-    if(TimelineCanvas().Width() <= 0){
+    const auto scrollViewer{TimelineScrollViewer()};
+    const double offset{scrollViewer.HorizontalOffset()};
+    if(std::fabs(offset - args.NewValue()) > 0.5){
+        const auto targetOffset{box_value(args.NewValue()).as<Windows::Foundation::IReference<double>>()};
+        scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
+    }
+}
+
+void MainWindow::TimelineScrollViewer_ViewChanged(IInspectable const&, Controls::ScrollViewerViewChangedEventArgs const&){
+    SyncTimelineHorizontalScrollBar();
+}
+
+void MainWindow::TimelineScrollViewer_SizeChanged(IInspectable const&, SizeChangedEventArgs const&){
+    SyncTimelineHorizontalScrollBar();
+}
+
+void MainWindow::TimelineCanvas_PointerPressed(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+    if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
+        return;
+    }
+
+    const auto point{e.GetCurrentPoint(TimelineCanvas())};
+    if(!point.Properties().IsLeftButtonPressed()){
+        return;
+    }
+
+    m_isTimelineDragging = true;
+    m_timelineDragMoved = false;
+    m_timelineDragPointerId = e.Pointer().PointerId();
+    m_timelineDragStartX = static_cast<double>(point.Position().X);
+    m_timelineDragStartOffset = TimelineScrollViewer().HorizontalOffset();
+
+    TimelineCanvas().CapturePointer(e.Pointer());
+    e.Handled(true);
+}
+
+void MainWindow::TimelineCanvas_PointerMoved(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+    if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
         return;
     }
 
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
     const double pointerX{static_cast<double>(point.Position().X)};
-    const double x{std::clamp(pointerX, 0.0, TimelineCanvas().Width())};
-    const double ratio{x / TimelineCanvas().Width()};
-    const double targetSeconds{ratio * m_timelineDurationSeconds};
+    const double deltaX{pointerX - m_timelineDragStartX};
 
-    m_player.PlaybackSession().Position(SecondsToTimeSpan(targetSeconds));
-    UpdateTimelineCursorFromPlayback();
+    if(std::fabs(deltaX) > 4.0){
+        m_timelineDragMoved = true;
+    }
+
+    const auto scrollViewer{TimelineScrollViewer()};
+    const double viewportWidth{scrollViewer.ViewportWidth()};
+    const double maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
+    const double target{std::clamp(m_timelineDragStartOffset - deltaX, 0.0, maxOffset)};
+    const auto targetOffset{box_value(target).as<Windows::Foundation::IReference<double>>()};
+    scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
+    e.Handled(true);
+}
+
+void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+    if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
+        return;
+    }
+
+    const auto point{e.GetCurrentPoint(TimelineCanvas())};
+    const double pointerX{static_cast<double>(point.Position().X)};
+    const bool dragged{m_timelineDragMoved};
+
+    m_isTimelineDragging = false;
+    m_timelineDragMoved = false;
+    TimelineCanvas().ReleasePointerCapture(e.Pointer());
+
+    if(!dragged){
+        SeekTimelineToCanvasX(pointerX);
+    }
+
+    e.Handled(true);
+}
+
+void MainWindow::TimelineCanvas_PointerCanceled(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+    if(m_isTimelineDragging && e.Pointer().PointerId() == m_timelineDragPointerId){
+        m_isTimelineDragging = false;
+        m_timelineDragMoved = false;
+        TimelineCanvas().ReleasePointerCapture(e.Pointer());
+        e.Handled(true);
+    }
+}
+
+void MainWindow::TimelineCanvas_PointerCaptureLost(IInspectable const&, Input::PointerRoutedEventArgs const&){
+    m_isTimelineDragging = false;
+    m_timelineDragMoved = false;
 }
 
 void MainWindow::OnNaturalDurationChanged(Windows::Media::Playback::MediaPlaybackSession const& sender, IInspectable const&){
@@ -227,6 +308,110 @@ void MainWindow::UpdateTimelineCursorFromPlayback(){
     const double ratio{std::clamp(seconds / m_timelineDurationSeconds, 0.0, 1.0)};
     const double left{ratio * TimelineCanvas().Width()};
     Controls::Canvas::SetLeft(TimelineCursor(), left);
+
+    if(m_player.PlaybackSession().PlaybackState() == Windows::Media::Playback::MediaPlaybackState::Playing){
+        EnsureTimelineCursorVisible(left);
+    }
+
+    SyncTimelineHorizontalScrollBar();
+}
+
+void MainWindow::SyncTimelineHorizontalScrollBar(){
+    const auto scrollViewer{TimelineScrollViewer()};
+    const double scrollableWidth{std::max(0.0, scrollViewer.ScrollableWidth())};
+    const double viewportWidth{std::max(1.0, scrollViewer.ViewportWidth())};
+
+    auto bar{TimelineHorizontalScrollBar()};
+    bar.Maximum(std::max(1.0, scrollableWidth));
+    bar.LargeChange(std::max(32.0, viewportWidth * 0.8));
+    bar.SmallChange(24.0);
+    bar.IsEnabled(true);
+    bar.Visibility(Visibility::Visible);
+
+    const double currentValue{bar.Value()};
+    const double offset{std::clamp(scrollViewer.HorizontalOffset(), 0.0, bar.Maximum())};
+    if(std::fabs(currentValue - offset) > 0.5){
+        bar.Value(offset);
+    }
+}
+
+void MainWindow::SeekTimelineToCanvasX(const double pointerX){
+    if(!m_player || m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
+        return;
+    }
+
+    const double x{std::clamp(pointerX, 0.0, TimelineCanvas().Width())};
+    const double ratio{x / TimelineCanvas().Width()};
+    const double targetSeconds{ratio * m_timelineDurationSeconds};
+
+    m_player.PlaybackSession().Position(SecondsToTimeSpan(targetSeconds));
+    UpdateTimelineCursorFromPlayback();
+}
+
+void MainWindow::EnsureTimelineCursorVisible(const double cursorLeft){
+    const auto scrollViewer{TimelineScrollViewer()};
+    const double currentOffset{scrollViewer.HorizontalOffset()};
+    const double viewportWidth{scrollViewer.ViewportWidth()};
+
+    if(viewportWidth <= 0){
+        return;
+    }
+
+    constexpr double cursorPadding{48.0};
+    const double minVisible{currentOffset + cursorPadding};
+    const double maxVisible{currentOffset + viewportWidth - cursorPadding};
+    const double maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
+
+    if(cursorLeft < minVisible){
+        const auto targetOffset{box_value(std::clamp(cursorLeft - cursorPadding, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
+        scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
+    }else if(cursorLeft > maxVisible){
+        const auto targetOffset{box_value(std::clamp(cursorLeft + cursorPadding - viewportWidth, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
+        scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
+    }
+}
+
+void MainWindow::RenderTimelineTicks(){
+    TimelineTickCanvas().Children().Clear();
+
+    const double width{TimelineCanvas().Width()};
+    TimelineTickCanvas().Width(width);
+    if(m_timelineDurationSeconds <= 0 || width <= 0){
+        return;
+    }
+
+    const int majorTickCount{std::clamp(static_cast<int>(std::ceil(width / 120.0)), 6, 36)};
+
+    for(int i = 0; i <= majorTickCount; ++i){
+        const double ratio{static_cast<double>(i) / static_cast<double>(majorTickCount)};
+        const double x{ratio * width};
+
+        Shapes::Line majorTick{};
+        majorTick.X1(x);
+        majorTick.X2(x);
+        majorTick.Y1(7);
+        majorTick.Y2(23);
+        majorTick.Stroke(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 180, 180, 180)));
+        majorTick.StrokeThickness(1.0);
+        TimelineTickCanvas().Children().Append(majorTick);
+
+        Controls::TextBlock label{};
+        const int totalSeconds{static_cast<int>(std::round(ratio * m_timelineDurationSeconds))};
+        const int minutes{totalSeconds / 60};
+        const int seconds{totalSeconds % 60};
+        std::wstring text{std::to_wstring(minutes)};
+        text += L":";
+        if(seconds < 10){
+            text += L"0";
+        }
+        text += std::to_wstring(seconds);
+        label.Text(text);
+        label.FontSize(11);
+        label.Foreground(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 200, 200, 200)));
+        Controls::Canvas::SetLeft(label, std::max(0.0, x + 3.0));
+        Controls::Canvas::SetTop(label, 0);
+        TimelineTickCanvas().Children().Append(label);
+    }
 }
 
 Windows::Foundation::TimeSpan MainWindow::SecondsToTimeSpan(const double seconds){
@@ -277,8 +462,11 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
 
     ThumbnailLayer().Children().Clear();
     TimelineCanvas().Width(640.0);
+    TimelineTickCanvas().Width(640.0);
+    TimelineTickCanvas().Children().Clear();
     m_timelineDurationSeconds = 0;
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
+    SyncTimelineHorizontalScrollBar();
 
     std::wstring status{L"Loaded: "};
     status += file.Name().c_str();
@@ -315,6 +503,8 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
         TimelineCanvas().Width(totalWidth);
         ThumbnailLayer().Children().Clear();
         Controls::Canvas::SetLeft(TimelineCursor(), 0);
+        RenderTimelineTicks();
+        SyncTimelineHorizontalScrollBar();
 
         const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_loadedFile)};
         Windows::Media::Editing::MediaComposition composition{};
@@ -324,12 +514,51 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
             co_return;
         }
 
-        for(int i = 0; i < thumbnailCount; ++i){
+        std::vector<bool> thumbnailBuilt(static_cast<size_t>(thumbnailCount), false);
+
+        for(int builtCount = 0; builtCount < thumbnailCount; ++builtCount){
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
                 co_return;
             }
 
-            const double t{(static_cast<double>(i) + 0.5) / static_cast<double>(thumbnailCount)};
+            const auto scrollViewer{TimelineScrollViewer()};
+            const double viewportWidth{std::max(0.0, scrollViewer.ViewportWidth())};
+            const double viewportLeft{scrollViewer.HorizontalOffset()};
+            const double viewportRight{viewportLeft + viewportWidth};
+            const int firstVisibleIndex{std::clamp(static_cast<int>(std::floor(viewportLeft / thumbnailWidth)), 0, thumbnailCount - 1)};
+            const int lastVisibleIndex{std::clamp(static_cast<int>(std::floor(std::max(viewportLeft, viewportRight - 1.0) / thumbnailWidth)), 0, thumbnailCount - 1)};
+
+            int nextIndex{-1};
+            for(int i = firstVisibleIndex; i <= lastVisibleIndex; ++i){
+                if(!thumbnailBuilt[static_cast<size_t>(i)]){
+                    nextIndex = i;
+                    break;
+                }
+            }
+
+            if(nextIndex < 0){
+                int left{firstVisibleIndex - 1};
+                int right{lastVisibleIndex + 1};
+                while(nextIndex < 0 && (left >= 0 || right < thumbnailCount)){
+                    if(right < thumbnailCount && !thumbnailBuilt[static_cast<size_t>(right)]){
+                        nextIndex = right;
+                        break;
+                    }
+                    ++right;
+
+                    if(left >= 0 && !thumbnailBuilt[static_cast<size_t>(left)]){
+                        nextIndex = left;
+                        break;
+                    }
+                    --left;
+                }
+            }
+
+            if(nextIndex < 0){
+                break;
+            }
+
+            const double t{(static_cast<double>(nextIndex) + 0.5) / static_cast<double>(thumbnailCount)};
             const auto stream{co_await composition.GetThumbnailAsync(SecondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
                 co_return;
@@ -344,11 +573,14 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
             co_await bitmap.SetSourceAsync(stream);
             image.Source(bitmap);
 
-            Controls::Canvas::SetLeft(image, i * thumbnailWidth);
+            Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
             ThumbnailLayer().Children().Append(image);
+            thumbnailBuilt[static_cast<size_t>(nextIndex)] = true;
         }
 
         UpdateTimelineCursorFromPlayback();
+        EnsureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
+        SyncTimelineHorizontalScrollBar();
 
         std::wstring status{L"Loaded: "};
         status += m_loadedFile.Name().c_str();
