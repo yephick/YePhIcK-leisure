@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include <microsoft.ui.xaml.window.h>
+#include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
@@ -122,7 +123,8 @@ void MainWindow::TimelineCanvas_PointerPressed(IInspectable const&, Input::Point
     }
 
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
-    const double x{std::clamp(point.Position().X, 0.0, TimelineCanvas().Width())};
+    const double pointerX{static_cast<double>(point.Position().X)};
+    const double x{std::clamp(pointerX, 0.0, TimelineCanvas().Width())};
     const double ratio{x / TimelineCanvas().Width()};
     const double targetSeconds{ratio * m_timelineDurationSeconds};
 
@@ -143,7 +145,7 @@ void MainWindow::OnPositionTimerTick(IInspectable const&, IInspectable const&){
     UpdateTimelineCursorFromPlayback();
 }
 
-void MainWindow::UpdateTimelineCursorFromPlayback() const{
+void MainWindow::UpdateTimelineCursorFromPlayback(){
     if(!m_player || m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
     }
@@ -156,9 +158,7 @@ void MainWindow::UpdateTimelineCursorFromPlayback() const{
 }
 
 Windows::Foundation::TimeSpan MainWindow::SecondsToTimeSpan(const double seconds){
-    Windows::Foundation::TimeSpan value{};
-    value.Duration = static_cast<int64_t>(seconds * 10'000'000.0);
-    return value;
+    return std::chrono::duration_cast<Windows::Foundation::TimeSpan>(std::chrono::duration<double>(seconds));
 }
 
 void MainWindow::Window_DragOver(IInspectable const&, DragEventArgs const& e){

@@ -32,7 +32,7 @@ private:
     void SaveWindowPlacement() const;
     winrt::Windows::Foundation::IAsyncAction LoadVideoFileAsync(winrt::Windows::Storage::StorageFile const& file);
     winrt::fire_and_forget RenderTimelineAsync();
-    void UpdateTimelineCursorFromPlayback() const;
+    void UpdateTimelineCursorFromPlayback();
     static winrt::Windows::Foundation::TimeSpan SecondsToTimeSpan(double seconds);
 };
 
