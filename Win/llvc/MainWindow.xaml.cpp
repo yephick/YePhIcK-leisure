@@ -49,15 +49,6 @@ HWND MainWindow::GetWindowHandle() const{
     return hwnd;
 }
 
-uint32_t MainWindow::GetWindowDpi() const{
-    const uint32_t dpi{::GetDpiForWindow(GetWindowHandle())};
-    return dpi == 0 ? 96U : dpi;
-}
-
-int32_t MainWindow::DipsToPixels(const int32_t dipValue, const uint32_t dpi){
-    return static_cast<int32_t>(std::lround((static_cast<double>(dipValue) * static_cast<double>(dpi)) / 96.0));
-}
-
 bool MainWindow::IsRectVisibleOnAnyMonitor(RECT const& rect){
     const HMONITOR monitor{::MonitorFromRect(&rect, MONITOR_DEFAULTTONULL)};
     if(!monitor){
@@ -82,16 +73,10 @@ void MainWindow::RestoreWindowPlacement(){
         return;
     }
 
-    const auto leftDip{unbox_value<int32_t>(values.Lookup(W_POS_L))};
-    const auto topDip{unbox_value<int32_t>(values.Lookup(W_POS_T))};
-    const auto widthDip{unbox_value<int32_t>(values.Lookup(W_POS_W))};
-    const auto heightDip{unbox_value<int32_t>(values.Lookup(W_POS_H))};
-
-    const uint32_t dpi{GetWindowDpi()};
-    const auto left{DipsToPixels(leftDip, dpi)};
-    const auto top{DipsToPixels(topDip, dpi)};
-    const auto width{DipsToPixels(widthDip, dpi)};
-    const auto height{DipsToPixels(heightDip, dpi)};
+    const auto left{unbox_value<int32_t>(values.Lookup(W_POS_L))};
+    const auto top{unbox_value<int32_t>(values.Lookup(W_POS_T))};
+    const auto width{unbox_value<int32_t>(values.Lookup(W_POS_W))};
+    const auto height{unbox_value<int32_t>(values.Lookup(W_POS_H))};
 
     const auto hwnd{GetWindowHandle()};
 
@@ -123,11 +108,10 @@ void MainWindow::SaveWindowPlacement() const{
 
     const auto localSettings{Windows::Storage::ApplicationData::Current().LocalSettings()};
     const auto values{localSettings.Values()};
-    const uint32_t dpi{GetWindowDpi()};
-    values.Insert(W_POS_L, box_value(static_cast<int32_t>(std::lround((static_cast<double>(normalBounds.left) * 96.0) / static_cast<double>(dpi)))));
-    values.Insert(W_POS_T, box_value(static_cast<int32_t>(std::lround((static_cast<double>(normalBounds.top) * 96.0) / static_cast<double>(dpi)))));
-    values.Insert(W_POS_W, box_value(static_cast<int32_t>(std::lround((static_cast<double>(normalBounds.right - normalBounds.left) * 96.0) / static_cast<double>(dpi)))));
-    values.Insert(W_POS_H, box_value(static_cast<int32_t>(std::lround((static_cast<double>(normalBounds.bottom - normalBounds.top) * 96.0) / static_cast<double>(dpi)))));
+    values.Insert(W_POS_L, box_value(static_cast<int32_t>(normalBounds.left)));
+    values.Insert(W_POS_T, box_value(static_cast<int32_t>(normalBounds.top)));
+    values.Insert(W_POS_W, box_value(static_cast<int32_t>(normalBounds.right - normalBounds.left)));
+    values.Insert(W_POS_H, box_value(static_cast<int32_t>(normalBounds.bottom - normalBounds.top)));
 }
 
 void MainWindow::OnClosed(IInspectable const&, WindowEventArgs const&){
