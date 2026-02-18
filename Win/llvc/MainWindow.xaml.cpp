@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include <microsoft.ui.xaml.window.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <winrt/Windows.Media.Core.h>
 #include <winrt/Windows.Media.Playback.h>
@@ -14,11 +15,64 @@ using namespace Microsoft::UI::Xaml;
 
 namespace winrt::llvc::implementation{
 
+constexpr auto W_POS_L{L"WindowLeft"};
+constexpr auto W_POS_T{L"WindowTop"};
+constexpr auto W_POS_W{L"WindowWidth"};
+constexpr auto W_POS_H{L"WindowHeight"};
+
 MainWindow::MainWindow(){
     InitializeComponent();
 
     m_player = Windows::Media::Playback::MediaPlayer();
     PreviewPlayer().SetMediaPlayer(m_player);
+
+    RestoreWindowPlacement();
+    Closed({this, &MainWindow::OnClosed});
+}
+
+HWND MainWindow::GetWindowHandle() const{
+    HWND hwnd{};
+    const auto projected{const_cast<MainWindow*>(this)->get_strong()};
+    check_hresult(projected.as<::IWindowNative>()->get_WindowHandle(&hwnd));
+    return hwnd;
+}
+
+void MainWindow::RestoreWindowPlacement(){
+    const auto localSettings{Windows::Storage::ApplicationData::Current().LocalSettings()};
+    const auto values{localSettings.Values()};
+
+    if(!values.HasKey(W_POS_L) || !values.HasKey(W_POS_T) || !values.HasKey(W_POS_W) || !values.HasKey(W_POS_H)){
+        return;
+    }
+
+    const auto left{unbox_value<int32_t>(values.Lookup(W_POS_L))};
+    const auto top{unbox_value<int32_t>(values.Lookup(W_POS_T))};
+    const auto width{unbox_value<int32_t>(values.Lookup(W_POS_W))};
+    const auto height{unbox_value<int32_t>(values.Lookup(W_POS_H))};
+
+    const auto hwnd{GetWindowHandle()};
+    SetWindowPos(hwnd, nullptr, left, top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
+}
+
+void MainWindow::SaveWindowPlacement() const{
+    WINDOWPLACEMENT placement{};
+    placement.length = sizeof(placement);
+    if(!GetWindowPlacement(GetWindowHandle(), &placement)){
+        return;
+    }
+
+    const auto normalBounds{placement.rcNormalPosition};
+
+    const auto localSettings{Windows::Storage::ApplicationData::Current().LocalSettings()};
+    const auto values{localSettings.Values()};
+    values.Insert(W_POS_L, box_value(static_cast<int32_t>(normalBounds.left)));
+    values.Insert(W_POS_T, box_value(static_cast<int32_t>(normalBounds.top)));
+    values.Insert(W_POS_W, box_value(static_cast<int32_t>(normalBounds.right - normalBounds.left)));
+    values.Insert(W_POS_H, box_value(static_cast<int32_t>(normalBounds.bottom - normalBounds.top)));
+}
+
+void MainWindow::OnClosed(IInspectable const&, WindowEventArgs const&){
+    SaveWindowPlacement();
 }
 
 void MainWindow::StartButton_Click(IInspectable const&, RoutedEventArgs const&){
@@ -86,14 +140,6 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
     StatusText().Text(status);
 
     co_return;
-}
-
-int32_t MainWindow::MyProperty(){
-    throw hresult_not_implemented();
-}
-
-void MainWindow::MyProperty(int32_t){
-    throw hresult_not_implemented();
 }
 
 }
