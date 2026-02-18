@@ -50,7 +50,9 @@
                         </StackPanel>
                     </ScrollViewer>
 
-                    <ScrollBar Grid.Row="1" x:Name="TimelineHorizontalScrollBar" Orientation="Horizontal" Minimum="0" Height="20" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="0,2,0,0" Visibility="Visible" Opacity="1" Background="#252525" Foreground="#D0D0D0" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
+                    <Border Grid.Row="1" Margin="0,2,0,0" Padding="2" Background="#202020" BorderBrush="#6A6A6A" BorderThickness="1" CornerRadius="2">
+                        <ScrollBar x:Name="TimelineHorizontalScrollBar" Orientation="Horizontal" Minimum="0" Height="16" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Visibility="Visible" Opacity="1" Background="#3A3A3A" Foreground="#FFFFFF" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
+                    </Border>
                 </Grid>
             </Border>
         </Grid>
