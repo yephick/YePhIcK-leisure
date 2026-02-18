@@ -50,6 +50,7 @@ private:
     void SyncTimelineHorizontalScrollBar();
     void RenderTimelineTicks();
     void SeekTimelineToCanvasX(double pointerX);
+    void EnsureTimelineCursorVisible(double cursorLeft);
     static winrt::Windows::Foundation::TimeSpan SecondsToTimeSpan(double seconds);
     static bool IsRectVisibleOnAnyMonitor(RECT const& rect);
 };

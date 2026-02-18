@@ -305,24 +305,7 @@ void MainWindow::UpdateTimelineCursorFromPlayback(){
     Controls::Canvas::SetLeft(TimelineCursor(), left);
 
     if(m_player.PlaybackSession().PlaybackState() == Windows::Media::Playback::MediaPlaybackState::Playing){
-        const auto scrollViewer{TimelineScrollViewer()};
-        const double currentOffset{scrollViewer.HorizontalOffset()};
-        const double viewportWidth{scrollViewer.ViewportWidth()};
-
-        if(viewportWidth > 0){
-            constexpr double cursorPadding{48.0};
-            const double minVisible{currentOffset + cursorPadding};
-            const double maxVisible{currentOffset + viewportWidth - cursorPadding};
-            const double maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
-
-            if(left < minVisible){
-                const auto targetOffset{box_value(std::clamp(left - cursorPadding, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
-                scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
-            }else if(left > maxVisible){
-                const auto targetOffset{box_value(std::clamp(left + cursorPadding - viewportWidth, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
-                scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
-            }
-        }
+        EnsureTimelineCursorVisible(left);
     }
 
     SyncTimelineHorizontalScrollBar();
@@ -356,6 +339,29 @@ void MainWindow::SeekTimelineToCanvasX(const double pointerX){
 
     m_player.PlaybackSession().Position(SecondsToTimeSpan(targetSeconds));
     UpdateTimelineCursorFromPlayback();
+}
+
+void MainWindow::EnsureTimelineCursorVisible(const double cursorLeft){
+    const auto scrollViewer{TimelineScrollViewer()};
+    const double currentOffset{scrollViewer.HorizontalOffset()};
+    const double viewportWidth{scrollViewer.ViewportWidth()};
+
+    if(viewportWidth <= 0){
+        return;
+    }
+
+    constexpr double cursorPadding{48.0};
+    const double minVisible{currentOffset + cursorPadding};
+    const double maxVisible{currentOffset + viewportWidth - cursorPadding};
+    const double maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
+
+    if(cursorLeft < minVisible){
+        const auto targetOffset{box_value(std::clamp(cursorLeft - cursorPadding, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
+        scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
+    }else if(cursorLeft > maxVisible){
+        const auto targetOffset{box_value(std::clamp(cursorLeft + cursorPadding - viewportWidth, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
+        scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
+    }
 }
 
 void MainWindow::RenderTimelineTicks(){
@@ -526,6 +532,8 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
         }
 
         UpdateTimelineCursorFromPlayback();
+        EnsureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
+        SyncTimelineHorizontalScrollBar();
 
         std::wstring status{L"Loaded: "};
         status += m_loadedFile.Name().c_str();
