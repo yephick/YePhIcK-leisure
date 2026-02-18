@@ -64,13 +64,12 @@ int32_t DipsToPixels(const int32_t dipValue, const uint32_t dpi){
 }
 
 bool MainWindow::IsRectVisibleOnAnyMonitor(RECT const& rect){
-    const HMONITOR monitor{::MonitorFromRect(&rect, MONITOR_DEFAULTTONULL)};
+    const auto monitor{::MonitorFromRect(&rect, MONITOR_DEFAULTTONULL)};
     if(!monitor){
         return false;
     }
 
-    MONITORINFO monitorInfo{};
-    monitorInfo.cbSize = sizeof(monitorInfo);
+    MONITORINFO monitorInfo{.cbSize = sizeof(monitorInfo)};
     if(!::GetMonitorInfoW(monitor, &monitorInfo)){
         return false;
     }
@@ -94,7 +93,7 @@ void MainWindow::RestoreWindowPlacement(){
 
     SetWindowPos(hwnd, nullptr, left, top, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
 
-    const uint32_t currentDpi{::GetDpiForWindow(hwnd)};
+    const auto currentDpi{::GetDpiForWindow(hwnd)};
     const bool hasDpiData{values.HasKey(W_POS_DPI)};
     const auto storedWidth{unbox_value<int32_t>(values.Lookup(W_POS_W))};
     const auto storedHeight{unbox_value<int32_t>(values.Lookup(W_POS_H))};
@@ -121,15 +120,14 @@ void MainWindow::SaveWindowPlacement() const{
         return;
     }
 
-    WINDOWPLACEMENT placement{};
-    placement.length = sizeof(placement);
+    WINDOWPLACEMENT placement{.length = sizeof(placement)};
     if(GetWindowPlacement(hwnd, &placement) && placement.showCmd == SW_SHOWMAXIMIZED){
         bounds = placement.rcNormalPosition;
     }
 
     const auto localSettings{Windows::Storage::ApplicationData::Current().LocalSettings()};
     const auto values{localSettings.Values()};
-    const uint32_t dpi{::GetDpiForWindow(hwnd)};
+    const auto dpi{::GetDpiForWindow(hwnd)};
     values.Insert(W_POS_L, box_value(static_cast<int32_t>(bounds.left)));
     values.Insert(W_POS_T, box_value(static_cast<int32_t>(bounds.top)));
     values.Insert(W_POS_W, box_value(PixelsToDips(static_cast<int32_t>(bounds.right - bounds.left), dpi)));
@@ -180,7 +178,7 @@ void MainWindow::TimelineHorizontalScrollBar_ValueChanged(IInspectable const&, C
     }
 
     const auto scrollViewer{TimelineScrollViewer()};
-    const double offset{scrollViewer.HorizontalOffset()};
+    const auto offset{scrollViewer.HorizontalOffset()};
     if(std::fabs(offset - args.NewValue()) > 0.5){
         const auto targetOffset{box_value(args.NewValue()).as<Windows::Foundation::IReference<double>>()};
         scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
@@ -221,17 +219,16 @@ void MainWindow::TimelineCanvas_PointerMoved(IInspectable const&, Input::Pointer
     }
 
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
-    const double pointerX{static_cast<double>(point.Position().X)};
-    const double deltaX{pointerX - m_timelineDragStartX};
+    const auto deltaX{point.Position().X - m_timelineDragStartX};
 
     if(std::fabs(deltaX) > 4.0){
         m_timelineDragMoved = true;
     }
 
     const auto scrollViewer{TimelineScrollViewer()};
-    const double viewportWidth{scrollViewer.ViewportWidth()};
-    const double maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
-    const double target{std::clamp(m_timelineDragStartOffset - deltaX, 0.0, maxOffset)};
+    const auto viewportWidth{scrollViewer.ViewportWidth()};
+    const auto maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
+    const auto target{std::clamp(m_timelineDragStartOffset - deltaX, 0.0, maxOffset)};
     const auto targetOffset{box_value(target).as<Windows::Foundation::IReference<double>>()};
     scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     e.Handled(true);
@@ -243,7 +240,6 @@ void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::Poin
     }
 
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
-    const double pointerX{static_cast<double>(point.Position().X)};
     const bool dragged{m_timelineDragMoved};
 
     m_isTimelineDragging = false;
@@ -251,7 +247,7 @@ void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::Poin
     TimelineCanvas().ReleasePointerCapture(e.Pointer());
 
     if(!dragged){
-        SeekTimelineToCanvasX(pointerX);
+        SeekTimelineToCanvasX(point.Position().X);
     }
 
     e.Handled(true);
@@ -304,9 +300,9 @@ void MainWindow::UpdateTimelineCursorFromPlayback(){
     }
 
     const auto current{m_player.PlaybackSession().Position()};
-    const double seconds{std::max(0.0, current.count() / 10'000'000.0)};
-    const double ratio{std::clamp(seconds / m_timelineDurationSeconds, 0.0, 1.0)};
-    const double left{ratio * TimelineCanvas().Width()};
+    const auto seconds{std::max(0.0, current.count() / 10'000'000.0)};
+    const auto ratio{std::clamp(seconds / m_timelineDurationSeconds, 0.0, 1.0)};
+    const auto left{ratio * TimelineCanvas().Width()};
     Controls::Canvas::SetLeft(TimelineCursor(), left);
 
     if(m_player.PlaybackSession().PlaybackState() == Windows::Media::Playback::MediaPlaybackState::Playing){
@@ -318,8 +314,8 @@ void MainWindow::UpdateTimelineCursorFromPlayback(){
 
 void MainWindow::SyncTimelineHorizontalScrollBar(){
     const auto scrollViewer{TimelineScrollViewer()};
-    const double scrollableWidth{std::max(0.0, scrollViewer.ScrollableWidth())};
-    const double viewportWidth{std::max(1.0, scrollViewer.ViewportWidth())};
+    const auto scrollableWidth{std::max(0.0, scrollViewer.ScrollableWidth())};
+    const auto viewportWidth{std::max(1.0, scrollViewer.ViewportWidth())};
 
     auto bar{TimelineHorizontalScrollBar()};
     bar.Maximum(std::max(1.0, scrollableWidth));
@@ -328,8 +324,8 @@ void MainWindow::SyncTimelineHorizontalScrollBar(){
     bar.IsEnabled(true);
     bar.Visibility(Visibility::Visible);
 
-    const double currentValue{bar.Value()};
-    const double offset{std::clamp(scrollViewer.HorizontalOffset(), 0.0, bar.Maximum())};
+    const auto currentValue{bar.Value()};
+    const auto offset{std::clamp(scrollViewer.HorizontalOffset(), 0.0, bar.Maximum())};
     if(std::fabs(currentValue - offset) > 0.5){
         bar.Value(offset);
     }
@@ -340,9 +336,9 @@ void MainWindow::SeekTimelineToCanvasX(const double pointerX){
         return;
     }
 
-    const double x{std::clamp(pointerX, 0.0, TimelineCanvas().Width())};
-    const double ratio{x / TimelineCanvas().Width()};
-    const double targetSeconds{ratio * m_timelineDurationSeconds};
+    const auto x{std::clamp(pointerX, 0.0, TimelineCanvas().Width())};
+    const auto ratio{x / TimelineCanvas().Width()};
+    const auto targetSeconds{ratio * m_timelineDurationSeconds};
 
     m_player.PlaybackSession().Position(SecondsToTimeSpan(targetSeconds));
     UpdateTimelineCursorFromPlayback();
@@ -350,17 +346,17 @@ void MainWindow::SeekTimelineToCanvasX(const double pointerX){
 
 void MainWindow::EnsureTimelineCursorVisible(const double cursorLeft){
     const auto scrollViewer{TimelineScrollViewer()};
-    const double currentOffset{scrollViewer.HorizontalOffset()};
-    const double viewportWidth{scrollViewer.ViewportWidth()};
+    const auto currentOffset{scrollViewer.HorizontalOffset()};
+    const auto viewportWidth{scrollViewer.ViewportWidth()};
 
     if(viewportWidth <= 0){
         return;
     }
 
-    constexpr double cursorPadding{48.0};
-    const double minVisible{currentOffset + cursorPadding};
-    const double maxVisible{currentOffset + viewportWidth - cursorPadding};
-    const double maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
+    constexpr auto cursorPadding{48.0};
+    const auto minVisible{currentOffset + cursorPadding};
+    const auto maxVisible{currentOffset + viewportWidth - cursorPadding};
+    const auto maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
 
     if(cursorLeft < minVisible){
         const auto targetOffset{box_value(std::clamp(cursorLeft - cursorPadding, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
@@ -383,8 +379,8 @@ void MainWindow::RenderTimelineTicks(){
     const int majorTickCount{std::clamp(static_cast<int>(std::ceil(width / 120.0)), 6, 36)};
 
     for(int i = 0; i <= majorTickCount; ++i){
-        const double ratio{static_cast<double>(i) / static_cast<double>(majorTickCount)};
-        const double x{ratio * width};
+        const auto ratio{static_cast<double>(i) / majorTickCount};
+        const auto x{ratio * width};
 
         Shapes::Line majorTick{};
         majorTick.X1(x);
@@ -396,10 +392,10 @@ void MainWindow::RenderTimelineTicks(){
         TimelineTickCanvas().Children().Append(majorTick);
 
         Controls::TextBlock label{};
-        const int totalSeconds{static_cast<int>(std::round(ratio * m_timelineDurationSeconds))};
-        const int minutes{totalSeconds / 60};
-        const int seconds{totalSeconds % 60};
-        std::wstring text{std::to_wstring(minutes)};
+        const auto totalSeconds{static_cast<int>(std::round(ratio * m_timelineDurationSeconds))};
+        const auto minutes{totalSeconds / 60};
+        const auto seconds{totalSeconds % 60};
+        auto text{std::to_wstring(minutes)};
         text += L":";
         if(seconds < 10){
             text += L"0";
@@ -495,10 +491,10 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
 
     try{
         const auto renderVersion{++m_timelineRenderVersion};
-        const double zoom{TimelineZoomSlider().Value()};
-        const double totalWidth{std::max(800.0, m_timelineDurationSeconds * 14.0 * zoom)};
-        const int thumbnailCount{std::clamp(static_cast<int>(totalWidth / 150.0), 8, 96)};
-        const double thumbnailWidth{totalWidth / static_cast<double>(thumbnailCount)};
+        const auto zoom{TimelineZoomSlider().Value()};
+        const auto totalWidth{std::max(800.0, m_timelineDurationSeconds * 14.0 * zoom)};
+        const auto thumbnailCount{std::clamp(static_cast<int>(totalWidth / 150.0), 8, 96)};
+        const auto thumbnailWidth{totalWidth / thumbnailCount};
 
         TimelineCanvas().Width(totalWidth);
         ThumbnailLayer().Children().Clear();
@@ -522,11 +518,11 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
             }
 
             const auto scrollViewer{TimelineScrollViewer()};
-            const double viewportWidth{std::max(0.0, scrollViewer.ViewportWidth())};
-            const double viewportLeft{scrollViewer.HorizontalOffset()};
-            const double viewportRight{viewportLeft + viewportWidth};
-            const int firstVisibleIndex{std::clamp(static_cast<int>(std::floor(viewportLeft / thumbnailWidth)), 0, thumbnailCount - 1)};
-            const int lastVisibleIndex{std::clamp(static_cast<int>(std::floor(std::max(viewportLeft, viewportRight - 1.0) / thumbnailWidth)), 0, thumbnailCount - 1)};
+            const auto viewportWidth{std::max(0.0, scrollViewer.ViewportWidth())};
+            const auto viewportLeft{scrollViewer.HorizontalOffset()};
+            const auto viewportRight{viewportLeft + viewportWidth};
+            const auto firstVisibleIndex{std::clamp(static_cast<int>(std::floor(viewportLeft / thumbnailWidth)), 0, thumbnailCount - 1)};
+            const auto lastVisibleIndex{std::clamp(static_cast<int>(std::floor(std::max(viewportLeft, viewportRight - 1.0) / thumbnailWidth)), 0, thumbnailCount - 1)};
 
             int nextIndex{-1};
             for(int i = firstVisibleIndex; i <= lastVisibleIndex; ++i){
@@ -558,7 +554,7 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
                 break;
             }
 
-            const double t{(static_cast<double>(nextIndex) + 0.5) / static_cast<double>(thumbnailCount)};
+            const auto t{(nextIndex + 0.5) / thumbnailCount};
             const auto stream{co_await composition.GetThumbnailAsync(SecondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
                 co_return;
