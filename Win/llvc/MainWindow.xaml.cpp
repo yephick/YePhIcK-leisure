@@ -5,9 +5,20 @@
 #include <algorithm>
 #include <cmath>
 #include <cwctype>
+#include <iomanip>
+#include <sstream>
+#include <string_view>
 #include <vector>
 
+#include <mfapi.h>
+#include <mferror.h>
+#include <mfidl.h>
+#include <mfobjects.h>
+#include <mfreadwrite.h>
+#include <mftransform.h>
 #include <microsoft.ui.xaml.window.h>
+#include <shobjidl_core.h>
+#include <winrt/Windows.Storage.FileProperties.h>
 #include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
@@ -18,6 +29,11 @@
 #include <winrt/Windows.Media.Editing.h>
 #include <winrt/Windows.Media.Playback.h>
 #include <winrt/Windows.Storage.h>
+#include <winrt/Windows.Storage.Pickers.h>
+
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfreadwrite.lib")
+#pragma comment(lib, "mfuuid.lib")
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -29,6 +45,69 @@ constexpr auto W_POS_T{L"WindowTop"};
 constexpr auto W_POS_W{L"WindowWidth"};
 constexpr auto W_POS_H{L"WindowHeight"};
 constexpr auto W_POS_DPI{L"WindowDpi"};
+
+struct MFLifetime{
+    MFLifetime(){
+        check_hresult(MFStartup(MF_VERSION, MFSTARTUP_FULL));
+    }
+    ~MFLifetime(){
+        MFShutdown();
+    }
+};
+
+std::wstring FormatGuid(GUID const& guid){
+    OLECHAR raw[40]{};
+    StringFromGUID2(guid, raw, static_cast<int>(std::size(raw)));
+    return std::wstring(raw);
+}
+
+std::wstring FormatFileSize(uint64_t bytes){
+    std::wstringstream ss;
+    constexpr double KB = 1024.0;
+    constexpr double MB = KB * 1024.0;
+    constexpr double GB = MB * 1024.0;
+    ss << bytes << L" bytes";
+    if(bytes >= static_cast<uint64_t>(GB)){
+        ss << L" (" << std::fixed << std::setprecision(2) << (bytes / GB) << L" GB)";
+    }else if(bytes >= static_cast<uint64_t>(MB)){
+        ss << L" (" << std::fixed << std::setprecision(2) << (bytes / MB) << L" MB)";
+    }
+    return ss.str();
+}
+
+std::wstring FormatRatio(uint32_t num, uint32_t den){
+    if(den == 0){
+        return L"-";
+    }
+    std::wstringstream ss;
+    ss << std::fixed << std::setprecision(3) << (static_cast<double>(num) / den);
+    return ss.str();
+}
+
+bool HasDecoderForSubtype(GUID const& subtype){
+    MFT_REGISTER_TYPE_INFO inType{};
+    inType.guidMajorType = MFMediaType_Video;
+    inType.guidSubtype = subtype;
+
+    IMFActivate** activates{};
+    UINT32 count{};
+    const HRESULT hr = MFTEnumEx(
+        MFT_CATEGORY_VIDEO_DECODER,
+        MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_HARDWARE,
+        &inType,
+        nullptr,
+        &activates,
+        &count);
+
+    if(SUCCEEDED(hr) && activates){
+        for(UINT32 i = 0; i < count; ++i){
+            activates[i]->Release();
+        }
+        CoTaskMemFree(activates);
+    }
+
+    return SUCCEEDED(hr) && count > 0;
+}
 
 MainWindow::MainWindow(){
     InitializeComponent();
@@ -45,6 +124,7 @@ MainWindow::MainWindow(){
 
     RestoreWindowPlacement();
     Closed({this, &MainWindow::OnClosed});
+    RefreshRecentVideosMenu();
 }
 
 HWND MainWindow::GetWindowHandle() const{
@@ -414,6 +494,248 @@ Windows::Foundation::TimeSpan MainWindow::SecondsToTimeSpan(const double seconds
     return std::chrono::duration_cast<Windows::Foundation::TimeSpan>(std::chrono::duration<double>(seconds));
 }
 
+Windows::Foundation::IAsyncAction MainWindow::LoadVideoMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    co_await PickAndLoadVideoAsync();
+}
+
+Windows::Foundation::IAsyncAction MainWindow::RecentVideoMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&){
+    const auto item{sender.try_as<Controls::MenuFlyoutItem>()};
+    if(!item || !item.Tag()){
+        co_return;
+    }
+
+    const auto path{unbox_value<hstring>(item.Tag())};
+    try{
+        const auto file{co_await Windows::Storage::StorageFile::GetFileFromPathAsync(path)};
+        co_await LoadVideoFileAsync(file);
+    }catch(winrt::hresult_error const&){
+        co_await ShowInfoDialogAsync(L"Open failed", L"Could not open selected recent video.");
+    }
+}
+
+Windows::Foundation::IAsyncAction MainWindow::PropertiesMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    co_await ShowPropertiesDialogAsync();
+}
+
+void MainWindow::ExitMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    Close();
+}
+
+Windows::Foundation::IAsyncAction MainWindow::AboutMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    co_await ShowInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut\nPreview and timeline exploration tool.");
+}
+
+Windows::Foundation::IAsyncAction MainWindow::PickAndLoadVideoAsync(){
+    Windows::Storage::Pickers::FileOpenPicker picker{};
+    picker.FileTypeFilter().Append(L".mp4");
+    picker.FileTypeFilter().Append(L".mov");
+
+    const auto hwnd{GetWindowHandle()};
+    auto initWithWindow{picker.as<IInitializeWithWindow>()};
+    check_hresult(initWithWindow->Initialize(hwnd));
+
+    if(const auto file{co_await picker.PickSingleFileAsync()}){
+        co_await LoadVideoFileAsync(file);
+    }
+}
+
+void MainWindow::RefreshRecentVideosMenu(){
+    auto menu{RecentVideosMenu()};
+    menu.Items().Clear();
+
+    if(m_recentVideos.empty()){
+        Controls::MenuFlyoutItem empty{};
+        empty.Text(L"(none)");
+        empty.IsEnabled(false);
+        menu.Items().Append(empty);
+        return;
+    }
+
+    for(auto const& path : m_recentVideos){
+        Controls::MenuFlyoutItem item{};
+        item.Text(path);
+        item.Tag(box_value(path));
+        item.Click({this, &MainWindow::RecentVideoMenuItem_Click});
+        menu.Items().Append(item);
+    }
+}
+
+void MainWindow::AddRecentVideo(hstring const& path){
+    if(path.empty()){
+        return;
+    }
+
+    m_recentVideos.erase(std::remove(m_recentVideos.begin(), m_recentVideos.end(), path), m_recentVideos.end());
+    m_recentVideos.insert(m_recentVideos.begin(), path);
+    constexpr size_t maxRecent = 10;
+    if(m_recentVideos.size() > maxRecent){
+        m_recentVideos.resize(maxRecent);
+    }
+    RefreshRecentVideosMenu();
+}
+
+Windows::Foundation::IAsyncAction MainWindow::ShowInfoDialogAsync(hstring const& title, hstring const& message){
+    Controls::ContentDialog dialog{};
+    dialog.XamlRoot(Content().XamlRoot());
+    dialog.Title(box_value(title));
+    dialog.Content(box_value(message));
+    dialog.CloseButtonText(L"OK");
+    co_await dialog.ShowAsync();
+}
+
+Windows::Foundation::IAsyncAction MainWindow::ShowPropertiesDialogAsync(){
+    if(!m_loadedFile || !m_mediaInfo.isValid){
+        co_await ShowInfoDialogAsync(L"Properties", L"No video is currently loaded.");
+        co_return;
+    }
+
+    std::wstring content;
+    content += L"File: "; content += m_loadedFile.Path().c_str(); content += L"\n";
+    content += L"Container: "; content += m_mediaInfo.container; content += L"\n";
+    content += L"Duration: "; content += m_mediaInfo.duration; content += L"\n";
+    content += L"Size: "; content += m_mediaInfo.fileSize; content += L"\n";
+    content += L"Video codec: "; content += m_mediaInfo.videoCodec; content += L"\n";
+    content += L"Resolution: "; content += m_mediaInfo.resolution; content += L"\n";
+    content += L"FPS: "; content += m_mediaInfo.frameRate; content += L"\n";
+    content += L"Video bitrate: "; content += m_mediaInfo.videoBitrate; content += L"\n";
+    content += L"Audio codec: "; content += m_mediaInfo.audioCodec; content += L"\n";
+    content += L"Audio bitrate: "; content += m_mediaInfo.audioBitrate;
+
+    co_await ShowInfoDialogAsync(L"Properties", hstring(content));
+}
+
+bool MainWindow::IsSupportedVideoSubtype(GUID const& subtype){
+    return subtype == MFVideoFormat_H264 || subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265;
+}
+
+std::wstring MainWindow::GuidToCodecName(GUID const& subtype, bool isVideo){
+    if(isVideo){
+        if(subtype == MFVideoFormat_H264){
+            return L"H.264";
+        }
+        if(subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265){
+            return L"HEVC";
+        }
+    }else{
+        if(subtype == MFAudioFormat_AAC){
+            return L"AAC";
+        }
+        if(subtype == MFAudioFormat_MP3){
+            return L"MP3";
+        }
+        if(subtype == MFAudioFormat_PCM){
+            return L"PCM";
+        }
+    }
+
+    return FormatGuid(subtype);
+}
+
+MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath){
+    MediaInspectionResult result{};
+    MFLifetime mf{};
+
+    com_ptr<IMFSourceReader> reader;
+    check_hresult(MFCreateSourceReaderFromURL(filePath.c_str(), nullptr, reader.put()));
+
+    uint32_t videoCount{};
+    uint32_t audioCount{};
+    bool hasText{};
+    GUID videoSubtype{GUID_NULL};
+    GUID audioSubtype{GUID_NULL};
+    uint32_t width{};
+    uint32_t height{};
+    uint32_t fpsNum{};
+    uint32_t fpsDen{};
+    uint32_t videoBitrate{};
+    uint32_t audioBitrate{};
+
+    for(DWORD streamIndex = 0;; ++streamIndex){
+        com_ptr<IMFMediaType> type;
+        const HRESULT hr = reader->GetNativeMediaType(streamIndex, 0, type.put());
+        if(hr == MF_E_INVALIDSTREAMNUMBER){
+            break;
+        }
+        check_hresult(hr);
+
+        GUID major{GUID_NULL};
+        GUID subtype{GUID_NULL};
+        check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+        check_hresult(type->GetGUID(MF_MT_SUBTYPE, &subtype));
+
+        if(major == MFMediaType_Video){
+            ++videoCount;
+            videoSubtype = subtype;
+            MFGetAttributeSize(type.get(), MF_MT_FRAME_SIZE, &width, &height);
+            MFGetAttributeRatio(type.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
+            (void)type->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
+        }else if(major == MFMediaType_Audio){
+            ++audioCount;
+            audioSubtype = subtype;
+            (void)type->GetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, &audioBitrate);
+        }else{
+            hasText = true;
+        }
+    }
+
+    if(videoCount != 1){
+        result.errorMessage = L"Expected exactly one video stream.";
+        return result;
+    }
+    if(audioCount > 1){
+        result.errorMessage = L"Multiple audio streams are not supported.";
+        return result;
+    }
+    if(hasText){
+        result.errorMessage = L"Subtitle/text streams are not supported.";
+        return result;
+    }
+    if(!IsSupportedVideoSubtype(videoSubtype)){
+        result.errorMessage = L"Video codec not supported. Only H.264 and HEVC are allowed.";
+        return result;
+    }
+
+    std::wstring lowerPath(filePath);
+    std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::towlower);
+    if(lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mp4"){
+        result.container = L"MP4";
+    }else if(lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mov"){
+        result.container = L"MOV";
+    }else{
+        result.errorMessage = L"Container not supported. Only MP4 and MOV are allowed.";
+        return result;
+    }
+
+    if(videoSubtype == MFVideoFormat_HEVC || videoSubtype == MFVideoFormat_H265){
+        if(!HasDecoderForSubtype(videoSubtype)){
+            result.errorMessage = L"HEVC support missing (install HEVC Video Extensions)";
+            return result;
+        }
+    }else if(!HasDecoderForSubtype(videoSubtype)){
+        result.errorMessage = L"No decoder available";
+        return result;
+    }
+
+    PROPVARIANT duration{};
+    PropVariantInit(&duration);
+    if(SUCCEEDED(reader->GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &duration)) && duration.vt == VT_UI8){
+        const auto seconds = static_cast<double>(duration.uhVal.QuadPart) / 10'000'000.0;
+        std::wstringstream ss;
+        ss << std::fixed << std::setprecision(3) << seconds << L" s";
+        result.duration = ss.str();
+    }
+    PropVariantClear(&duration);
+
+    result.videoCodec = GuidToCodecName(videoSubtype, true);
+    result.audioCodec = audioCount == 0 ? L"none" : GuidToCodecName(audioSubtype, false);
+    result.resolution = width > 0 ? (std::to_wstring(width) + L"x" + std::to_wstring(height)) : L"-";
+    result.frameRate = (fpsNum > 0 && fpsDen > 0) ? (FormatRatio(fpsNum, fpsDen) + L" fps") : L"-";
+    result.videoBitrate = videoBitrate > 0 ? (std::to_wstring(videoBitrate / 1000) + L" kbps") : L"-";
+    result.audioBitrate = audioBitrate > 0 ? (std::to_wstring((audioBitrate * 8) / 1000) + L" kbps") : L"none";
+    result.isValid = true;
+    return result;
+}
+
 void MainWindow::Window_DragOver(IInspectable const&, DragEventArgs const& e){
     e.AcceptedOperation(Windows::ApplicationModel::DataTransfer::DataPackageOperation::Copy);
 }
@@ -452,9 +774,32 @@ Windows::Foundation::IAsyncAction MainWindow::Window_Drop(IInspectable const&, D
 }
 
 Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storage::StorageFile const& file){
+    MediaInspectionResult inspected{};
+    try{
+        inspected = InspectMediaFile(file.Path().c_str());
+    }catch(winrt::hresult_error const& ex){
+        inspected.errorMessage = L"No decoder available";
+        if(ex.code() == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)){
+            inspected.errorMessage = L"File not found";
+        }
+    }
+
+    if(!inspected.isValid){
+        std::wstring status{L"Open rejected: "};
+        status += inspected.errorMessage;
+        StatusText().Text(status);
+        co_await ShowInfoDialogAsync(L"Unsupported media", hstring(status));
+        co_return;
+    }
+
+    const auto basicProperties{co_await file.GetBasicPropertiesAsync()};
+    inspected.fileSize = FormatFileSize(basicProperties.Size());
+    m_mediaInfo = inspected;
+
     const auto source{Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
     m_player.Source(source);
     m_loadedFile = file;
+    AddRecentVideo(file.Path());
 
     ThumbnailLayer().Children().Clear();
     TimelineCanvas().Width(640.0);
@@ -468,8 +813,6 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
     status += file.Name().c_str();
     status += L" (loading story line...)";
     StatusText().Text(status);
-
-    co_return;
 }
 
 winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
