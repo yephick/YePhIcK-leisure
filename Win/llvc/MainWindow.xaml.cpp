@@ -122,11 +122,21 @@ std::vector<hstring> SplitRecentItems(std::wstring const& source){
     return items;
 }
 
-bool IsDescendantOf(DependencyObject const& object, std::wstring_view const& typeName){
+bool IsInMenuSubtree(DependencyObject const& object){
     DependencyObject current{object};
     while(current){
-        const auto fullName{current.as<IInspectable>().GetRuntimeClassName()};
-        if(std::wstring_view(fullName.c_str()).find(typeName) != std::wstring_view::npos){
+        if(current.try_as<Controls::MenuBar>() || current.try_as<Controls::MenuFlyoutItem>() || current.try_as<Controls::MenuFlyoutSubItem>() || current.try_as<Controls::MenuFlyoutPresenter>()){
+            return true;
+        }
+        current = Media::VisualTreeHelper::GetParent(current);
+    }
+    return false;
+}
+
+bool IsInDialogSubtree(DependencyObject const& object){
+    DependencyObject current{object};
+    while(current){
+        if(current.try_as<Controls::ContentDialog>() || current.try_as<Controls::Primitives::Popup>()){
             return true;
         }
         current = Media::VisualTreeHelper::GetParent(current);
@@ -907,9 +917,9 @@ void MainWindow::StepByKeyframe(const int delta){
 }
 
 void MainWindow::Window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
-    const auto focused{FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
-    const bool focusOnMenu = focused && IsDescendantOf(focused, L"MenuBar");
-    const bool focusInDialog = focused && IsDescendantOf(focused, L"ContentDialog");
+    const auto focused{Input::FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
+    const bool focusOnMenu = focused && IsInMenuSubtree(focused);
+    const bool focusInDialog = focused && IsInDialogSubtree(focused);
 
     if(args.Key() == Windows::System::VirtualKey::Menu){
         MainMenuBar().Focus(Microsoft::UI::Xaml::FocusState::Keyboard);
