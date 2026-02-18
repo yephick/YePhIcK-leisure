@@ -94,29 +94,29 @@ void MainWindow::RestoreWindowPlacement(){
         return;
     }
 
-    WINDOWPLACEMENT restoredPlacement{};
-    restoredPlacement.length = sizeof(restoredPlacement);
-    restoredPlacement.showCmd = SW_SHOWNORMAL;
-    restoredPlacement.rcNormalPosition = restoredRect;
-
-    ::SetWindowPlacement(hwnd, &restoredPlacement);
+    SetWindowPos(hwnd, nullptr, left, top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
 void MainWindow::SaveWindowPlacement() const{
-    WINDOWPLACEMENT placement{};
-    placement.length = sizeof(placement);
-    if(!GetWindowPlacement(GetWindowHandle(), &placement)){
+    const auto hwnd{GetWindowHandle()};
+
+    RECT bounds{};
+    if(!GetWindowRect(hwnd, &bounds)){
         return;
     }
 
-    const auto normalBounds{placement.rcNormalPosition};
+    WINDOWPLACEMENT placement{};
+    placement.length = sizeof(placement);
+    if(GetWindowPlacement(hwnd, &placement) && placement.showCmd == SW_SHOWMAXIMIZED){
+        bounds = placement.rcNormalPosition;
+    }
 
     const auto localSettings{Windows::Storage::ApplicationData::Current().LocalSettings()};
     const auto values{localSettings.Values()};
-    values.Insert(W_POS_L, box_value(static_cast<int32_t>(normalBounds.left)));
-    values.Insert(W_POS_T, box_value(static_cast<int32_t>(normalBounds.top)));
-    values.Insert(W_POS_W, box_value(static_cast<int32_t>(normalBounds.right - normalBounds.left)));
-    values.Insert(W_POS_H, box_value(static_cast<int32_t>(normalBounds.bottom - normalBounds.top)));
+    values.Insert(W_POS_L, box_value(static_cast<int32_t>(bounds.left)));
+    values.Insert(W_POS_T, box_value(static_cast<int32_t>(bounds.top)));
+    values.Insert(W_POS_W, box_value(static_cast<int32_t>(bounds.right - bounds.left)));
+    values.Insert(W_POS_H, box_value(static_cast<int32_t>(bounds.bottom - bounds.top)));
 }
 
 void MainWindow::OnClosed(IInspectable const&, WindowEventArgs const&){
