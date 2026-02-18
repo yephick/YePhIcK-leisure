@@ -660,6 +660,15 @@ Windows::Foundation::TimeSpan MainWindow::SecondsToTimeSpan(const double seconds
     return std::chrono::duration_cast<Windows::Foundation::TimeSpan>(std::chrono::duration<double>(seconds));
 }
 
+void MainWindow::KeyFrameSnapMode_Checked(IInspectable const& sender, RoutedEventArgs const&){
+    const auto radio{sender.try_as<Controls::RadioButton>()};
+    if(!radio || !radio.Tag()){
+        return;
+    }
+
+    m_keyFrameSnapMode = unbox_value<hstring>(radio.Tag()).c_str();
+}
+
 Windows::Foundation::IAsyncAction MainWindow::LoadVideoMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
     co_await PickAndLoadVideoAsync();
 }

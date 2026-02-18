@@ -43,6 +43,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void TimelineCanvas_PointerReleased(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
     void TimelineCanvas_PointerCanceled(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
     void TimelineCanvas_PointerCaptureLost(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
+    void KeyFrameSnapMode_Checked(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction LoadVideoMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction RecentVideoMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction PropertiesMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
@@ -67,6 +68,7 @@ private:
     std::vector<winrt::hstring> m_recentProjects{};
     std::uint32_t m_maxRecentVideos{5};
     std::uint32_t m_maxRecentProjects{5};
+    std::wstring m_keyFrameSnapMode{L"Nearest"};
     bool m_isClosing{false};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};
