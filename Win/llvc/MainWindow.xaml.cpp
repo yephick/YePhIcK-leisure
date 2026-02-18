@@ -52,11 +52,11 @@ HWND MainWindow::GetWindowHandle() const{
 
 
 int32_t PixelsToDips(const int32_t pixelValue, const uint32_t dpi){
-    return static_cast<int32_t>(std::lround((static_cast<double>(pixelValue) * 96.0) / static_cast<double>(dpi == 0 ? 96U : dpi)));
+    return static_cast<int32_t>(std::lround((pixelValue * 96.0) / (dpi == 0 ? 96 : dpi)));
 }
 
 int32_t DipsToPixels(const int32_t dipValue, const uint32_t dpi){
-    return static_cast<int32_t>(std::lround((static_cast<double>(dipValue) * static_cast<double>(dpi == 0 ? 96U : dpi)) / 96.0));
+    return static_cast<int32_t>(std::lround((dipValue * (dpi == 0 ? 96U : dpi)) / 96.0));
 }
 
 bool MainWindow::IsRectVisibleOnAnyMonitor(RECT const& rect){
@@ -97,13 +97,7 @@ void MainWindow::RestoreWindowPlacement(){
     const auto width{hasDpiData ? DipsToPixels(storedWidth, currentDpi) : storedWidth};
     const auto height{hasDpiData ? DipsToPixels(storedHeight, currentDpi) : storedHeight};
 
-    RECT restoredRect{};
-    restoredRect.left = left;
-    restoredRect.top = top;
-    restoredRect.right = left + width;
-    restoredRect.bottom = top + height;
-
-    if(!IsRectVisibleOnAnyMonitor(restoredRect)){
+    if(!IsRectVisibleOnAnyMonitor(RECT{left, top, left + width, top + height})){
         values.Remove(W_POS_L);
         values.Remove(W_POS_T);
         values.Remove(W_POS_W);
@@ -197,7 +191,7 @@ void MainWindow::TimelineCanvas_PointerPressed(IInspectable const&, Input::Point
 
 void MainWindow::OnNaturalDurationChanged(Windows::Media::Playback::MediaPlaybackSession const& sender, IInspectable const&){
     const auto duration{sender.NaturalDuration()};
-    m_timelineDurationSeconds = std::max(0.0, static_cast<double>(duration.count()) / 10'000'000.0);
+    m_timelineDurationSeconds = std::max(0.0, duration.count() / 10'000'000.0);
 
     if(m_loadedFile && m_timelineDurationSeconds > 0){
         RenderTimelineAsync();
@@ -218,7 +212,7 @@ void MainWindow::UpdateTimelineCursorFromPlayback(){
     }
 
     const auto current{m_player.PlaybackSession().Position()};
-    const double seconds{std::max(0.0, static_cast<double>(current.count()) / 10'000'000.0)};
+    const double seconds{std::max(0.0, current.count() / 10'000'000.0)};
     const double ratio{std::clamp(seconds / m_timelineDurationSeconds, 0.0, 1.0)};
     const double left{ratio * TimelineCanvas().Width()};
     Controls::Canvas::SetLeft(TimelineCursor(), left);
@@ -290,8 +284,8 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
 
     const auto renderVersion{++m_timelineRenderVersion};
     const double zoom{TimelineZoomSlider().Value()};
-    const double totalWidth{std::max(800.0, m_timelineDurationSeconds * 14.0 * zoom)};
-    const int thumbnailCount{std::clamp(static_cast<int>(totalWidth / 150.0), 8, 96)};
+    const double totalWidth{std::max(800.0, m_timelineDurationSeconds * 14 * zoom)};
+    const int thumbnailCount{std::clamp(static_cast<int>(totalWidth / 150), 8, 96)};
     const double thumbnailWidth{totalWidth / static_cast<double>(thumbnailCount)};
 
     TimelineCanvas().Width(totalWidth);
@@ -311,7 +305,7 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
             co_return;
         }
 
-        const double t{(static_cast<double>(i) + 0.5) / static_cast<double>(thumbnailCount)};
+        const double t{(i + 0.5) / thumbnailCount};
         const auto stream{co_await composition.GetThumbnailAsync(SecondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
         if(renderVersion != m_timelineRenderVersion){
             co_return;
