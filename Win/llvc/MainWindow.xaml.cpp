@@ -593,7 +593,7 @@ void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::Poin
     TimelineCanvas().ReleasePointerCapture(e.Pointer());
 
     if(!dragged){
-        SeekTimelineToCanvasX(point.Position().X, e.KeyModifiers().HasFlag(Windows::System::VirtualKeyModifiers::Shift));
+        SeekTimelineToCanvasX(point.Position().X, (e.KeyModifiers() & Windows::System::VirtualKeyModifiers::Shift) == Windows::System::VirtualKeyModifiers::Shift);
     }
 
     e.Handled(true);
@@ -1544,7 +1544,7 @@ std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstri
         return index;
     }
 
-    check_hresult(reader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE));
+    check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
     check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
     for(std::uint32_t sampleIndex = 0;; ++sampleIndex){
