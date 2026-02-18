@@ -830,20 +830,31 @@ void MainWindow::RenderKeyframeTicks(){
 }
 
 void MainWindow::StepByFrame(const int delta){
-    if(!m_player || m_frameIndex.empty()){
+    if(!m_player || m_frameIndex.empty() || delta == 0){
         return;
     }
 
     const auto current = m_player.PlaybackSession().Position().count();
-    auto idx = std::lower_bound(m_frameIndex.begin(), m_frameIndex.end(), current, [](IndexedFrameSample const& a, std::int64_t t){ return a.time100ns < t; });
-    std::ptrdiff_t pos = idx - m_frameIndex.begin();
-    if(delta < 0){
-        pos = std::max<std::ptrdiff_t>(0, pos - 1);
+    auto nearest = std::lower_bound(m_frameIndex.begin(), m_frameIndex.end(), current, [](IndexedFrameSample const& a, std::int64_t t){ return a.time100ns < t; });
+
+    std::ptrdiff_t currentIndex{};
+    if(nearest == m_frameIndex.end()){
+        currentIndex = static_cast<std::ptrdiff_t>(m_frameIndex.size()) - 1;
+    }else if(nearest == m_frameIndex.begin()){
+        currentIndex = 0;
     }else{
-        pos = std::min<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(m_frameIndex.size()) - 1, pos + 1);
+        const auto prev = nearest - 1;
+        currentIndex = (std::llabs(nearest->time100ns - current) < std::llabs(current - prev->time100ns))
+            ? static_cast<std::ptrdiff_t>(nearest - m_frameIndex.begin())
+            : static_cast<std::ptrdiff_t>(prev - m_frameIndex.begin());
     }
 
-    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{m_frameIndex[static_cast<size_t>(pos)].time100ns});
+    const auto targetIndex = std::clamp<std::ptrdiff_t>(
+        currentIndex + (delta < 0 ? -1 : 1),
+        0,
+        static_cast<std::ptrdiff_t>(m_frameIndex.size()) - 1);
+
+    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{m_frameIndex[static_cast<size_t>(targetIndex)].time100ns});
     UpdateTimelineCursorFromPlayback();
 }
 
@@ -869,6 +880,14 @@ void MainWindow::StepByKeyframe(const int delta){
 
 void MainWindow::Window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
     switch(args.Key()){
+    case Windows::System::VirtualKey::Tab:
+        TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
+        args.Handled(true);
+        break;
+    case Windows::System::VirtualKey::Menu:
+        MainMenuBar().Focus(Microsoft::UI::Xaml::FocusState::Keyboard);
+        args.Handled(true);
+        break;
     case Windows::System::VirtualKey::Left:
         StepByFrame(-1);
         args.Handled(true);

@@ -18,7 +18,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <controls:MenuBar Grid.Row="0" IsTabStop="False">
+        <controls:MenuBar x:Name="MainMenuBar" Grid.Row="0" IsTabStop="True">
             <controls:MenuBarItem Title="_File">
                 <MenuFlyoutItem Text="_New project	Ctrl+N" Click="NewProjectMenuItem_Click"/>
                 <MenuFlyoutItem Text="_Open project..." Click="OpenProjectMenuItem_Click"/>
