@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cwctype>
+#include <vector>
 
 #include <microsoft.ui.xaml.window.h>
 #include <winrt/Microsoft.UI.Input.h>
@@ -499,6 +500,32 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
         RenderTimelineTicks();
         SyncTimelineHorizontalScrollBar();
 
+        const auto scrollViewer{TimelineScrollViewer()};
+        const double viewportWidth{std::max(0.0, scrollViewer.ViewportWidth())};
+        const double viewportLeft{scrollViewer.HorizontalOffset()};
+        const double viewportRight{viewportLeft + viewportWidth};
+        const int firstVisibleIndex{std::clamp(static_cast<int>(std::floor(viewportLeft / thumbnailWidth)), 0, thumbnailCount - 1)};
+        const int lastVisibleIndex{std::clamp(static_cast<int>(std::floor(std::max(viewportLeft, viewportRight - 1.0) / thumbnailWidth)), 0, thumbnailCount - 1)};
+
+        std::vector<int> thumbnailBuildOrder{};
+        thumbnailBuildOrder.reserve(static_cast<size_t>(thumbnailCount));
+        for(int i = firstVisibleIndex; i <= lastVisibleIndex; ++i){
+            thumbnailBuildOrder.push_back(i);
+        }
+
+        int left{firstVisibleIndex - 1};
+        int right{lastVisibleIndex + 1};
+        while(static_cast<int>(thumbnailBuildOrder.size()) < thumbnailCount){
+            if(right < thumbnailCount){
+                thumbnailBuildOrder.push_back(right);
+                ++right;
+            }
+            if(left >= 0){
+                thumbnailBuildOrder.push_back(left);
+                --left;
+            }
+        }
+
         const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_loadedFile)};
         Windows::Media::Editing::MediaComposition composition{};
         composition.Clips().Append(clip);
@@ -507,7 +534,7 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
             co_return;
         }
 
-        for(int i = 0; i < thumbnailCount; ++i){
+        for(const int i: thumbnailBuildOrder){
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
                 co_return;
             }
