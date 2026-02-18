@@ -45,15 +45,15 @@ struct MainWindow: MainWindowT<MainWindow>{
     void TimelineCanvas_PointerCanceled(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
     void TimelineCanvas_PointerCaptureLost(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
     void KeyFrameSnapMode_Checked(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
-    void NewProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
+    winrt::Windows::Foundation::IAsyncAction NewProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction OpenProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction SaveProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
-    void CloseProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
+    winrt::Windows::Foundation::IAsyncAction CloseProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction LoadVideoMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction RecentVideoMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction RecentProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction PropertiesMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
-    void ExitMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
+    winrt::Windows::Foundation::IAsyncAction ExitMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction AboutMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction OptionsMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     void Window_DragOver(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::DragEventArgs const& args);
@@ -79,6 +79,7 @@ private:
     std::vector<std::pair<double, double>> m_cutIntervals{};
     std::vector<std::wstring> m_projectUnknownLines{};
     winrt::hstring m_projectPath{};
+    std::wstring m_lastSavedProjectSnapshot{};
     bool m_isClosing{false};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};
@@ -103,6 +104,9 @@ private:
     winrt::Windows::Foundation::IAsyncAction OpenProjectFileAsync(winrt::Windows::Storage::StorageFile const& file);
     winrt::Windows::Foundation::IAsyncAction SaveProjectFileAsync(winrt::Windows::Storage::StorageFile const& file);
     void ResetProjectState(bool clearLoadedVideo);
+    std::wstring BuildProjectSnapshot() const;
+    bool IsProjectDirty() const;
+    winrt::Windows::Foundation::IAsyncOperation<bool> EnsureProjectSavedBeforeContinuingAsync();
     static MediaInspectionResult InspectMediaFile(std::wstring const& filePath);
     static bool IsSupportedVideoSubtype(_GUID const& subtype);
     static std::wstring GuidToCodecName(_GUID const& subtype, bool isVideo);

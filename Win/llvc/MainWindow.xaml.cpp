@@ -316,6 +316,7 @@ MainWindow::MainWindow(){
     Closed({this, &MainWindow::OnClosed});
     RefreshRecentVideosMenu();
     RefreshRecentProjectsMenu();
+    m_lastSavedProjectSnapshot = BuildProjectSnapshot();
 }
 
 HWND MainWindow::GetWindowHandle() const{
@@ -733,12 +734,20 @@ void MainWindow::KeyFrameSnapMode_Checked(IInspectable const& sender, RoutedEven
     m_keyFrameSnapMode = unbox_value<hstring>(radio.Tag()).c_str();
 }
 
-void MainWindow::NewProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    ResetProjectState(false);
+Windows::Foundation::IAsyncAction MainWindow::NewProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    if(!co_await EnsureProjectSavedBeforeContinuingAsync()){
+        co_return;
+    }
+
+    ResetProjectState(true);
     StatusText().Text(L"New project created");
 }
 
 Windows::Foundation::IAsyncAction MainWindow::OpenProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    if(!co_await EnsureProjectSavedBeforeContinuingAsync()){
+        co_return;
+    }
+
     Windows::Storage::Pickers::FileOpenPicker picker{};
     picker.FileTypeFilter().Append(L".llvc");
     picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::DocumentsLibrary);
@@ -780,7 +789,11 @@ Windows::Foundation::IAsyncAction MainWindow::SaveProjectMenuItem_Click(IInspect
     co_await SaveProjectFileAsync(target);
 }
 
-void MainWindow::CloseProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+Windows::Foundation::IAsyncAction MainWindow::CloseProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    if(!co_await EnsureProjectSavedBeforeContinuingAsync()){
+        co_return;
+    }
+
     ResetProjectState(true);
     StatusText().Text(L"Project closed");
 }
@@ -815,6 +828,10 @@ Windows::Foundation::IAsyncAction MainWindow::RecentProjectMenuItem_Click(IInspe
         co_return;
     }
 
+    if(!co_await EnsureProjectSavedBeforeContinuingAsync()){
+        co_return;
+    }
+
     bool openFailed{false};
     const auto path{unbox_value<hstring>(item.Tag())};
     try{
@@ -833,12 +850,17 @@ Windows::Foundation::IAsyncAction MainWindow::PropertiesMenuItem_Click(IInspecta
     co_await ShowPropertiesDialogAsync();
 }
 
-void MainWindow::ExitMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+Windows::Foundation::IAsyncAction MainWindow::ExitMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    if(!co_await EnsureProjectSavedBeforeContinuingAsync()){
+        co_return;
+    }
+
     Close();
 }
 
 Windows::Foundation::IAsyncAction MainWindow::AboutMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    co_await ShowInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut\nPreview and timeline exploration tool.");
+    co_await ShowInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut
+Preview and timeline exploration tool.");
 }
 
 Windows::Foundation::IAsyncAction MainWindow::OptionsMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
@@ -937,11 +959,56 @@ void MainWindow::ResetProjectState(const bool clearLoadedVideo){
     m_cutIntervals.clear();
     m_keyFrameSnapMode = L"Nearest";
     NearestSnapRadio().IsChecked(true);
+    TimelineZoomSlider().Value(3);
 
     if(clearLoadedVideo){
         m_loadedFile = nullptr;
         m_player.Source(nullptr);
     }
+
+    m_lastSavedProjectSnapshot = BuildProjectSnapshot();
+}
+
+std::wstring MainWindow::BuildProjectSnapshot() const{
+    std::wstringstream ss;
+    ss << L"file_path=" << (m_loadedFile ? m_loadedFile.Path().c_str() : L"") << L"\n";
+    ss << L"storyline_zoom=" << std::setprecision(15) << TimelineZoomSlider().Value() << L"\n";
+    ss << L"keyframe_snap_mode=" << m_keyFrameSnapMode << L"\n";
+    ss << L"selected_key_frames=" << SerializeNumberList(m_selectedKeyFrames) << L"\n";
+    ss << L"cut_intervals=" << SerializeNumberPairs(m_cutIntervals) << L"\n";
+    for(auto const& line : m_projectUnknownLines){
+        ss << line << L"\n";
+    }
+    return ss.str();
+}
+
+bool MainWindow::IsProjectDirty() const{
+    return BuildProjectSnapshot() != m_lastSavedProjectSnapshot;
+}
+
+Windows::Foundation::IAsyncOperation<bool> MainWindow::EnsureProjectSavedBeforeContinuingAsync(){
+    if(!IsProjectDirty()){
+        co_return true;
+    }
+
+    Controls::ContentDialog dialog{};
+    dialog.XamlRoot(Content().XamlRoot());
+    dialog.Title(box_value(L"Unsaved changes"));
+    dialog.Content(box_value(L"Current project has unsaved changes. Save before continuing?"));
+    dialog.PrimaryButtonText(L"Save");
+    dialog.SecondaryButtonText(L"Don't save");
+    dialog.CloseButtonText(L"Cancel");
+
+    const auto choice{co_await dialog.ShowAsync()};
+    if(choice == Controls::ContentDialogResult::Primary){
+        co_await SaveProjectMenuItem_Click(nullptr, RoutedEventArgs{});
+        co_return !IsProjectDirty();
+    }
+    if(choice == Controls::ContentDialogResult::Secondary){
+        co_return true;
+    }
+
+    co_return false;
 }
 
 Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Storage::StorageFile const& file){
@@ -1016,6 +1083,7 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     }
 
     AddRecentProject(file.Path());
+    m_lastSavedProjectSnapshot = BuildProjectSnapshot();
     StatusText().Text(L"Project loaded");
 }
 
@@ -1035,6 +1103,7 @@ Windows::Foundation::IAsyncAction MainWindow::SaveProjectFileAsync(Windows::Stor
     co_await Windows::Storage::FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(std::move(lines)));
     m_projectPath = file.Path();
     AddRecentProject(file.Path());
+    m_lastSavedProjectSnapshot = BuildProjectSnapshot();
     StatusText().Text(L"Project saved");
 }
 
