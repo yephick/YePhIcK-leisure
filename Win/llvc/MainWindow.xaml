@@ -7,9 +7,9 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="llvc - Lossless Video Cut" KeyDown="Window_KeyDown">
+    Title="llvc - Lossless Video Cut">
 
-    <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop">
+    <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop" KeyDown="Window_KeyDown" IsTabStop="True">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
