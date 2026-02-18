@@ -191,6 +191,10 @@ void MainWindow::TimelineScrollViewer_ViewChanged(IInspectable const&, Controls:
     SyncTimelineHorizontalScrollBar();
 }
 
+void MainWindow::TimelineScrollViewer_SizeChanged(IInspectable const&, SizeChangedEventArgs const&){
+    SyncTimelineHorizontalScrollBar();
+}
+
 void MainWindow::TimelineCanvas_PointerPressed(IInspectable const&, Input::PointerRoutedEventArgs const& e){
     if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
