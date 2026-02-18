@@ -232,6 +232,9 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
 
     const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_loadedFile)};
+    Windows::Media::Editing::MediaComposition composition{};
+    composition.Clips().Append(clip);
+
     if(renderVersion != m_timelineRenderVersion){
         co_return;
     }
@@ -242,7 +245,7 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
         }
 
         const double t{(static_cast<double>(i) + 0.5) / static_cast<double>(thumbnailCount)};
-        const auto stream{co_await clip.GetThumbnailAsync(SecondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
+        const auto stream{co_await composition.GetThumbnailAsync(SecondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
         if(renderVersion != m_timelineRenderVersion){
             co_return;
         }
