@@ -181,7 +181,8 @@ void MainWindow::TimelineHorizontalScrollBar_ValueChanged(IInspectable const&, C
     const auto scrollViewer{TimelineScrollViewer()};
     const double offset{scrollViewer.HorizontalOffset()};
     if(std::fabs(offset - args.NewValue()) > 0.5){
-        scrollViewer.ChangeView(box_value(args.NewValue()), nullptr, nullptr, true);
+        const auto targetOffset{box_value(args.NewValue()).as<Windows::Foundation::IReference<double>>()};
+        scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     }
 }
 
@@ -258,9 +259,11 @@ void MainWindow::UpdateTimelineCursorFromPlayback(){
             const double maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
 
             if(left < minVisible){
-                scrollViewer.ChangeView(box_value(std::clamp(left - cursorPadding, 0.0, maxOffset)), nullptr, nullptr, true);
+                const auto targetOffset{box_value(std::clamp(left - cursorPadding, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
+                scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
             }else if(left > maxVisible){
-                scrollViewer.ChangeView(box_value(std::clamp(left + cursorPadding - viewportWidth, 0.0, maxOffset)), nullptr, nullptr, true);
+                const auto targetOffset{box_value(std::clamp(left + cursorPadding - viewportWidth, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
+                scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
             }
         }
     }
