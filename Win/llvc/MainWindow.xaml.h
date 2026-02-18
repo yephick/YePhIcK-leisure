@@ -35,6 +35,8 @@ private:
     winrt::fire_and_forget RenderTimelineAsync();
     void UpdateTimelineCursorFromPlayback();
     static winrt::Windows::Foundation::TimeSpan SecondsToTimeSpan(double seconds);
+    static int32_t DipsToPixels(int32_t dipValue, uint32_t dpi);
+    uint32_t GetWindowDpi() const;
 };
 
 }
