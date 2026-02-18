@@ -859,8 +859,7 @@ Windows::Foundation::IAsyncAction MainWindow::ExitMenuItem_Click(IInspectable co
 }
 
 Windows::Foundation::IAsyncAction MainWindow::AboutMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    co_await ShowInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut
-Preview and timeline exploration tool.");
+    co_await ShowInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut\nPreview and timeline exploration tool.");
 }
 
 Windows::Foundation::IAsyncAction MainWindow::OptionsMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
@@ -969,7 +968,7 @@ void MainWindow::ResetProjectState(const bool clearLoadedVideo){
     m_lastSavedProjectSnapshot = BuildProjectSnapshot();
 }
 
-std::wstring MainWindow::BuildProjectSnapshot() const{
+std::wstring MainWindow::BuildProjectSnapshot(){
     std::wstringstream ss;
     ss << L"file_path=" << (m_loadedFile ? m_loadedFile.Path().c_str() : L"") << L"\n";
     ss << L"storyline_zoom=" << std::setprecision(15) << TimelineZoomSlider().Value() << L"\n";
@@ -982,7 +981,7 @@ std::wstring MainWindow::BuildProjectSnapshot() const{
     return ss.str();
 }
 
-bool MainWindow::IsProjectDirty() const{
+bool MainWindow::IsProjectDirty(){
     return BuildProjectSnapshot() != m_lastSavedProjectSnapshot;
 }
 

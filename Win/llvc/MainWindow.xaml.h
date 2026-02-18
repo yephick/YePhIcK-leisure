@@ -104,8 +104,8 @@ private:
     winrt::Windows::Foundation::IAsyncAction OpenProjectFileAsync(winrt::Windows::Storage::StorageFile const& file);
     winrt::Windows::Foundation::IAsyncAction SaveProjectFileAsync(winrt::Windows::Storage::StorageFile const& file);
     void ResetProjectState(bool clearLoadedVideo);
-    std::wstring BuildProjectSnapshot() const;
-    bool IsProjectDirty() const;
+    std::wstring BuildProjectSnapshot();
+    bool IsProjectDirty();
     winrt::Windows::Foundation::IAsyncOperation<bool> EnsureProjectSavedBeforeContinuingAsync();
     static MediaInspectionResult InspectMediaFile(std::wstring const& filePath);
     static bool IsSupportedVideoSubtype(_GUID const& subtype);
