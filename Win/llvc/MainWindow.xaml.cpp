@@ -318,18 +318,21 @@ void MainWindow::UpdateTimelineCursorFromPlayback(){
 
 void MainWindow::SyncTimelineHorizontalScrollBar(){
     const auto scrollViewer{TimelineScrollViewer()};
-    const double scrollableWidth{scrollViewer.ScrollableWidth()};
+    const double scrollableWidth{std::max(0.0, scrollViewer.ScrollableWidth())};
+    const double viewportWidth{std::max(1.0, scrollViewer.ViewportWidth())};
 
-    TimelineHorizontalScrollBar().Maximum(scrollableWidth);
-    TimelineHorizontalScrollBar().ViewportSize(scrollViewer.ViewportWidth());
-    TimelineHorizontalScrollBar().LargeChange(std::max(32.0, scrollViewer.ViewportWidth() * 0.8));
-    TimelineHorizontalScrollBar().SmallChange(24.0);
-    TimelineHorizontalScrollBar().IsEnabled(scrollableWidth > 0.5);
+    auto bar{TimelineHorizontalScrollBar()};
+    bar.Maximum(std::max(1.0, scrollableWidth));
+    bar.ViewportSize(viewportWidth);
+    bar.LargeChange(std::max(32.0, viewportWidth * 0.8));
+    bar.SmallChange(24.0);
+    bar.IsEnabled(true);
+    bar.Visibility(Visibility::Visible);
 
-    const double currentValue{TimelineHorizontalScrollBar().Value()};
-    const double offset{scrollViewer.HorizontalOffset()};
+    const double currentValue{bar.Value()};
+    const double offset{std::clamp(scrollViewer.HorizontalOffset(), 0.0, bar.Maximum())};
     if(std::fabs(currentValue - offset) > 0.5){
-        TimelineHorizontalScrollBar().Value(offset);
+        bar.Value(offset);
     }
 }
 
