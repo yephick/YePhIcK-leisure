@@ -1,24 +1,99 @@
 ﻿#include "pch.h"
 #include "MainWindow.xaml.h"
-#if __has_include("MainWindow.g.cpp")
 #include "MainWindow.g.cpp"
-#endif
+
+#include <algorithm>
+
+#include <winrt/Windows.ApplicationModel.DataTransfer.h>
+#include <winrt/Windows.Media.Core.h>
+#include <winrt/Windows.Media.Playback.h>
+#include <winrt/Windows.Storage.h>
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
 
-// To learn more about WinUI, the WinUI project structure,
-// and more about our project templates, see: http://aka.ms/winui-project-info.
-
-namespace winrt::llvc::implementation
+namespace winrt::llvc::implementation{
+MainWindow::MainWindow()
 {
-    int32_t MainWindow::MyProperty()
-    {
-        throw hresult_not_implemented();
+    InitializeComponent();
+
+    m_player = Windows::Media::Playback::MediaPlayer();
+    PreviewPlayer().SetMediaPlayer(m_player);
+}
+
+void MainWindow::StartButton_Click(IInspectable const&, RoutedEventArgs const&)
+{
+    if(m_player){
+        m_player.Play();
+    }
+}
+
+void MainWindow::PauseButton_Click(IInspectable const&, RoutedEventArgs const&)
+{
+    if(m_player){
+        m_player.Pause();
+    }
+}
+
+void MainWindow::StopButton_Click(IInspectable const&, RoutedEventArgs const&)
+{
+    if(m_player){
+        m_player.Pause();
+        m_player.PlaybackSession().Position(std::chrono::seconds(0));
+    }
+}
+
+void MainWindow::Window_DragOver(IInspectable const&, DragEventArgs const& e)
+{
+    e.AcceptedOperation(Windows::ApplicationModel::DataTransfer::DataPackageOperation::Copy);
+}
+
+Windows::Foundation::IAsyncAction MainWindow::Window_Drop(IInspectable const&, DragEventArgs const& e)
+{
+    auto view = e.DataView();
+    if(!view.Contains(Windows::ApplicationModel::DataTransfer::StandardDataFormats::StorageItems())){
+        StatusText().Text(L"Dropped content is not a file.");
+        co_return;
     }
 
-    void MainWindow::MyProperty(int32_t /* value */)
-    {
-        throw hresult_not_implemented();
+    auto items = co_await view.GetStorageItemsAsync();
+    for(auto const& item : items){
+        auto file = item.try_as<Windows::Storage::StorageFile>();
+        if(!file){
+            continue;
+        }
+
+        auto ext = file.FileType();
+        std::wstring lower = ext.c_str();
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
+        if(lower == L".mp4" || lower == L".mov"){
+            co_await LoadVideoFileAsync(file);
+            co_return;
+        }
     }
+
+    StatusText().Text(L"Only .mp4 and .mov files are supported in this skeleton.");
+}
+
+Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storage::StorageFile const& file)
+{
+    auto source = Windows::Media::Core::MediaSource::CreateFromStorageFile(file);
+    m_player.Source(source);
+
+    std::wstring status = L"Loaded: ";
+    status += file.Name().c_str();
+    StatusText().Text(status);
+
+    co_return;
+}
+
+int32_t MainWindow::MyProperty()
+{
+    throw hresult_not_implemented();
+}
+
+void MainWindow::MyProperty(int32_t)
+{
+    throw hresult_not_implemented();
+}
 }
