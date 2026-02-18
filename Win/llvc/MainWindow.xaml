@@ -9,7 +9,7 @@
     mc:Ignorable="d"
     Title="llvc - Lossless Video Cut">
 
-    <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop" KeyDown="Window_KeyDown" IsTabStop="True">
+    <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -18,7 +18,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <controls:MenuBar Grid.Row="0">
+        <controls:MenuBar Grid.Row="0" IsTabStop="False">
             <controls:MenuBarItem Title="_File">
                 <MenuFlyoutItem Text="_New project	Ctrl+N" Click="NewProjectMenuItem_Click"/>
                 <MenuFlyoutItem Text="_Open project..." Click="OpenProjectMenuItem_Click"/>
@@ -66,14 +66,14 @@
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <TextBlock Text="Zoom" VerticalAlignment="Center" Margin="-4,0,0,0"/>
-                    <Slider x:Name="TimelineZoomSlider" Width="240" Minimum="1" Maximum="12" Value="3" SmallChange="0.25" LargeChange="1" ValueChanged="TimelineZoomSlider_ValueChanged"/>
+                    <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="12" Value="3" SmallChange="0.25" LargeChange="1" ValueChanged="TimelineZoomSlider_ValueChanged"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <TextBlock Text="Key frame snap" VerticalAlignment="Center"/>
-                    <RadioButton x:Name="LeftSnapRadio" Content="Left" GroupName="KeyFrameSnapMode" Tag="Left" Checked="KeyFrameSnapMode_Checked"/>
-                    <RadioButton x:Name="RightSnapRadio" Content="Right" GroupName="KeyFrameSnapMode" Tag="Right" Checked="KeyFrameSnapMode_Checked"/>
-                    <RadioButton x:Name="NearestSnapRadio" Content="Nearest" GroupName="KeyFrameSnapMode" Tag="Nearest" IsChecked="True" Checked="KeyFrameSnapMode_Checked"/>
+                    <RadioButton x:Name="LeftSnapRadio" IsTabStop="False" Content="Left" GroupName="KeyFrameSnapMode" Tag="Left" Checked="KeyFrameSnapMode_Checked"/>
+                    <RadioButton x:Name="RightSnapRadio" IsTabStop="False" Content="Right" GroupName="KeyFrameSnapMode" Tag="Right" Checked="KeyFrameSnapMode_Checked"/>
+                    <RadioButton x:Name="NearestSnapRadio" IsTabStop="False" Content="Nearest" GroupName="KeyFrameSnapMode" Tag="Nearest" IsChecked="True" Checked="KeyFrameSnapMode_Checked"/>
                 </StackPanel>
             </Grid>
 
@@ -87,7 +87,7 @@
                     <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="TimelineScrollViewer_ViewChanged" SizeChanged="TimelineScrollViewer_SizeChanged">
                         <StackPanel Orientation="Vertical" Spacing="4">
                             <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#111111"/>
-                            <Canvas x:Name="TimelineCanvas" Height="86" PointerPressed="TimelineCanvas_PointerPressed" PointerMoved="TimelineCanvas_PointerMoved" PointerReleased="TimelineCanvas_PointerReleased" PointerCanceled="TimelineCanvas_PointerCanceled" PointerCaptureLost="TimelineCanvas_PointerCaptureLost" Background="#111111">
+                            <Canvas x:Name="TimelineCanvas" Height="86" IsTabStop="True" Loaded="TimelineCanvas_Loaded" KeyDown="Window_KeyDown" PointerPressed="TimelineCanvas_PointerPressed" PointerMoved="TimelineCanvas_PointerMoved" PointerReleased="TimelineCanvas_PointerReleased" PointerCanceled="TimelineCanvas_PointerCanceled" PointerCaptureLost="TimelineCanvas_PointerCaptureLost" Background="#111111">
                                 <Canvas x:Name="ThumbnailLayer" Height="86"/>
                                 <Rectangle x:Name="TimelineCursor" Canvas.Left="0" Width="2" Height="86" Fill="White"/>
                             </Canvas>
@@ -95,7 +95,7 @@
                     </ScrollViewer>
 
                     <Border Grid.Row="1" Margin="0,4,0,0" Padding="0" MinHeight="28" Background="#202020" BorderBrush="#6A6A6A" BorderThickness="1" CornerRadius="2">
-                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" Height="20" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="6,2" Visibility="Visible" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
+                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" IsTabStop="False" Height="20" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="6,2" Visibility="Visible" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
                     </Border>
                 </Grid>
             </Border>
@@ -104,9 +104,9 @@
         <TextBlock Grid.Row="3" x:Name="StatusText" Text="Load or drag-and-drop a .mp4/.mov file to preview."/>
 
         <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
-            <Button x:Name="StartButton" Content="Start" Click="StartButton_Click"/>
-            <Button x:Name="PauseButton" Content="Pause" Click="PauseButton_Click"/>
-            <Button x:Name="StopButton" Content="Stop" Click="StopButton_Click"/>
+            <Button x:Name="StartButton" Content="Start" IsTabStop="False" Click="StartButton_Click"/>
+            <Button x:Name="PauseButton" Content="Pause" IsTabStop="False" Click="PauseButton_Click"/>
+            <Button x:Name="StopButton" Content="Stop" IsTabStop="False" Click="StopButton_Click"/>
         </StackPanel>
     </Grid>
 </Window>

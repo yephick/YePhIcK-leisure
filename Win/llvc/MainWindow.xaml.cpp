@@ -555,6 +555,7 @@ void MainWindow::TimelineCanvas_PointerPressed(IInspectable const&, Input::Point
     m_timelineDragStartX = static_cast<double>(point.Position().X);
     m_timelineDragStartOffset = TimelineScrollViewer().HorizontalOffset();
 
+    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
     TimelineCanvas().CapturePointer(e.Pointer());
     e.Handled(true);
 }
@@ -611,6 +612,10 @@ void MainWindow::TimelineCanvas_PointerCanceled(IInspectable const&, Input::Poin
 void MainWindow::TimelineCanvas_PointerCaptureLost(IInspectable const&, Input::PointerRoutedEventArgs const&){
     m_isTimelineDragging = false;
     m_timelineDragMoved = false;
+}
+
+void MainWindow::TimelineCanvas_Loaded(IInspectable const&, RoutedEventArgs const&){
+    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
 }
 
 void MainWindow::OnNaturalDurationChanged(Windows::Media::Playback::MediaPlaybackSession const& sender, IInspectable const&){
