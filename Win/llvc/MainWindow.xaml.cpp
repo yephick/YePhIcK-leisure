@@ -532,6 +532,7 @@ Windows::Foundation::IAsyncAction MainWindow::AboutMenuItem_Click(IInspectable c
 
 Windows::Foundation::IAsyncAction MainWindow::PickAndLoadVideoAsync(){
     Windows::Storage::Pickers::FileOpenPicker picker{};
+    picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::VideosLibrary);
     picker.FileTypeFilter().Append(L".mp4");
     picker.FileTypeFilter().Append(L".mov");
 
