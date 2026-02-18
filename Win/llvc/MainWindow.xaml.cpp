@@ -26,6 +26,7 @@
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Microsoft.UI.Xaml.Shapes.h>
 #include <winrt/Windows.UI.h>
+#include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <winrt/Windows.Media.Core.h>
 #include <winrt/Windows.Media.Editing.h>
@@ -119,6 +120,18 @@ std::vector<hstring> SplitRecentItems(std::wstring const& source){
         start = pos + 1;
     }
     return items;
+}
+
+bool IsDescendantOf(DependencyObject const& object, std::wstring_view const& typeName){
+    DependencyObject current{object};
+    while(current){
+        const auto fullName{current.as<IInspectable>().GetRuntimeClassName()};
+        if(std::wstring_view(fullName.c_str()).find(typeName) != std::wstring_view::npos){
+            return true;
+        }
+        current = Media::VisualTreeHelper::GetParent(current);
+    }
+    return false;
 }
 
 std::wstring Trim(std::wstring value){
@@ -894,15 +907,48 @@ void MainWindow::StepByKeyframe(const int delta){
 }
 
 void MainWindow::Window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
-    switch(args.Key()){
-    case Windows::System::VirtualKey::Tab:
-        TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
-        args.Handled(true);
-        break;
-    case Windows::System::VirtualKey::Menu:
+    const auto focused{FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
+    const bool focusOnMenu = focused && IsDescendantOf(focused, L"MenuBar");
+    const bool focusInDialog = focused && IsDescendantOf(focused, L"ContentDialog");
+
+    if(args.Key() == Windows::System::VirtualKey::Menu){
         MainMenuBar().Focus(Microsoft::UI::Xaml::FocusState::Keyboard);
         args.Handled(true);
-        break;
+        return;
+    }
+
+    if(args.Key() == Windows::System::VirtualKey::Tab && !focusOnMenu && !focusInDialog){
+        TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
+        args.Handled(true);
+        return;
+    }
+
+    if(focusOnMenu || focusInDialog){
+        return;
+    }
+
+    const auto ctrlState{Microsoft::UI::Input::InputKeyboardSource::GetKeyStateForCurrentThread(Windows::System::VirtualKey::Control)};
+    const bool ctrlDown{(ctrlState & Windows::UI::Core::CoreVirtualKeyStates::Down) == Windows::UI::Core::CoreVirtualKeyStates::Down};
+
+    if(ctrlDown){
+        if(args.Key() == Windows::System::VirtualKey::O){
+            (void)OpenProjectMenuItem_Click(nullptr, RoutedEventArgs{});
+            args.Handled(true);
+            return;
+        }
+        if(args.Key() == Windows::System::VirtualKey::S){
+            (void)SaveProjectMenuItem_Click(nullptr, RoutedEventArgs{});
+            args.Handled(true);
+            return;
+        }
+        if(args.Key() == Windows::System::VirtualKey::N){
+            (void)NewProjectMenuItem_Click(nullptr, RoutedEventArgs{});
+            args.Handled(true);
+            return;
+        }
+    }
+
+    switch(args.Key()){
     case Windows::System::VirtualKey::Left:
         StepByFrame(-1);
         args.Handled(true);
@@ -923,7 +969,6 @@ void MainWindow::Window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs c
         break;
     }
 }
-
 
 Windows::Foundation::TimeSpan MainWindow::SecondsToTimeSpan(const double seconds){
     return std::chrono::duration_cast<Windows::Foundation::TimeSpan>(std::chrono::duration<double>(seconds));
