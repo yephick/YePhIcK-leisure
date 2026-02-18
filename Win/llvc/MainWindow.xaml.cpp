@@ -24,6 +24,7 @@ constexpr auto W_POS_L{L"WindowLeft"};
 constexpr auto W_POS_T{L"WindowTop"};
 constexpr auto W_POS_W{L"WindowWidth"};
 constexpr auto W_POS_H{L"WindowHeight"};
+constexpr auto W_POS_DPI{L"WindowDpi"};
 
 MainWindow::MainWindow(){
     InitializeComponent();
@@ -47,6 +48,15 @@ HWND MainWindow::GetWindowHandle() const{
     const auto projected{const_cast<MainWindow*>(this)->get_strong()};
     check_hresult(projected.as<::IWindowNative>()->get_WindowHandle(&hwnd));
     return hwnd;
+}
+
+
+int32_t PixelsToDips(const int32_t pixelValue, const uint32_t dpi){
+    return static_cast<int32_t>(std::lround((static_cast<double>(pixelValue) * 96.0) / static_cast<double>(dpi == 0 ? 96U : dpi)));
+}
+
+int32_t DipsToPixels(const int32_t dipValue, const uint32_t dpi){
+    return static_cast<int32_t>(std::lround((static_cast<double>(dipValue) * static_cast<double>(dpi == 0 ? 96U : dpi)) / 96.0));
 }
 
 bool MainWindow::IsRectVisibleOnAnyMonitor(RECT const& rect){
@@ -75,10 +85,17 @@ void MainWindow::RestoreWindowPlacement(){
 
     const auto left{unbox_value<int32_t>(values.Lookup(W_POS_L))};
     const auto top{unbox_value<int32_t>(values.Lookup(W_POS_T))};
-    const auto width{unbox_value<int32_t>(values.Lookup(W_POS_W))};
-    const auto height{unbox_value<int32_t>(values.Lookup(W_POS_H))};
 
     const auto hwnd{GetWindowHandle()};
+
+    SetWindowPos(hwnd, nullptr, left, top, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
+
+    const uint32_t currentDpi{::GetDpiForWindow(hwnd)};
+    const bool hasDpiData{values.HasKey(W_POS_DPI)};
+    const auto storedWidth{unbox_value<int32_t>(values.Lookup(W_POS_W))};
+    const auto storedHeight{unbox_value<int32_t>(values.Lookup(W_POS_H))};
+    const auto width{hasDpiData ? DipsToPixels(storedWidth, currentDpi) : storedWidth};
+    const auto height{hasDpiData ? DipsToPixels(storedHeight, currentDpi) : storedHeight};
 
     RECT restoredRect{};
     restoredRect.left = left;
@@ -91,6 +108,7 @@ void MainWindow::RestoreWindowPlacement(){
         values.Remove(W_POS_T);
         values.Remove(W_POS_W);
         values.Remove(W_POS_H);
+        values.Remove(W_POS_DPI);
         return;
     }
 
@@ -113,10 +131,12 @@ void MainWindow::SaveWindowPlacement() const{
 
     const auto localSettings{Windows::Storage::ApplicationData::Current().LocalSettings()};
     const auto values{localSettings.Values()};
+    const uint32_t dpi{::GetDpiForWindow(hwnd)};
     values.Insert(W_POS_L, box_value(static_cast<int32_t>(bounds.left)));
     values.Insert(W_POS_T, box_value(static_cast<int32_t>(bounds.top)));
-    values.Insert(W_POS_W, box_value(static_cast<int32_t>(bounds.right - bounds.left)));
-    values.Insert(W_POS_H, box_value(static_cast<int32_t>(bounds.bottom - bounds.top)));
+    values.Insert(W_POS_W, box_value(PixelsToDips(static_cast<int32_t>(bounds.right - bounds.left), dpi)));
+    values.Insert(W_POS_H, box_value(PixelsToDips(static_cast<int32_t>(bounds.bottom - bounds.top), dpi)));
+    values.Insert(W_POS_DPI, box_value(static_cast<int32_t>(dpi)));
 }
 
 void MainWindow::OnClosed(IInspectable const&, WindowEventArgs const&){
