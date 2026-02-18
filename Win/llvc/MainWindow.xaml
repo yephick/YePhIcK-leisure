@@ -51,7 +51,7 @@
                     </ScrollViewer>
 
                     <Border Grid.Row="1" Margin="0,2,0,0" Padding="2" Background="#202020" BorderBrush="#6A6A6A" BorderThickness="1" CornerRadius="2">
-                        <ScrollBar x:Name="TimelineHorizontalScrollBar" Orientation="Horizontal" Minimum="0" Height="16" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Visibility="Visible" Opacity="1" Background="#3A3A3A" Foreground="#FFFFFF" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
+                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" Height="16" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Visibility="Visible" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
                     </Border>
                 </Grid>
             </Border>
