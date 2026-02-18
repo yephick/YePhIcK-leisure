@@ -500,32 +500,6 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
         RenderTimelineTicks();
         SyncTimelineHorizontalScrollBar();
 
-        const auto scrollViewer{TimelineScrollViewer()};
-        const double viewportWidth{std::max(0.0, scrollViewer.ViewportWidth())};
-        const double viewportLeft{scrollViewer.HorizontalOffset()};
-        const double viewportRight{viewportLeft + viewportWidth};
-        const int firstVisibleIndex{std::clamp(static_cast<int>(std::floor(viewportLeft / thumbnailWidth)), 0, thumbnailCount - 1)};
-        const int lastVisibleIndex{std::clamp(static_cast<int>(std::floor(std::max(viewportLeft, viewportRight - 1.0) / thumbnailWidth)), 0, thumbnailCount - 1)};
-
-        std::vector<int> thumbnailBuildOrder{};
-        thumbnailBuildOrder.reserve(static_cast<size_t>(thumbnailCount));
-        for(int i = firstVisibleIndex; i <= lastVisibleIndex; ++i){
-            thumbnailBuildOrder.push_back(i);
-        }
-
-        int left{firstVisibleIndex - 1};
-        int right{lastVisibleIndex + 1};
-        while(static_cast<int>(thumbnailBuildOrder.size()) < thumbnailCount){
-            if(right < thumbnailCount){
-                thumbnailBuildOrder.push_back(right);
-                ++right;
-            }
-            if(left >= 0){
-                thumbnailBuildOrder.push_back(left);
-                --left;
-            }
-        }
-
         const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_loadedFile)};
         Windows::Media::Editing::MediaComposition composition{};
         composition.Clips().Append(clip);
@@ -534,12 +508,51 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
             co_return;
         }
 
-        for(const int i: thumbnailBuildOrder){
+        std::vector<bool> thumbnailBuilt(static_cast<size_t>(thumbnailCount), false);
+
+        for(int builtCount = 0; builtCount < thumbnailCount; ++builtCount){
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
                 co_return;
             }
 
-            const double t{(static_cast<double>(i) + 0.5) / static_cast<double>(thumbnailCount)};
+            const auto scrollViewer{TimelineScrollViewer()};
+            const double viewportWidth{std::max(0.0, scrollViewer.ViewportWidth())};
+            const double viewportLeft{scrollViewer.HorizontalOffset()};
+            const double viewportRight{viewportLeft + viewportWidth};
+            const int firstVisibleIndex{std::clamp(static_cast<int>(std::floor(viewportLeft / thumbnailWidth)), 0, thumbnailCount - 1)};
+            const int lastVisibleIndex{std::clamp(static_cast<int>(std::floor(std::max(viewportLeft, viewportRight - 1.0) / thumbnailWidth)), 0, thumbnailCount - 1)};
+
+            int nextIndex{-1};
+            for(int i = firstVisibleIndex; i <= lastVisibleIndex; ++i){
+                if(!thumbnailBuilt[static_cast<size_t>(i)]){
+                    nextIndex = i;
+                    break;
+                }
+            }
+
+            if(nextIndex < 0){
+                int left{firstVisibleIndex - 1};
+                int right{lastVisibleIndex + 1};
+                while(nextIndex < 0 && (left >= 0 || right < thumbnailCount)){
+                    if(right < thumbnailCount && !thumbnailBuilt[static_cast<size_t>(right)]){
+                        nextIndex = right;
+                        break;
+                    }
+                    ++right;
+
+                    if(left >= 0 && !thumbnailBuilt[static_cast<size_t>(left)]){
+                        nextIndex = left;
+                        break;
+                    }
+                    --left;
+                }
+            }
+
+            if(nextIndex < 0){
+                break;
+            }
+
+            const double t{(static_cast<double>(nextIndex) + 0.5) / static_cast<double>(thumbnailCount)};
             const auto stream{co_await composition.GetThumbnailAsync(SecondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
                 co_return;
@@ -554,8 +567,9 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
             co_await bitmap.SetSourceAsync(stream);
             image.Source(bitmap);
 
-            Controls::Canvas::SetLeft(image, i * thumbnailWidth);
+            Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
             ThumbnailLayer().Children().Append(image);
+            thumbnailBuilt[static_cast<size_t>(nextIndex)] = true;
         }
 
         UpdateTimelineCursorFromPlayback();
