@@ -37,7 +37,7 @@
                 <Grid RowSpacing="4">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="24"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="TimelineScrollViewer_ViewChanged" SizeChanged="TimelineScrollViewer_SizeChanged">
@@ -50,8 +50,8 @@
                         </StackPanel>
                     </ScrollViewer>
 
-                    <Border Grid.Row="1" Margin="0,2,0,0" Padding="2" Background="#202020" BorderBrush="#6A6A6A" BorderThickness="1" CornerRadius="2">
-                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" Height="16" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Visibility="Visible" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
+                    <Border Grid.Row="1" Margin="0,4,0,0" Padding="0" MinHeight="28" Background="#202020" BorderBrush="#6A6A6A" BorderThickness="1" CornerRadius="2">
+                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" Height="20" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="6,2" Visibility="Visible" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
                     </Border>
                 </Grid>
             </Border>
