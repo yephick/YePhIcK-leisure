@@ -84,6 +84,13 @@ void MainWindow::SaveWindowPlacement() const{
 }
 
 void MainWindow::OnClosed(IInspectable const&, WindowEventArgs const&){
+    m_isClosing = true;
+
+    if(m_positionTimer){
+        m_positionTimer.Stop();
+    }
+
+    m_naturalDurationChangedRevoker.revoke();
     SaveWindowPlacement();
 }
 
@@ -142,11 +149,15 @@ void MainWindow::OnNaturalDurationChanged(Windows::Media::Playback::MediaPlaybac
 }
 
 void MainWindow::OnPositionTimerTick(IInspectable const&, IInspectable const&){
+    if(m_isClosing){
+        return;
+    }
+
     UpdateTimelineCursorFromPlayback();
 }
 
 void MainWindow::UpdateTimelineCursorFromPlayback(){
-    if(!m_player || m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
+    if(m_isClosing || !m_player || m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
     }
 
@@ -217,7 +228,7 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
 }
 
 winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
-    if(!m_loadedFile || m_timelineDurationSeconds <= 0){
+    if(m_isClosing || !m_loadedFile || m_timelineDurationSeconds <= 0){
         co_return;
     }
 

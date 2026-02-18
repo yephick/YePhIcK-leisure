@@ -25,6 +25,7 @@ private:
     winrt::Microsoft::UI::Xaml::DispatcherTimer m_positionTimer{nullptr};
     double m_timelineDurationSeconds{0};
     std::uint64_t m_timelineRenderVersion{0};
+    bool m_isClosing{false};
     HWND GetWindowHandle() const;
 
 private:
