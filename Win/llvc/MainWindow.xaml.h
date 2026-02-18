@@ -22,6 +22,10 @@ struct MediaInspectionResult{
     std::wstring frameRate{};
     std::wstring videoBitrate{};
     std::wstring audioBitrate{};
+    std::wstring keyFrameSummary{};
+    std::wstring keyFrameInterval{};
+    std::wstring allSamplesIndependent{};
+    std::wstring maxKeyFrameSpacing{};
 };
 
 struct MainWindow: MainWindowT<MainWindow>{

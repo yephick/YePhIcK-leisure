@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cwctype>
 #include <iomanip>
+#include <numeric>
 #include <sstream>
 #include <string_view>
 #include <vector>
@@ -107,6 +108,95 @@ bool HasDecoderForSubtype(GUID const& subtype){
     }
 
     return SUCCEEDED(hr) && count > 0;
+}
+
+void AnalyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uint32_t fpsNum, uint32_t fpsDen, MediaInspectionResult& result){
+    constexpr uint32_t maxSamplesToInspect{1500};
+    constexpr LONGLONG maxSpan100ns{120LL * 10'000'000LL};
+
+    uint32_t sampledFrames{};
+    uint32_t keyFrames{};
+    bool cleanPointSeen{};
+    LONGLONG firstTimestamp{-1};
+    LONGLONG previousKeyTimestamp{-1};
+    std::vector<double> keyIntervalsSec{};
+
+    for(uint32_t i = 0; i < maxSamplesToInspect; ++i){
+        DWORD actualStreamIndex{};
+        DWORD flags{};
+        LONGLONG timestamp{};
+        com_ptr<IMFSample> sample{};
+
+        const HRESULT hr = reader->ReadSample(videoStreamIndex, 0, &actualStreamIndex, &flags, &timestamp, sample.put());
+        if(FAILED(hr)){
+            break;
+        }
+        if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+            break;
+        }
+        if(!sample){
+            continue;
+        }
+
+        ++sampledFrames;
+        if(firstTimestamp < 0){
+            firstTimestamp = timestamp;
+        }
+
+        UINT32 cleanPoint{};
+        if(SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) && cleanPoint != 0){
+            cleanPointSeen = true;
+            ++keyFrames;
+            if(previousKeyTimestamp >= 0 && timestamp > previousKeyTimestamp){
+                keyIntervalsSec.push_back((timestamp - previousKeyTimestamp) / 10'000'000.0);
+            }
+            previousKeyTimestamp = timestamp;
+        }
+
+        if(firstTimestamp >= 0 && timestamp - firstTimestamp >= maxSpan100ns){
+            break;
+        }
+    }
+
+    if(sampledFrames == 0){
+        result.keyFrameSummary = L"unknown (no samples read)";
+        result.keyFrameInterval = L"unknown";
+        return;
+    }
+
+    if(!cleanPointSeen){
+        result.keyFrameSummary = L"unknown (clean-point flags unavailable)";
+        result.keyFrameInterval = L"unknown";
+        return;
+    }
+
+    const auto ratio = static_cast<double>(keyFrames) / static_cast<double>(sampledFrames);
+    {
+        std::wstringstream ss;
+        ss << keyFrames << L" key frames / " << sampledFrames << L" sampled frames (" << std::fixed << std::setprecision(2) << (ratio * 100.0) << L"%)";
+        result.keyFrameSummary = ss.str();
+    }
+
+    if(keyIntervalsSec.empty()){
+        result.keyFrameInterval = L"unknown (insufficient key frames sampled)";
+        return;
+    }
+
+    const auto sum = std::accumulate(keyIntervalsSec.begin(), keyIntervalsSec.end(), 0.0);
+    const auto avg = sum / static_cast<double>(keyIntervalsSec.size());
+    const auto minIt = std::min_element(keyIntervalsSec.begin(), keyIntervalsSec.end());
+    const auto maxIt = std::max_element(keyIntervalsSec.begin(), keyIntervalsSec.end());
+
+    std::wstringstream ss;
+    ss << std::fixed << std::setprecision(3)
+       << L"avg " << avg << L" s, min " << *minIt << L" s, max " << *maxIt << L" s";
+
+    if(fpsNum > 0 && fpsDen > 0){
+        const double fps = static_cast<double>(fpsNum) / fpsDen;
+        ss << L" (~" << std::setprecision(1) << (avg * fps) << L" frames avg)";
+    }
+
+    result.keyFrameInterval = ss.str();
 }
 
 MainWindow::MainWindow(){
@@ -604,6 +694,10 @@ Windows::Foundation::IAsyncAction MainWindow::ShowPropertiesDialogAsync(){
     content += L"Resolution: "; content += m_mediaInfo.resolution; content += L"\n";
     content += L"FPS: "; content += m_mediaInfo.frameRate; content += L"\n";
     content += L"Video bitrate: "; content += m_mediaInfo.videoBitrate; content += L"\n";
+    content += L"Key frames: "; content += m_mediaInfo.keyFrameSummary; content += L"\n";
+    content += L"Key frame interval: "; content += m_mediaInfo.keyFrameInterval; content += L"\n";
+    content += L"All samples independent: "; content += m_mediaInfo.allSamplesIndependent; content += L"\n";
+    content += L"Max key frame spacing: "; content += m_mediaInfo.maxKeyFrameSpacing; content += L"\n";
     content += L"Audio codec: "; content += m_mediaInfo.audioCodec; content += L"\n";
     content += L"Audio bitrate: "; content += m_mediaInfo.audioBitrate;
 
@@ -639,6 +733,10 @@ std::wstring MainWindow::GuidToCodecName(GUID const& subtype, bool isVideo){
 
 MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath){
     MediaInspectionResult result{};
+    result.keyFrameSummary = L"unknown";
+    result.keyFrameInterval = L"unknown";
+    result.allSamplesIndependent = L"unknown";
+    result.maxKeyFrameSpacing = L"unknown";
     MFLifetime mf{};
 
     com_ptr<IMFSourceReader> reader;
@@ -655,6 +753,9 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
     uint32_t fpsDen{};
     uint32_t videoBitrate{};
     uint32_t audioBitrate{};
+    DWORD videoStreamIndex{DWORD_MAX};
+    uint32_t allSamplesIndependent{};
+    uint32_t maxKeyFrameSpacing{};
 
     for(DWORD streamIndex = 0;; ++streamIndex){
         com_ptr<IMFMediaType> type;
@@ -672,9 +773,16 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
         if(major == MFMediaType_Video){
             ++videoCount;
             videoSubtype = subtype;
+            videoStreamIndex = streamIndex;
             MFGetAttributeSize(type.get(), MF_MT_FRAME_SIZE, &width, &height);
             MFGetAttributeRatio(type.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
             (void)type->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
+            if(SUCCEEDED(type->GetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, &allSamplesIndependent))){
+                result.allSamplesIndependent = allSamplesIndependent != 0 ? L"yes" : L"no";
+            }
+            if(SUCCEEDED(type->GetUINT32(MF_MT_MAX_KEYFRAME_SPACING, &maxKeyFrameSpacing))){
+                result.maxKeyFrameSpacing = std::to_wstring(maxKeyFrameSpacing) + L" frames";
+            }
         }else if(major == MFMediaType_Audio){
             ++audioCount;
             audioSubtype = subtype;
@@ -738,6 +846,9 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
     result.frameRate = (fpsNum > 0 && fpsDen > 0) ? (FormatRatio(fpsNum, fpsDen) + L" fps") : L"-";
     result.videoBitrate = videoBitrate > 0 ? (std::to_wstring(videoBitrate / 1000) + L" kbps") : L"-";
     result.audioBitrate = audioBitrate > 0 ? (std::to_wstring((audioBitrate * 8) / 1000) + L" kbps") : L"none";
+    if(videoStreamIndex != DWORD_MAX){
+        AnalyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen, result);
+    }
     result.isValid = true;
     return result;
 }
