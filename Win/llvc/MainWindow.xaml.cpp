@@ -504,11 +504,16 @@ Windows::Foundation::IAsyncAction MainWindow::RecentVideoMenuItem_Click(IInspect
         co_return;
     }
 
+    bool openFailed{false};
     const auto path{unbox_value<hstring>(item.Tag())};
     try{
         const auto file{co_await Windows::Storage::StorageFile::GetFileFromPathAsync(path)};
         co_await LoadVideoFileAsync(file);
     }catch(winrt::hresult_error const&){
+        openFailed = true;
+    }
+
+    if(openFailed){
         co_await ShowInfoDialogAsync(L"Open failed", L"Could not open selected recent video.");
     }
 }
@@ -718,7 +723,7 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
 
     PROPVARIANT duration{};
     PropVariantInit(&duration);
-    if(SUCCEEDED(reader->GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &duration)) && duration.vt == VT_UI8){
+    if(SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION, &duration)) && duration.vt == VT_UI8){
         const auto seconds = static_cast<double>(duration.uhVal.QuadPart) / 10'000'000.0;
         std::wstringstream ss;
         ss << std::fixed << std::setprecision(3) << seconds << L" s";
