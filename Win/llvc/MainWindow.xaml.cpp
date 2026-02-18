@@ -191,22 +191,79 @@ void MainWindow::TimelineScrollViewer_ViewChanged(IInspectable const&, Controls:
 }
 
 void MainWindow::TimelineCanvas_PointerPressed(IInspectable const&, Input::PointerRoutedEventArgs const& e){
-    if(!m_player || m_timelineDurationSeconds <= 0){
+    if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
     }
 
-    if(TimelineCanvas().Width() <= 0){
+    const auto point{e.GetCurrentPoint(TimelineCanvas())};
+    if(!point.Properties().IsLeftButtonPressed()){
+        return;
+    }
+
+    m_isTimelineDragging = true;
+    m_timelineDragMoved = false;
+    m_timelineDragPointerId = e.Pointer().PointerId();
+    m_timelineDragStartX = static_cast<double>(point.Position().X);
+    m_timelineDragStartOffset = TimelineScrollViewer().HorizontalOffset();
+
+    TimelineCanvas().CapturePointer(e.Pointer());
+    e.Handled(true);
+}
+
+void MainWindow::TimelineCanvas_PointerMoved(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+    if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
         return;
     }
 
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
     const double pointerX{static_cast<double>(point.Position().X)};
-    const double x{std::clamp(pointerX, 0.0, TimelineCanvas().Width())};
-    const double ratio{x / TimelineCanvas().Width()};
-    const double targetSeconds{ratio * m_timelineDurationSeconds};
+    const double deltaX{pointerX - m_timelineDragStartX};
 
-    m_player.PlaybackSession().Position(SecondsToTimeSpan(targetSeconds));
-    UpdateTimelineCursorFromPlayback();
+    if(std::fabs(deltaX) > 4.0){
+        m_timelineDragMoved = true;
+    }
+
+    const auto scrollViewer{TimelineScrollViewer()};
+    const double viewportWidth{scrollViewer.ViewportWidth()};
+    const double maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
+    const double target{std::clamp(m_timelineDragStartOffset - deltaX, 0.0, maxOffset)};
+    const auto targetOffset{box_value(target).as<Windows::Foundation::IReference<double>>()};
+    scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
+    e.Handled(true);
+}
+
+void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+    if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
+        return;
+    }
+
+    const auto point{e.GetCurrentPoint(TimelineCanvas())};
+    const double pointerX{static_cast<double>(point.Position().X)};
+    const bool dragged{m_timelineDragMoved};
+
+    m_isTimelineDragging = false;
+    m_timelineDragMoved = false;
+    TimelineCanvas().ReleasePointerCapture(e.Pointer());
+
+    if(!dragged){
+        SeekTimelineToCanvasX(pointerX);
+    }
+
+    e.Handled(true);
+}
+
+void MainWindow::TimelineCanvas_PointerCanceled(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+    if(m_isTimelineDragging && e.Pointer().PointerId() == m_timelineDragPointerId){
+        m_isTimelineDragging = false;
+        m_timelineDragMoved = false;
+        TimelineCanvas().ReleasePointerCapture(e.Pointer());
+        e.Handled(true);
+    }
+}
+
+void MainWindow::TimelineCanvas_PointerCaptureLost(IInspectable const&, Input::PointerRoutedEventArgs const&){
+    m_isTimelineDragging = false;
+    m_timelineDragMoved = false;
 }
 
 void MainWindow::OnNaturalDurationChanged(Windows::Media::Playback::MediaPlaybackSession const& sender, IInspectable const&){
@@ -286,6 +343,19 @@ void MainWindow::SyncTimelineHorizontalScrollBar(){
     if(std::fabs(currentValue - offset) > 0.5){
         TimelineHorizontalScrollBar().Value(offset);
     }
+}
+
+void MainWindow::SeekTimelineToCanvasX(const double pointerX){
+    if(!m_player || m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
+        return;
+    }
+
+    const double x{std::clamp(pointerX, 0.0, TimelineCanvas().Width())};
+    const double ratio{x / TimelineCanvas().Width()};
+    const double targetSeconds{ratio * m_timelineDurationSeconds};
+
+    m_player.PlaybackSession().Position(SecondsToTimeSpan(targetSeconds));
+    UpdateTimelineCursorFromPlayback();
 }
 
 void MainWindow::RenderTimelineTicks(){
