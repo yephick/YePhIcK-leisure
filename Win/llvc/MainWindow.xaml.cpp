@@ -94,7 +94,12 @@ void MainWindow::RestoreWindowPlacement(){
         return;
     }
 
-    SetWindowPos(hwnd, nullptr, left, top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
+    WINDOWPLACEMENT restoredPlacement{};
+    restoredPlacement.length = sizeof(restoredPlacement);
+    restoredPlacement.showCmd = SW_SHOWNORMAL;
+    restoredPlacement.rcNormalPosition = restoredRect;
+
+    ::SetWindowPlacement(hwnd, &restoredPlacement);
 }
 
 void MainWindow::SaveWindowPlacement() const{
