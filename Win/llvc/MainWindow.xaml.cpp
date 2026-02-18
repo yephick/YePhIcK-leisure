@@ -58,6 +58,22 @@ int32_t MainWindow::DipsToPixels(const int32_t dipValue, const uint32_t dpi){
     return static_cast<int32_t>(std::lround((static_cast<double>(dipValue) * static_cast<double>(dpi)) / 96.0));
 }
 
+bool MainWindow::IsRectVisibleOnAnyMonitor(RECT const& rect){
+    const HMONITOR monitor{::MonitorFromRect(&rect, MONITOR_DEFAULTTONULL)};
+    if(!monitor){
+        return false;
+    }
+
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if(!::GetMonitorInfoW(monitor, &monitorInfo)){
+        return false;
+    }
+
+    RECT intersection{};
+    return ::IntersectRect(&intersection, &rect, &monitorInfo.rcWork) != FALSE;
+}
+
 void MainWindow::RestoreWindowPlacement(){
     const auto localSettings{Windows::Storage::ApplicationData::Current().LocalSettings()};
     const auto values{localSettings.Values()};
@@ -78,6 +94,21 @@ void MainWindow::RestoreWindowPlacement(){
     const auto height{DipsToPixels(heightDip, dpi)};
 
     const auto hwnd{GetWindowHandle()};
+
+    RECT restoredRect{};
+    restoredRect.left = left;
+    restoredRect.top = top;
+    restoredRect.right = left + width;
+    restoredRect.bottom = top + height;
+
+    if(!IsRectVisibleOnAnyMonitor(restoredRect)){
+        values.Remove(W_POS_L);
+        values.Remove(W_POS_T);
+        values.Remove(W_POS_W);
+        values.Remove(W_POS_H);
+        return;
+    }
+
     SetWindowPos(hwnd, nullptr, left, top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
