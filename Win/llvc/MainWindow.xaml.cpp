@@ -815,11 +815,16 @@ Windows::Foundation::IAsyncAction MainWindow::RecentProjectMenuItem_Click(IInspe
         co_return;
     }
 
+    bool openFailed{false};
     const auto path{unbox_value<hstring>(item.Tag())};
     try{
         const auto file{co_await Windows::Storage::StorageFile::GetFileFromPathAsync(path)};
         co_await OpenProjectFileAsync(file);
     }catch(...){
+        openFailed = true;
+    }
+
+    if(openFailed){
         co_await ShowInfoDialogAsync(L"Open failed", L"Could not open selected recent project.");
     }
 }
