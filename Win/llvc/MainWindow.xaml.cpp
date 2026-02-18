@@ -32,6 +32,7 @@
 #include <winrt/Windows.Media.Playback.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.Pickers.h>
+#include <winrt/Windows.System.h>
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfreadwrite.lib")
@@ -180,6 +181,40 @@ std::wstring SerializeNumberPairs(std::vector<std::pair<double, double>> const& 
     for(size_t i = 0; i < values.size(); ++i){
         if(i > 0){ ss << L";"; }
         ss << std::setprecision(15) << values[i].first << L"," << values[i].second;
+    }
+    return ss.str();
+}
+
+std::vector<IndexedFrameSample> ParseKeyframeVector(std::wstring const& text){
+    std::vector<IndexedFrameSample> out;
+    size_t start{};
+    while(start <= text.size()){
+        const auto sep = text.find(L';', start);
+        const auto item = Trim(text.substr(start, sep == std::wstring::npos ? std::wstring::npos : sep - start));
+        if(!item.empty()){
+            const auto at = item.find(L'@');
+            if(at != std::wstring::npos){
+                try{
+                    const auto t = static_cast<std::int64_t>(std::stoll(Trim(item.substr(0, at))));
+                    const auto i = static_cast<std::uint32_t>(std::stoul(Trim(item.substr(at + 1))));
+                    out.push_back(IndexedFrameSample{.time100ns=t, .duration100ns=0, .cleanPoint=true, .sampleIndex=i});
+                }catch(...){ }
+            }
+        }
+        if(sep == std::wstring::npos){ break; }
+        start = sep + 1;
+    }
+    return out;
+}
+
+std::wstring SerializeKeyframeVector(std::vector<IndexedFrameSample> const& index){
+    std::wstringstream ss;
+    bool first{true};
+    for(auto const& k : index){
+        if(!k.cleanPoint){ continue; }
+        if(!first){ ss << L";"; }
+        first = false;
+        ss << k.time100ns << L"@" << k.sampleIndex;
     }
     return ss.str();
 }
@@ -558,7 +593,7 @@ void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::Poin
     TimelineCanvas().ReleasePointerCapture(e.Pointer());
 
     if(!dragged){
-        SeekTimelineToCanvasX(point.Position().X);
+        SeekTimelineToCanvasX(point.Position().X, e.KeyModifiers().HasFlag(Windows::System::VirtualKeyModifiers::Shift));
     }
 
     e.Handled(true);
@@ -642,16 +677,60 @@ void MainWindow::SyncTimelineHorizontalScrollBar(){
     }
 }
 
-void MainWindow::SeekTimelineToCanvasX(const double pointerX){
+void MainWindow::SeekTimelineToCanvasX(const double pointerX, const bool bypassSnap){
     if(!m_player || m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
     }
 
     const auto x{std::clamp(pointerX, 0.0, TimelineCanvas().Width())};
     const auto ratio{x / TimelineCanvas().Width()};
-    const auto targetSeconds{ratio * m_timelineDurationSeconds};
+    auto target100ns{static_cast<std::int64_t>(ratio * (m_timelineDurationSeconds * 10'000'000.0))};
 
-    m_player.PlaybackSession().Position(SecondsToTimeSpan(targetSeconds));
+    if(!bypassSnap && !m_frameIndex.empty()){
+        const auto toSeconds = [](std::int64_t v){ return static_cast<double>(v) / 10'000'000.0; };
+        const auto it = std::lower_bound(m_frameIndex.begin(), m_frameIndex.end(), target100ns, [](IndexedFrameSample const& a, std::int64_t v){
+            return a.time100ns < v;
+        });
+
+        auto useTime = target100ns;
+        if(m_keyFrameSnapMode == L"Left"){
+            for(auto rit = (it == m_frameIndex.begin() ? m_frameIndex.begin() : it);;){
+                if(rit == m_frameIndex.begin()){
+                    if(rit->cleanPoint){ useTime = rit->time100ns; }
+                    break;
+                }
+                --rit;
+                if(rit->cleanPoint){ useTime = rit->time100ns; break; }
+            }
+        }else if(m_keyFrameSnapMode == L"Right"){
+            for(auto fit = it; fit != m_frameIndex.end(); ++fit){
+                if(fit->cleanPoint){ useTime = fit->time100ns; break; }
+            }
+        }else{
+            std::int64_t left = -1;
+            std::int64_t right = -1;
+            if(it != m_frameIndex.begin()){
+                for(auto rit = it;;){
+                    --rit;
+                    if(rit->cleanPoint){ left = rit->time100ns; break; }
+                    if(rit == m_frameIndex.begin()){ break; }
+                }
+            }
+            for(auto fit = it; fit != m_frameIndex.end(); ++fit){
+                if(fit->cleanPoint){ right = fit->time100ns; break; }
+            }
+            if(left >= 0 && right >= 0){
+                useTime = (std::llabs(target100ns - left) <= std::llabs(right - target100ns)) ? left : right;
+            }else if(left >= 0){
+                useTime = left;
+            }else if(right >= 0){
+                useTime = right;
+            }
+        }
+        target100ns = useTime;
+    }
+
+    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{target100ns});
     UpdateTimelineCursorFromPlayback();
 }
 
@@ -720,6 +799,92 @@ void MainWindow::RenderTimelineTicks(){
         TimelineTickCanvas().Children().Append(label);
     }
 }
+
+void MainWindow::RenderKeyframeTicks(){
+    if(m_frameIndex.empty() || m_timelineDurationSeconds <= 0 || TimelineTickCanvas().Width() <= 0){
+        return;
+    }
+
+    const auto width = TimelineTickCanvas().Width();
+    const auto total100ns = static_cast<double>(m_timelineDurationSeconds * 10'000'000.0);
+    for(auto const& frame : m_frameIndex){
+        if(!frame.cleanPoint){
+            continue;
+        }
+
+        const auto x = std::clamp((frame.time100ns / total100ns) * width, 0.0, width);
+        Shapes::Line tick{};
+        tick.X1(x);
+        tick.X2(x);
+        tick.Y1(0);
+        tick.Y2(5);
+        tick.Stroke(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 80, 200, 255)));
+        tick.StrokeThickness(1.0);
+        TimelineTickCanvas().Children().Append(tick);
+    }
+}
+
+void MainWindow::StepByFrame(const int delta){
+    if(!m_player || m_frameIndex.empty()){
+        return;
+    }
+
+    const auto current = m_player.PlaybackSession().Position().count();
+    auto idx = std::lower_bound(m_frameIndex.begin(), m_frameIndex.end(), current, [](IndexedFrameSample const& a, std::int64_t t){ return a.time100ns < t; });
+    std::ptrdiff_t pos = idx - m_frameIndex.begin();
+    if(delta < 0){
+        pos = std::max<std::ptrdiff_t>(0, pos - 1);
+    }else{
+        pos = std::min<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(m_frameIndex.size()) - 1, pos + 1);
+    }
+
+    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{m_frameIndex[static_cast<size_t>(pos)].time100ns});
+    UpdateTimelineCursorFromPlayback();
+}
+
+void MainWindow::StepByKeyframe(const int delta){
+    if(!m_player || m_frameIndex.empty()){
+        return;
+    }
+
+    std::vector<std::int64_t> keys;
+    keys.reserve(m_frameIndex.size());
+    for(auto const& f : m_frameIndex){ if(f.cleanPoint){ keys.push_back(f.time100ns); } }
+    if(keys.empty()) return;
+
+    const auto current = m_player.PlaybackSession().Position().count();
+    auto it = std::lower_bound(keys.begin(), keys.end(), current);
+    std::ptrdiff_t pos = it - keys.begin();
+    if(delta < 0){ pos = std::max<std::ptrdiff_t>(0, pos - 1); }
+    else{ pos = std::min<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(keys.size()) - 1, pos + 1); }
+
+    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{keys[static_cast<size_t>(pos)]});
+    UpdateTimelineCursorFromPlayback();
+}
+
+void MainWindow::Window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
+    switch(args.Key()){
+    case Windows::System::VirtualKey::Left:
+        StepByFrame(-1);
+        args.Handled(true);
+        break;
+    case Windows::System::VirtualKey::Right:
+        StepByFrame(1);
+        args.Handled(true);
+        break;
+    case Windows::System::VirtualKey::Up:
+        StepByKeyframe(-1);
+        args.Handled(true);
+        break;
+    case Windows::System::VirtualKey::Down:
+        StepByKeyframe(1);
+        args.Handled(true);
+        break;
+    default:
+        break;
+    }
+}
+
 
 Windows::Foundation::TimeSpan MainWindow::SecondsToTimeSpan(const double seconds){
     return std::chrono::duration_cast<Windows::Foundation::TimeSpan>(std::chrono::duration<double>(seconds));
@@ -956,6 +1121,7 @@ void MainWindow::ResetProjectState(const bool clearLoadedVideo){
     m_projectUnknownLines.clear();
     m_selectedKeyFrames.clear();
     m_cutIntervals.clear();
+    m_frameIndex.clear();
     m_keyFrameSnapMode = L"Nearest";
     NearestSnapRadio().IsChecked(true);
     TimelineZoomSlider().Value(3);
@@ -1019,6 +1185,7 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     std::wstring loadedFilePath;
     std::wstring snapMode{L"Nearest"};
     double zoomLevel{TimelineZoomSlider().Value()};
+    std::vector<IndexedFrameSample> loadedKeyframeIndex;
 
     for(auto const& lineH : lines){
         const std::wstring line{lineH.c_str()};
@@ -1051,6 +1218,8 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
             selectedKeyFrames = ParseNumberList(value);
         }else if(key == L"cut_intervals"){
             cutIntervals = ParseNumberPairs(value);
+        }else if(key == L"keyframe_index"){
+            loadedKeyframeIndex = ParseKeyframeVector(value);
         }else{
             unknownLines.push_back(line);
         }
@@ -1072,6 +1241,9 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     m_cutIntervals = std::move(cutIntervals);
     m_projectUnknownLines = std::move(unknownLines);
     m_projectPath = file.Path();
+    if(!loadedKeyframeIndex.empty()){
+        m_frameIndex = std::move(loadedKeyframeIndex);
+    }
 
     if(snapMode == L"Left"){
         LeftSnapRadio().IsChecked(true);
@@ -1094,6 +1266,7 @@ Windows::Foundation::IAsyncAction MainWindow::SaveProjectFileAsync(Windows::Stor
     lines.emplace_back(L"keyframe_snap_mode=" + m_keyFrameSnapMode);
     lines.emplace_back(L"selected_key_frames=" + SerializeNumberList(m_selectedKeyFrames));
     lines.emplace_back(L"cut_intervals=" + SerializeNumberPairs(m_cutIntervals));
+    lines.emplace_back(L"keyframe_index=" + SerializeKeyframeVector(m_frameIndex));
 
     for(auto const& unknown : m_projectUnknownLines){
         lines.emplace_back(unknown);
@@ -1342,6 +1515,67 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
     return result;
 }
 
+std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstring const& filePath){
+    std::vector<IndexedFrameSample> index;
+    MFLifetime mf{};
+
+    com_ptr<IMFSourceReader> reader;
+    check_hresult(MFCreateSourceReaderFromURL(filePath.c_str(), nullptr, reader.put()));
+
+    constexpr DWORD invalidStream{std::numeric_limits<DWORD>::max()};
+    DWORD videoStreamIndex{invalidStream};
+    for(DWORD streamIndex = 0;; ++streamIndex){
+        com_ptr<IMFMediaType> type;
+        const HRESULT hr = reader->GetNativeMediaType(streamIndex, 0, type.put());
+        if(hr == MF_E_INVALIDSTREAMNUMBER){
+            break;
+        }
+        check_hresult(hr);
+
+        GUID major{GUID_NULL};
+        check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+        if(major == MFMediaType_Video){
+            videoStreamIndex = streamIndex;
+            break;
+        }
+    }
+
+    if(videoStreamIndex == invalidStream){
+        return index;
+    }
+
+    check_hresult(reader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE));
+    check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
+
+    for(std::uint32_t sampleIndex = 0;; ++sampleIndex){
+        DWORD actualStream{};
+        DWORD flags{};
+        LONGLONG timestamp{};
+        com_ptr<IMFSample> sample;
+        const HRESULT hr = reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put());
+        if(FAILED(hr) || (flags & MF_SOURCE_READERF_ENDOFSTREAM)){
+            break;
+        }
+        if(!sample){
+            continue;
+        }
+
+        LONGLONG duration{};
+        (void)sample->GetSampleDuration(&duration);
+        UINT32 clean{};
+        const bool cleanPoint = SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &clean)) && clean != 0;
+
+        index.push_back(IndexedFrameSample{
+            .time100ns = timestamp,
+            .duration100ns = duration,
+            .cleanPoint = cleanPoint,
+            .sampleIndex = sampleIndex,
+        });
+    }
+
+    return index;
+}
+
 void MainWindow::Window_DragOver(IInspectable const&, DragEventArgs const& e){
     e.AcceptedOperation(Windows::ApplicationModel::DataTransfer::DataPackageOperation::Copy);
 }
@@ -1401,10 +1635,15 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
     const auto basicProperties{co_await file.GetBasicPropertiesAsync()};
     inspected.fileSize = FormatFileSize(basicProperties.Size());
     m_mediaInfo = inspected;
+    m_frameIndex = BuildKeyframeIndexForFile(file.Path().c_str());
 
     const auto source{Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
     m_player.Source(source);
     m_loadedFile = file;
+    if(m_projectPath.empty()){
+        m_selectedKeyFrames.clear();
+        m_cutIntervals.clear();
+    }
     AddRecentVideo(file.Path());
 
     ThumbnailLayer().Children().Clear();
@@ -1449,6 +1688,7 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
         ThumbnailLayer().Children().Clear();
         Controls::Canvas::SetLeft(TimelineCursor(), 0);
         RenderTimelineTicks();
+        RenderKeyframeTicks();
         SyncTimelineHorizontalScrollBar();
 
         const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_loadedFile)};

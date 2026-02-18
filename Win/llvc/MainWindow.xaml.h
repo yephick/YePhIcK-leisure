@@ -11,6 +11,13 @@ struct _GUID;
 
 namespace winrt::llvc::implementation{
 
+struct IndexedFrameSample{
+    std::int64_t time100ns{};
+    std::int64_t duration100ns{};
+    bool cleanPoint{};
+    std::uint32_t sampleIndex{};
+};
+
 struct MediaInspectionResult{
     bool isValid{false};
     std::wstring errorMessage{};
@@ -44,6 +51,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void TimelineCanvas_PointerReleased(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
     void TimelineCanvas_PointerCanceled(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
     void TimelineCanvas_PointerCaptureLost(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
+    void Window_KeyDown(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::KeyRoutedEventArgs const& args);
     void KeyFrameSnapMode_Checked(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction NewProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction OpenProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
@@ -76,6 +84,7 @@ private:
     std::uint32_t m_maxRecentProjects{5};
     std::wstring m_keyFrameSnapMode{L"Nearest"};
     std::vector<double> m_selectedKeyFrames{};
+    std::vector<IndexedFrameSample> m_frameIndex{};
     std::vector<std::pair<double, double>> m_cutIntervals{};
     std::vector<std::wstring> m_projectUnknownLines{};
     winrt::hstring m_projectPath{};
@@ -109,13 +118,17 @@ private:
     winrt::Windows::Foundation::IAsyncOperation<bool> EnsureProjectSavedBeforeContinuingAsync();
     static MediaInspectionResult InspectMediaFile(std::wstring const& filePath);
     static bool IsSupportedVideoSubtype(_GUID const& subtype);
+    static std::vector<IndexedFrameSample> BuildKeyframeIndexForFile(std::wstring const& filePath);
     static std::wstring GuidToCodecName(_GUID const& subtype, bool isVideo);
     winrt::Windows::Foundation::IAsyncAction LoadVideoFileAsync(winrt::Windows::Storage::StorageFile const& file);
     winrt::fire_and_forget RenderTimelineAsync();
     void UpdateTimelineCursorFromPlayback();
     void SyncTimelineHorizontalScrollBar();
     void RenderTimelineTicks();
-    void SeekTimelineToCanvasX(double pointerX);
+    void SeekTimelineToCanvasX(double pointerX, bool bypassSnap);
+    void RenderKeyframeTicks();
+    void StepByFrame(int delta);
+    void StepByKeyframe(int delta);
     void EnsureTimelineCursorVisible(double cursorLeft);
     static winrt::Windows::Foundation::TimeSpan SecondsToTimeSpan(double seconds);
     static bool IsRectVisibleOnAnyMonitor(RECT const& rect);
