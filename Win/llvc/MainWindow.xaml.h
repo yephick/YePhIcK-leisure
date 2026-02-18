@@ -48,6 +48,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     winrt::Windows::Foundation::IAsyncAction PropertiesMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     void ExitMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction AboutMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
+    winrt::Windows::Foundation::IAsyncAction OptionsMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     void Window_DragOver(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::DragEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction Window_Drop(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::DragEventArgs const& args);
     void OnClosed(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::WindowEventArgs const& args);
@@ -63,6 +64,9 @@ private:
     std::uint64_t m_timelineRenderVersion{0};
     MediaInspectionResult m_mediaInfo{};
     std::vector<winrt::hstring> m_recentVideos{};
+    std::vector<winrt::hstring> m_recentProjects{};
+    std::uint32_t m_maxRecentVideos{5};
+    std::uint32_t m_maxRecentProjects{5};
     bool m_isClosing{false};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};
@@ -75,10 +79,15 @@ private:
     void RestoreWindowPlacement();
     void SaveWindowPlacement() const;
     winrt::Windows::Foundation::IAsyncAction PickAndLoadVideoAsync();
+    void LoadAppSettings();
+    void SaveAppSettings() const;
     void RefreshRecentVideosMenu();
+    void RefreshRecentProjectsMenu();
     void AddRecentVideo(winrt::hstring const& path);
+    void AddRecentProject(winrt::hstring const& path);
     winrt::Windows::Foundation::IAsyncAction ShowInfoDialogAsync(winrt::hstring const& title, winrt::hstring const& message);
     winrt::Windows::Foundation::IAsyncAction ShowPropertiesDialogAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowOptionsDialogAsync();
     static MediaInspectionResult InspectMediaFile(std::wstring const& filePath);
     static bool IsSupportedVideoSubtype(_GUID const& subtype);
     static std::wstring GuidToCodecName(_GUID const& subtype, bool isVideo);

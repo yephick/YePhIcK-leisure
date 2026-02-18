@@ -24,9 +24,7 @@
                 <MenuFlyoutItem Text="Load _video..." Click="LoadVideoMenuItem_Click"/>
                 <MenuFlyoutItem Text="_Close project" IsEnabled="False"/>
                 <MenuFlyoutSeparator/>
-                <MenuFlyoutSubItem Text="_Recent projects">
-                    <MenuFlyoutItem Text="(not implemented)" IsEnabled="False"/>
-                </MenuFlyoutSubItem>
+                <MenuFlyoutSubItem x:Name="RecentProjectsMenu" Text="_Recent projects"/>
                 <MenuFlyoutSubItem x:Name="RecentVideosMenu" Text="Recent videos"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutItem Text="_Properties" Click="PropertiesMenuItem_Click"/>
@@ -40,7 +38,7 @@
             </controls:MenuBarItem>
 
             <controls:MenuBarItem Title="_Tools">
-                <MenuFlyoutItem Text="_Options" IsEnabled="False"/>
+                <MenuFlyoutItem Text="_Options" Click="OptionsMenuItem_Click"/>
             </controls:MenuBarItem>
 
             <controls:MenuBarItem Title="_Help">

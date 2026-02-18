@@ -47,6 +47,12 @@ constexpr auto W_POS_T{L"WindowTop"};
 constexpr auto W_POS_W{L"WindowWidth"};
 constexpr auto W_POS_H{L"WindowHeight"};
 constexpr auto W_POS_DPI{L"WindowDpi"};
+constexpr auto S_RECENT_VIDEOS{L"RecentVideos"};
+constexpr auto S_RECENT_PROJECTS{L"RecentProjects"};
+constexpr auto S_MAX_RECENT_VIDEOS{L"MaxRecentVideos"};
+constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
+constexpr auto S_DEFAULT_MAX_RECENT{5};
+constexpr wchar_t RECENT_DELIMITER{0x1F};
 
 struct MFLifetime{
     MFLifetime(){
@@ -84,6 +90,34 @@ std::wstring FormatRatio(uint32_t num, uint32_t den){
     std::wstringstream ss;
     ss << std::fixed << std::setprecision(3) << (static_cast<double>(num) / den);
     return ss.str();
+}
+
+std::wstring JoinRecentItems(std::vector<hstring> const& values){
+    std::wstring out;
+    for(size_t i = 0; i < values.size(); ++i){
+        if(i > 0){
+            out.push_back(RECENT_DELIMITER);
+        }
+        out += values[i].c_str();
+    }
+    return out;
+}
+
+std::vector<hstring> SplitRecentItems(std::wstring const& source){
+    std::vector<hstring> items;
+    size_t start{};
+    while(start <= source.size()){
+        const auto pos = source.find(RECENT_DELIMITER, start);
+        const auto len = (pos == std::wstring::npos) ? (source.size() - start) : (pos - start);
+        if(len > 0){
+            items.emplace_back(source.substr(start, len));
+        }
+        if(pos == std::wstring::npos){
+            break;
+        }
+        start = pos + 1;
+    }
+    return items;
 }
 
 bool HasDecoderForSubtype(GUID const& subtype){
@@ -214,8 +248,10 @@ MainWindow::MainWindow(){
     m_positionTimer.Start();
 
     RestoreWindowPlacement();
+    LoadAppSettings();
     Closed({this, &MainWindow::OnClosed});
     RefreshRecentVideosMenu();
+    RefreshRecentProjectsMenu();
 }
 
 HWND MainWindow::GetWindowHandle() const{
@@ -283,6 +319,44 @@ void MainWindow::RestoreWindowPlacement(){
     SetWindowPos(hwnd, nullptr, left, top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
+void MainWindow::LoadAppSettings(){
+    const auto values{Windows::Storage::ApplicationData::Current().LocalSettings().Values()};
+
+    m_maxRecentVideos = S_DEFAULT_MAX_RECENT;
+    m_maxRecentProjects = S_DEFAULT_MAX_RECENT;
+
+    if(values.HasKey(S_MAX_RECENT_VIDEOS)){
+        const auto parsed{unbox_value<int32_t>(values.Lookup(S_MAX_RECENT_VIDEOS))};
+        m_maxRecentVideos = static_cast<std::uint32_t>(std::clamp(parsed, 1, 20));
+    }
+    if(values.HasKey(S_MAX_RECENT_PROJECTS)){
+        const auto parsed{unbox_value<int32_t>(values.Lookup(S_MAX_RECENT_PROJECTS))};
+        m_maxRecentProjects = static_cast<std::uint32_t>(std::clamp(parsed, 1, 20));
+    }
+
+    if(values.HasKey(S_RECENT_VIDEOS)){
+        m_recentVideos = SplitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_VIDEOS)).c_str());
+    }
+    if(values.HasKey(S_RECENT_PROJECTS)){
+        m_recentProjects = SplitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
+    }
+
+    if(m_recentVideos.size() > m_maxRecentVideos){
+        m_recentVideos.resize(m_maxRecentVideos);
+    }
+    if(m_recentProjects.size() > m_maxRecentProjects){
+        m_recentProjects.resize(m_maxRecentProjects);
+    }
+}
+
+void MainWindow::SaveAppSettings() const{
+    const auto values{Windows::Storage::ApplicationData::Current().LocalSettings().Values()};
+    values.Insert(S_MAX_RECENT_VIDEOS, box_value(static_cast<int32_t>(m_maxRecentVideos)));
+    values.Insert(S_MAX_RECENT_PROJECTS, box_value(static_cast<int32_t>(m_maxRecentProjects)));
+    values.Insert(S_RECENT_VIDEOS, box_value(hstring(JoinRecentItems(m_recentVideos))));
+    values.Insert(S_RECENT_PROJECTS, box_value(hstring(JoinRecentItems(m_recentProjects))));
+}
+
 void MainWindow::SaveWindowPlacement() const{
     const auto hwnd{GetWindowHandle()};
 
@@ -315,6 +389,7 @@ void MainWindow::OnClosed(IInspectable const&, WindowEventArgs const&){
 
     m_naturalDurationChangedRevoker.revoke();
     SaveWindowPlacement();
+    SaveAppSettings();
 }
 
 void MainWindow::StartButton_Click(IInspectable const&, RoutedEventArgs const&){
@@ -621,6 +696,10 @@ Windows::Foundation::IAsyncAction MainWindow::AboutMenuItem_Click(IInspectable c
     co_await ShowInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut\nPreview and timeline exploration tool.");
 }
 
+Windows::Foundation::IAsyncAction MainWindow::OptionsMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    co_await ShowOptionsDialogAsync();
+}
+
 Windows::Foundation::IAsyncAction MainWindow::PickAndLoadVideoAsync(){
     Windows::Storage::Pickers::FileOpenPicker picker{};
     picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::VideosLibrary);
@@ -657,6 +736,26 @@ void MainWindow::RefreshRecentVideosMenu(){
     }
 }
 
+void MainWindow::RefreshRecentProjectsMenu(){
+    auto menu{RecentProjectsMenu()};
+    menu.Items().Clear();
+
+    if(m_recentProjects.empty()){
+        Controls::MenuFlyoutItem empty{};
+        empty.Text(L"(none)");
+        empty.IsEnabled(false);
+        menu.Items().Append(empty);
+        return;
+    }
+
+    for(auto const& path : m_recentProjects){
+        Controls::MenuFlyoutItem item{};
+        item.Text(path);
+        item.IsEnabled(false);
+        menu.Items().Append(item);
+    }
+}
+
 void MainWindow::AddRecentVideo(hstring const& path){
     if(path.empty()){
         return;
@@ -664,11 +763,25 @@ void MainWindow::AddRecentVideo(hstring const& path){
 
     m_recentVideos.erase(std::remove(m_recentVideos.begin(), m_recentVideos.end(), path), m_recentVideos.end());
     m_recentVideos.insert(m_recentVideos.begin(), path);
-    constexpr size_t maxRecent = 10;
-    if(m_recentVideos.size() > maxRecent){
-        m_recentVideos.resize(maxRecent);
+    if(m_recentVideos.size() > m_maxRecentVideos){
+        m_recentVideos.resize(m_maxRecentVideos);
     }
     RefreshRecentVideosMenu();
+    SaveAppSettings();
+}
+
+void MainWindow::AddRecentProject(hstring const& path){
+    if(path.empty()){
+        return;
+    }
+
+    m_recentProjects.erase(std::remove(m_recentProjects.begin(), m_recentProjects.end(), path), m_recentProjects.end());
+    m_recentProjects.insert(m_recentProjects.begin(), path);
+    if(m_recentProjects.size() > m_maxRecentProjects){
+        m_recentProjects.resize(m_maxRecentProjects);
+    }
+    RefreshRecentProjectsMenu();
+    SaveAppSettings();
 }
 
 Windows::Foundation::IAsyncAction MainWindow::ShowInfoDialogAsync(hstring const& title, hstring const& message){
@@ -703,6 +816,58 @@ Windows::Foundation::IAsyncAction MainWindow::ShowPropertiesDialogAsync(){
     content += L"Audio bitrate: "; content += m_mediaInfo.audioBitrate;
 
     co_await ShowInfoDialogAsync(L"Properties", hstring(content));
+}
+
+Windows::Foundation::IAsyncAction MainWindow::ShowOptionsDialogAsync(){
+    Controls::StackPanel panel{};
+    panel.Spacing(10);
+
+    Controls::TextBlock videosLabel{};
+    videosLabel.Text(L"Recent videos to keep (1-20)");
+    Controls::NumberBox videosCount{};
+    videosCount.Minimum(1);
+    videosCount.Maximum(20);
+    videosCount.SpinButtonPlacementMode(Controls::NumberBoxSpinButtonPlacementMode::Inline);
+    videosCount.Value(static_cast<double>(m_maxRecentVideos));
+
+    Controls::TextBlock projectsLabel{};
+    projectsLabel.Text(L"Recent projects to keep (1-20)");
+    Controls::NumberBox projectsCount{};
+    projectsCount.Minimum(1);
+    projectsCount.Maximum(20);
+    projectsCount.SpinButtonPlacementMode(Controls::NumberBoxSpinButtonPlacementMode::Inline);
+    projectsCount.Value(static_cast<double>(m_maxRecentProjects));
+
+    panel.Children().Append(videosLabel);
+    panel.Children().Append(videosCount);
+    panel.Children().Append(projectsLabel);
+    panel.Children().Append(projectsCount);
+
+    Controls::ContentDialog dialog{};
+    dialog.XamlRoot(Content().XamlRoot());
+    dialog.Title(box_value(L"Options"));
+    dialog.Content(panel);
+    dialog.PrimaryButtonText(L"Save");
+    dialog.CloseButtonText(L"Cancel");
+
+    const auto dialogResult{co_await dialog.ShowAsync()};
+    if(dialogResult != Controls::ContentDialogResult::Primary){
+        co_return;
+    }
+
+    m_maxRecentVideos = static_cast<std::uint32_t>(std::clamp(static_cast<int>(std::lround(videosCount.Value())), 1, 20));
+    m_maxRecentProjects = static_cast<std::uint32_t>(std::clamp(static_cast<int>(std::lround(projectsCount.Value())), 1, 20));
+
+    if(m_recentVideos.size() > m_maxRecentVideos){
+        m_recentVideos.resize(m_maxRecentVideos);
+    }
+    if(m_recentProjects.size() > m_maxRecentProjects){
+        m_recentProjects.resize(m_maxRecentProjects);
+    }
+
+    RefreshRecentVideosMenu();
+    RefreshRecentProjectsMenu();
+    SaveAppSettings();
 }
 
 bool MainWindow::IsSupportedVideoSubtype(GUID const& subtype){
@@ -919,6 +1084,7 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
     m_player.Source(source);
     m_loadedFile = file;
     AddRecentVideo(file.Path());
+    AddRecentProject(file.Path());
 
     ThumbnailLayer().Children().Clear();
     TimelineCanvas().Width(640.0);
