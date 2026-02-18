@@ -859,22 +859,37 @@ void MainWindow::StepByFrame(const int delta){
 }
 
 void MainWindow::StepByKeyframe(const int delta){
-    if(!m_player || m_frameIndex.empty()){
+    if(!m_player || m_frameIndex.empty() || delta == 0){
         return;
     }
 
     std::vector<std::int64_t> keys;
     keys.reserve(m_frameIndex.size());
-    for(auto const& f : m_frameIndex){ if(f.cleanPoint){ keys.push_back(f.time100ns); } }
-    if(keys.empty()) return;
+    for(auto const& f : m_frameIndex){
+        if(f.cleanPoint){
+            keys.push_back(f.time100ns);
+        }
+    }
+    if(keys.empty()){
+        return;
+    }
 
     const auto current = m_player.PlaybackSession().Position().count();
-    auto it = std::lower_bound(keys.begin(), keys.end(), current);
-    std::ptrdiff_t pos = it - keys.begin();
-    if(delta < 0){ pos = std::max<std::ptrdiff_t>(0, pos - 1); }
-    else{ pos = std::min<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(keys.size()) - 1, pos + 1); }
+    std::int64_t target = keys.front();
 
-    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{keys[static_cast<size_t>(pos)]});
+    if(delta > 0){
+        const auto it = std::upper_bound(keys.begin(), keys.end(), current);
+        target = (it != keys.end()) ? *it : keys.back();
+    }else{
+        const auto it = std::lower_bound(keys.begin(), keys.end(), current);
+        if(it == keys.begin()){
+            target = keys.front();
+        }else{
+            target = *(it - 1);
+        }
+    }
+
+    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{target});
     UpdateTimelineCursorFromPlayback();
 }
 
