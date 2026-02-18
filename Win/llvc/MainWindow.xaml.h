@@ -3,6 +3,7 @@
 #include "MainWindow.g.h"
 
 namespace winrt::llvc::implementation{
+
 struct MainWindow: MainWindowT<MainWindow>{
     MainWindow();
 
@@ -19,8 +20,11 @@ private:
     winrt::Windows::Media::Playback::MediaPlayer m_player{nullptr};
     winrt::Windows::Foundation::IAsyncAction LoadVideoFileAsync(winrt::Windows::Storage::StorageFile const& file);
 };
+
 }
 
 namespace winrt::llvc::factory_implementation{
+
 struct MainWindow: MainWindowT<MainWindow, implementation::MainWindow>{};
+
 }
