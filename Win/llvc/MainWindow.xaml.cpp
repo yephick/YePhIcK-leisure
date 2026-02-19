@@ -1156,26 +1156,36 @@ void MainWindow::StepByFrame(const int delta){
     }
 
     const auto current = m_player.PlaybackSession().Position().count();
-    auto nearest = std::lower_bound(m_frameIndex.begin(), m_frameIndex.end(), current, [](IndexedFrameSample const& a, std::int64_t t){ return a.time100ns < t; });
+    constexpr std::int64_t fallbackFrameDuration100ns{333'667}; // ~29.97 fps
 
-    std::ptrdiff_t currentIndex{};
-    if(nearest == m_frameIndex.end()){
-        currentIndex = static_cast<std::ptrdiff_t>(m_frameIndex.size()) - 1;
-    }else if(nearest == m_frameIndex.begin()){
-        currentIndex = 0;
-    }else{
-        const auto prev = nearest - 1;
-        currentIndex = (std::llabs(nearest->time100ns - current) < std::llabs(current - prev->time100ns))
-            ? static_cast<std::ptrdiff_t>(nearest - m_frameIndex.begin())
-            : static_cast<std::ptrdiff_t>(prev - m_frameIndex.begin());
+    std::vector<std::int64_t> frameDurations;
+    frameDurations.reserve(m_frameIndex.size());
+    for(auto const& sample : m_frameIndex){
+        if(sample.duration100ns > 0){
+            frameDurations.push_back(sample.duration100ns);
+        }
     }
 
-    const auto targetIndex = std::clamp<std::ptrdiff_t>(
-        currentIndex + (delta < 0 ? -1 : 1),
-        0,
-        static_cast<std::ptrdiff_t>(m_frameIndex.size()) - 1);
+    if(frameDurations.empty()){
+        for(size_t i = 1; i < m_frameIndex.size(); ++i){
+            const auto sampleCount = static_cast<std::int64_t>(m_frameIndex[i].sampleIndex) - static_cast<std::int64_t>(m_frameIndex[i - 1].sampleIndex);
+            const auto timeDelta = m_frameIndex[i].time100ns - m_frameIndex[i - 1].time100ns;
+            if(sampleCount > 0 && timeDelta > 0){
+                frameDurations.push_back(timeDelta / sampleCount);
+            }
+        }
+    }
 
-    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{m_frameIndex[static_cast<size_t>(targetIndex)].time100ns});
+    std::int64_t frameStep100ns{fallbackFrameDuration100ns};
+    if(!frameDurations.empty()){
+        std::nth_element(frameDurations.begin(), frameDurations.begin() + static_cast<std::ptrdiff_t>(frameDurations.size() / 2), frameDurations.end());
+        frameStep100ns = std::max<std::int64_t>(1, frameDurations[frameDurations.size() / 2]);
+    }
+
+    const auto direction = delta < 0 ? static_cast<std::int64_t>(-1) : static_cast<std::int64_t>(1);
+    const auto duration100ns = static_cast<std::int64_t>(std::max(0.0, m_timelineDurationSeconds) * 10'000'000.0);
+    const auto target = std::clamp(current + (direction * frameStep100ns), static_cast<std::int64_t>(0), duration100ns);
+    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{target});
     UpdateTimelineCursorFromPlayback();
 }
 
