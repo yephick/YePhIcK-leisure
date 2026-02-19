@@ -131,6 +131,90 @@ std::int64_t removedDurationBefore(const std::vector<std::pair<std::int64_t, std
     return removed;
 }
 
+std::uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUID& subtype){
+    UINT8* configData{};
+    UINT32 configSize{};
+    if(FAILED(mediaType->GetAllocatedBlob(MF_MT_MPEG_SEQUENCE_HEADER, &configData, &configSize)) || !configData || configSize == 0){
+        return 4;
+    }
+
+    if(subtype == MFVideoFormat_H264){
+        if(configSize >= 5){
+            const auto result{static_cast<std::uint32_t>((configData[4] & 0x03) + 1)};
+            CoTaskMemFree(configData);
+            return result;
+        }
+    }else if(subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265){
+        if(configSize >= 22){
+            const auto result{static_cast<std::uint32_t>((configData[21] & 0x03) + 1)};
+            CoTaskMemFree(configData);
+            return result;
+        }
+    }
+
+    CoTaskMemFree(configData);
+    return 4;
+}
+
+bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID& subtype, const std::uint32_t nalLengthFieldSize){
+    if(subtype != MFVideoFormat_H264 && subtype != MFVideoFormat_HEVC && subtype != MFVideoFormat_H265){
+        return true;
+    }
+
+    com_ptr<IMFMediaBuffer> contiguousBuffer;
+    if(FAILED(sample->ConvertToContiguousBuffer(contiguousBuffer.put())) || !contiguousBuffer){
+        return false;
+    }
+
+    BYTE* data{};
+    DWORD maxLength{};
+    DWORD currentLength{};
+    if(FAILED(contiguousBuffer->Lock(&data, &maxLength, &currentLength)) || !data || currentLength == 0){
+        return false;
+    }
+
+    const auto nalSizeField = std::clamp<std::uint32_t>(nalLengthFieldSize, 1, 4);
+    size_t offset{};
+    while(offset + nalSizeField <= currentLength){
+        std::uint32_t nalLength{};
+        for(std::uint32_t i = 0; i < nalSizeField; ++i){
+            nalLength = (nalLength << 8) | data[offset + i];
+        }
+        offset += nalSizeField;
+
+        if(nalLength == 0 || offset + nalLength > currentLength){
+            break;
+        }
+
+        const auto nalHeader = data[offset];
+        if(subtype == MFVideoFormat_H264){
+            const auto nalType = static_cast<std::uint8_t>(nalHeader & 0x1F);
+            if(nalType >= 1 && nalType <= 5){
+                const auto result{nalType == 5}; // IDR only
+                contiguousBuffer->Unlock();
+                return result;
+            }
+        }else{
+            const auto nalType = static_cast<std::uint8_t>((nalHeader >> 1) & 0x3F);
+            if(nalType <= 31){
+                const auto result{nalType == 19 || nalType == 20 || nalType == 21}; // HEVC IDR/CRA
+                contiguousBuffer->Unlock();
+                return result;
+            }
+        }
+
+        offset += nalLength;
+    }
+
+    contiguousBuffer->Unlock();
+    return false;
+}
+
+bool isContainerSyncSample(const com_ptr<IMFSample>& sample){
+    UINT32 cleanPoint{};
+    return SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) && cleanPoint != 0;
+}
+
 MainWindow::MainWindow(){
     InitializeComponent();
 
@@ -1293,6 +1377,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(reader->GetNativeMediaType(videoStreamIndex, 0, sourceVideoType.put()));
         check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, sourceVideoType.get()));
 
+        GUID videoSubtype{GUID_NULL};
+        check_hresult(sourceVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
+        const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
+
         com_ptr<IMFSinkWriter> writer;
         check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, nullptr, writer.put()));
 
@@ -1342,9 +1430,9 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
 
             if(waitingForCleanPoint){
-                UINT32 cleanPoint{};
-                const auto isCleanPoint{SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) && cleanPoint != 0};
-                if(!isCleanPoint){
+                const auto isContainerSync{isContainerSyncSample(sample)};
+                const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize)};
+                if(!(isContainerSync && isBitstreamRap)){
                     continue;
                 }
                 waitingForCleanPoint = false;
@@ -1786,10 +1874,10 @@ AAction MainWindow::showPropertiesDialogAsync(){
     content += L"Resolution: "; content += m_mediaInfo.resolution; content += L"\n";
     content += L"FPS: "; content += m_mediaInfo.frameRate; content += L"\n";
     content += L"Video bitrate: "; content += m_mediaInfo.videoBitrate; content += L"\n";
-    content += L"Key frames: "; content += m_mediaInfo.keyFrameSummary; content += L"\n";
-    content += L"Key frame interval: "; content += m_mediaInfo.keyFrameInterval; content += L"\n";
+    content += L"Random access points: "; content += m_mediaInfo.keyFrameSummary; content += L"\n";
+    content += L"Random access interval: "; content += m_mediaInfo.keyFrameInterval; content += L"\n";
     content += L"All samples independent: "; content += m_mediaInfo.allSamplesIndependent; content += L"\n";
-    content += L"Max key frame spacing: "; content += m_mediaInfo.maxKeyFrameSpacing; content += L"\n";
+    content += L"Max random access spacing: "; content += m_mediaInfo.maxKeyFrameSpacing; content += L"\n";
     content += L"Audio codec: "; content += m_mediaInfo.audioCodec; content += L"\n";
     content += L"Audio bitrate: "; content += m_mediaInfo.audioBitrate;
 
@@ -1817,7 +1905,7 @@ AAction MainWindow::showOptionsDialogAsync(){
     projectsCount.Value(static_cast<double>(m_maxRecentProjects));
 
     Controls::TextBlock snapLabel{};
-    snapLabel.Text(L"Key frame snap method");
+    snapLabel.Text(L"Random access point snap method");
 
     Controls::StackPanel snapPanel{};
     snapPanel.Orientation(Controls::Orientation::Horizontal);
@@ -2069,6 +2157,14 @@ vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(const wstring& 
     check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
     check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
+    com_ptr<IMFMediaType> sourceVideoType;
+    check_hresult(reader->GetNativeMediaType(videoStreamIndex, 0, sourceVideoType.put()));
+    check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, sourceVideoType.get()));
+
+    GUID videoSubtype{GUID_NULL};
+    check_hresult(sourceVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
+    const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
+
     PROPVARIANT duration{};
     PropVariantInit(&duration);
     LONGLONG totalDuration100ns{};
@@ -2096,13 +2192,19 @@ vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(const wstring& 
 
         LONGLONG sampleDuration{};
         (void)sample->GetSampleDuration(&sampleDuration);
-        UINT32 clean{};
-        const auto cleanPoint{SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &clean)) && clean != 0};
+        LONGLONG sampleTime100ns{};
+        if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
+            sampleTime100ns = timestamp;
+        }
+
+        const auto containerSync{isContainerSyncSample(sample)};
+        const auto bitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize)};
+        const auto trueRandomAccessPoint{containerSync && bitstreamRap};
 
         index.push_back(IndexedFrameSample{
-            .time100ns = timestamp,
+            .time100ns = sampleTime100ns,
             .duration100ns = sampleDuration,
-            .cleanPoint = cleanPoint,
+            .cleanPoint = trueRandomAccessPoint,
             .sampleIndex = sampleIndex,
         });
 
@@ -2187,7 +2289,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file, const vector<IndexedFr
     KeyframeProgressBar().Visibility(Visibility::Visible);
     wstring status{L"Loaded: "};
     status += file.Name().c_str();
-    status += L" (building keyframe index...)";
+    status += L" (building random-access index...)";
     StatusText().Text(status);
 
     if(preloadedKeyframeIndex && !preloadedKeyframeIndex->empty()){
