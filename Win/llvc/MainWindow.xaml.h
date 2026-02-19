@@ -52,7 +52,9 @@ struct MainWindow: MainWindowT<MainWindow>{
     void TimelineCanvas_PointerCanceled(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
     void TimelineCanvas_PointerCaptureLost(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
     void TimelineCanvas_Loaded(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
+    void Window_PreviewKeyDown(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::KeyRoutedEventArgs const& args);
     void Window_KeyDown(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::KeyRoutedEventArgs const& args);
+    void RootGrid_PointerReleased(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs const& args);
     void KeyFrameSnapMode_Checked(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction NewProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
     winrt::Windows::Foundation::IAsyncAction OpenProjectMenuItem_Click(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
@@ -131,6 +133,7 @@ private:
     void StepByFrame(int delta);
     void StepByKeyframe(int delta);
     void EnsureTimelineCursorVisible(double cursorLeft);
+    bool HandleStorylineKeyDown(winrt::Microsoft::UI::Xaml::Input::KeyRoutedEventArgs const& args);
     static winrt::Windows::Foundation::TimeSpan SecondsToTimeSpan(double seconds);
     static bool IsRectVisibleOnAnyMonitor(RECT const& rect);
 };

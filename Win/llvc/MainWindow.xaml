@@ -9,7 +9,7 @@
     mc:Ignorable="d"
     Title="llvc - Lossless Video Cut">
 
-    <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop" KeyDown="Window_KeyDown">
+    <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop" PreviewKeyDown="Window_PreviewKeyDown" KeyDown="Window_KeyDown" PointerReleased="RootGrid_PointerReleased" TabFocusNavigation="None">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -18,7 +18,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <controls:MenuBar x:Name="MainMenuBar" Grid.Row="0" IsTabStop="True">
+        <controls:MenuBar x:Name="MainMenuBar" Grid.Row="0" IsTabStop="False">
             <controls:MenuBarItem Title="_File">
                 <MenuFlyoutItem Text="_New project	Ctrl+N" Click="NewProjectMenuItem_Click"/>
                 <MenuFlyoutItem Text="_Open project..." Click="OpenProjectMenuItem_Click"/>

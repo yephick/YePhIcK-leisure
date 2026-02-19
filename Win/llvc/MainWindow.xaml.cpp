@@ -539,6 +539,7 @@ void MainWindow::TimelineZoomSlider_ValueChanged(IInspectable const&, Controls::
     if(m_loadedFile && m_timelineDurationSeconds > 0){
         RenderTimelineAsync();
     }
+    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
 }
 
 void MainWindow::TimelineHorizontalScrollBar_ValueChanged(IInspectable const&, Controls::Primitives::RangeBaseValueChangedEventArgs const& args){
@@ -916,26 +917,28 @@ void MainWindow::StepByKeyframe(const int delta){
     UpdateTimelineCursorFromPlayback();
 }
 
-void MainWindow::Window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
+bool MainWindow::HandleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
     const auto focused{Input::FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
     const bool focusOnMenu = focused && IsInMenuSubtree(focused);
     const bool focusInDialog = focused && IsInDialogSubtree(focused);
 
-    if(args.Key() == Windows::System::VirtualKey::Menu){
+    if(args.Key() == Windows::System::VirtualKey::Menu || args.Key() == Windows::System::VirtualKey::LeftMenu || args.Key() == Windows::System::VirtualKey::RightMenu){
         MainMenuBar().Focus(Microsoft::UI::Xaml::FocusState::Keyboard);
         args.Handled(true);
-        return;
+        return true;
     }
 
     if(args.Key() == Windows::System::VirtualKey::Tab && !focusOnMenu && !focusInDialog){
         TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
         args.Handled(true);
-        return;
+        return true;
     }
 
     if(focusOnMenu || focusInDialog){
-        return;
+        return false;
     }
+
+    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
 
     const auto ctrlState{Microsoft::UI::Input::InputKeyboardSource::GetKeyStateForCurrentThread(Windows::System::VirtualKey::Control)};
     const bool ctrlDown{(ctrlState & Windows::UI::Core::CoreVirtualKeyStates::Down) == Windows::UI::Core::CoreVirtualKeyStates::Down};
@@ -944,40 +947,70 @@ void MainWindow::Window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs c
         if(args.Key() == Windows::System::VirtualKey::O){
             (void)OpenProjectMenuItem_Click(nullptr, RoutedEventArgs{});
             args.Handled(true);
-            return;
+            return true;
         }
         if(args.Key() == Windows::System::VirtualKey::S){
             (void)SaveProjectMenuItem_Click(nullptr, RoutedEventArgs{});
             args.Handled(true);
-            return;
+            return true;
         }
         if(args.Key() == Windows::System::VirtualKey::N){
             (void)NewProjectMenuItem_Click(nullptr, RoutedEventArgs{});
             args.Handled(true);
-            return;
+            return true;
         }
     }
 
     switch(args.Key()){
+    case Windows::System::VirtualKey::Space:
+        if(m_player){
+            const auto state = m_player.PlaybackSession().PlaybackState();
+            if(state == Windows::Media::Playback::MediaPlaybackState::Playing){
+                m_player.Pause();
+            }else{
+                m_player.Play();
+            }
+        }
+        args.Handled(true);
+        return true;
     case Windows::System::VirtualKey::Left:
         StepByFrame(-1);
         args.Handled(true);
-        break;
+        return true;
     case Windows::System::VirtualKey::Right:
         StepByFrame(1);
         args.Handled(true);
-        break;
+        return true;
     case Windows::System::VirtualKey::Up:
         StepByKeyframe(-1);
         args.Handled(true);
-        break;
+        return true;
     case Windows::System::VirtualKey::Down:
         StepByKeyframe(1);
         args.Handled(true);
-        break;
+        return true;
     default:
-        break;
+        return false;
     }
+}
+
+void MainWindow::Window_PreviewKeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
+    (void)HandleStorylineKeyDown(args);
+}
+
+void MainWindow::Window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
+    (void)HandleStorylineKeyDown(args);
+}
+
+void MainWindow::RootGrid_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& args){
+    const auto source = args.OriginalSource().try_as<DependencyObject>();
+    if(!source){
+        return;
+    }
+    if(IsInMenuSubtree(source) || IsInDialogSubtree(source)){
+        return;
+    }
+    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
 }
 
 Windows::Foundation::TimeSpan MainWindow::SecondsToTimeSpan(const double seconds){
@@ -991,6 +1024,7 @@ void MainWindow::KeyFrameSnapMode_Checked(IInspectable const& sender, RoutedEven
     }
 
     m_keyFrameSnapMode = unbox_value<hstring>(radio.Tag()).c_str();
+    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
 }
 
 Windows::Foundation::IAsyncAction MainWindow::NewProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
@@ -1780,7 +1814,6 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
 
         TimelineCanvas().Width(totalWidth);
         ThumbnailLayer().Children().Clear();
-        Controls::Canvas::SetLeft(TimelineCursor(), 0);
         RenderTimelineTicks();
         RenderKeyframeTicks();
         SyncTimelineHorizontalScrollBar();
