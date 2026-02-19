@@ -108,7 +108,6 @@ private:
     std::vector<winrt::hstring> m_recentProjects{};
     std::uint32_t m_maxRecentVideos{5};
     std::uint32_t m_maxRecentProjects{5};
-    std::wstring m_keyFrameSnapMode{L"Nearest"};
     std::vector<std::uint32_t> m_selectedKeyFrames{};
     std::vector<IndexedFrameSample> m_frameIndex{};
     std::vector<std::pair<std::uint32_t, std::uint32_t>> m_cutIntervals{};
@@ -147,9 +146,8 @@ private:
     IOpBool ensureProjectSavedBeforeContinuingAsync();
     static MediaInspectionResult inspectMediaFile(const std::wstring& filePath);
     static bool isSupportedVideoSubtype(const _GUID& subtype);
-    static std::vector<IndexedFrameSample> buildKeyframeIndexForFile(const std::wstring& filePath, const std::function<void(double)>& onProgress);
     static std::wstring guidToCodecName(const _GUID& subtype, bool isVideo);
-    AAction loadVideoFileAsync(const SFile& file, const std::vector<IndexedFrameSample>* preloadedKeyframeIndex = nullptr);
+    AAction loadVideoFileAsync(const SFile& file);
     winrt::fire_and_forget renderTimelineAsync();
     void updateTimelineCursorFromPlayback();
     void syncTimelineHorizontalScrollBar();
@@ -161,7 +159,6 @@ private:
     bool toggleCutBlockAtCanvasX(double pointerX);
     bool trySkipCurrentCutDuringPlayback();
     void stepByFrame(int delta);
-    void stepByKeyframe(int delta);
     void ensureTimelineCursorVisible(double cursorLeft);
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);

@@ -79,7 +79,6 @@ constexpr auto S_RECENT_VIDEOS{L"RecentVideos"};
 constexpr auto S_RECENT_PROJECTS{L"RecentProjects"};
 constexpr auto S_MAX_RECENT_VIDEOS{L"MaxRecentVideos"};
 constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
-constexpr auto S_KEYFRAME_SNAP_MODE{L"KeyframeSnapMode"};
 constexpr auto S_DEFAULT_MAX_RECENT{5};
 
 constexpr std::array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 10, 50, 100, 250, 500, 750, 1000}};
@@ -93,6 +92,17 @@ bool isControlModifierActive(const Windows::System::VirtualKeyModifiers modifier
 
     const auto ctrlState{Microsoft::UI::Input::InputKeyboardSource::GetKeyStateForCurrentThread(Windows::System::VirtualKey::Control)};
     return (ctrlState & Windows::UI::Core::CoreVirtualKeyStates::Down) == Windows::UI::Core::CoreVirtualKeyStates::Down;
+}
+
+std::uint32_t estimateFrameNumberFromTime100ns(const std::wstring& frameRateText, const std::int64_t time100ns){
+    try{
+        const auto fps{std::stod(frameRateText)};
+        if(fps > 0){
+            return static_cast<std::uint32_t>(std::max<std::int64_t>(0, static_cast<std::int64_t>(std::llround((time100ns / 10'000'000.0) * fps))));
+        }
+    }catch(...){
+    }
+    return 0;
 }
 
 std::wstring formatDurationFileTag(const std::int64_t duration100ns){
@@ -365,13 +375,6 @@ void MainWindow::loadAppSettings(){
     if(values.HasKey(S_RECENT_PROJECTS)){
         m_recentProjects = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
     }
-    if(values.HasKey(S_KEYFRAME_SNAP_MODE)){
-        const auto snapMode{unbox_value<hstring>(values.Lookup(S_KEYFRAME_SNAP_MODE))};
-        if(snapMode == L"Left" || snapMode == L"Right" || snapMode == L"Nearest"){
-            m_keyFrameSnapMode = snapMode.c_str();
-        }
-    }
-
     if(m_recentVideos.size() > m_maxRecentVideos){
         m_recentVideos.resize(m_maxRecentVideos);
     }
@@ -386,7 +389,6 @@ void MainWindow::saveAppSettings() const{
     values.Insert(S_MAX_RECENT_PROJECTS, box_value(static_cast<int32_t>(m_maxRecentProjects)));
     values.Insert(S_RECENT_VIDEOS, box_value(hstring(joinRecentItems(m_recentVideos))));
     values.Insert(S_RECENT_PROJECTS, box_value(hstring(joinRecentItems(m_recentProjects))));
-    values.Insert(S_KEYFRAME_SNAP_MODE, box_value(hstring(m_keyFrameSnapMode)));
 }
 
 void MainWindow::saveWindowPlacement() const{
@@ -544,48 +546,57 @@ void MainWindow::timelineCanvas_PointerMoved(const Control&, const PREArgs& e){
 }
 
 bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
-    if(m_frameIndex.empty() || m_timelineDurationSeconds <= 0 || TimelineTickCanvas().Width() <= 0){
+    if(m_timelineDurationSeconds <= 0 || TimelineTickCanvas().Width() <= 0){
         return false;
     }
 
     constexpr auto hitTolerancePx{4.0};
     const auto width{TimelineTickCanvas().Width()};
-    const auto total100ns{m_timelineDurationSeconds * 10'000'000.0};
+    const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (m_timelineDurationSeconds * 10'000'000.0))};
 
-    uint32_t nearestOrdinal{};
-    auto foundNearest{false};
-    uint32_t cleanOrdinal{};
+    auto nearestIndex{m_frameIndex.size()};
     double nearestDistance{hitTolerancePx + 1.0};
-    for(const auto& frame : m_frameIndex){
-        if(!frame.cleanPoint){
-            continue;
-        }
-
-        const auto x{clamp((static_cast<double>(frame.time100ns) / total100ns) * width, 0.0, width)};
+    for(size_t i = 0; i < m_frameIndex.size(); ++i){
+        const auto x{clamp((static_cast<double>(m_frameIndex[i].time100ns) / (m_timelineDurationSeconds * 10'000'000.0)) * width, 0.0, width)};
         const auto distance{fabs(pointerX - x)};
         if(distance <= hitTolerancePx && distance < nearestDistance){
             nearestDistance = distance;
-            nearestOrdinal = cleanOrdinal;
-            foundNearest = true;
+            nearestIndex = i;
         }
-        ++cleanOrdinal;
     }
 
-    if(!foundNearest){
-        return false;
-    }
-
-    const auto it {find(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), nearestOrdinal)};
-
-    if(it == m_selectedKeyFrames.end()){
-        m_selectedKeyFrames.push_back(nearestOrdinal);
+    if(nearestIndex != m_frameIndex.size()){
+        const auto existing{static_cast<uint32_t>(nearestIndex)};
+        const auto it{find(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), existing)};
+        if(it == m_selectedKeyFrames.end()){
+            m_selectedKeyFrames.push_back(existing);
+        }else{
+            m_selectedKeyFrames.erase(it);
+        }
     }else{
-        m_selectedKeyFrames.erase(it);
+        const auto insertIt{lower_bound(m_frameIndex.begin(), m_frameIndex.end(), clicked100ns, [](const IndexedFrameSample& a, int64_t t){
+            return a.time100ns < t;
+        })};
+        const auto insertPos{static_cast<uint32_t>(distance(m_frameIndex.begin(), insertIt))};
+
+        for(auto& selected : m_selectedKeyFrames){
+            if(selected >= insertPos){
+                ++selected;
+            }
+        }
+
+        const auto frameNumber{estimateFrameNumberFromTime100ns(m_mediaInfo.frameRate, clicked100ns)};
+        m_frameIndex.insert(insertIt, IndexedFrameSample{.time100ns=clicked100ns, .duration100ns=0, .cleanPoint=true, .sampleIndex=frameNumber});
+        m_selectedKeyFrames.push_back(insertPos);
     }
 
     sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
+    m_selectedKeyFrames.erase(unique(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end()), m_selectedKeyFrames.end());
+
+    m_cutIntervals = normalizeAndMergeIndexIntervals(move(m_cutIntervals), m_frameIndex.size());
     renderTimelineTicks();
     renderKeyframeTicks();
+    renderCutOverlays();
     updateWindowTitle();
     return true;
 }
@@ -728,58 +739,14 @@ void MainWindow::syncTimelineHorizontalScrollBar(){
     }
 }
 
-void MainWindow::seekTimelineToCanvasX(const double pointerX, const bool bypassSnap){
+void MainWindow::seekTimelineToCanvasX(const double pointerX, const bool){
     if(!m_player || m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
     }
 
     const auto x{clamp(pointerX, 0.0, TimelineCanvas().Width())};
     const auto ratio{x / TimelineCanvas().Width()};
-    auto target100ns{static_cast<int64_t>(ratio * (m_timelineDurationSeconds * 10'000'000.0))};
-
-    if(!bypassSnap && !m_frameIndex.empty()){
-        const auto toSeconds {[](int64_t v){ return static_cast<double>(v) / 10'000'000.0; }};
-        const auto it{lower_bound(m_frameIndex.begin(), m_frameIndex.end(), target100ns, [](const IndexedFrameSample& a, int64_t v){
-            return a.time100ns < v;
-        })};
-
-        auto useTime {target100ns};
-        if(m_keyFrameSnapMode == L"Left"){
-            for(auto rit{(it == m_frameIndex.begin() ? m_frameIndex.begin() : it)};;){
-                if(rit == m_frameIndex.begin()){
-                    if(rit->cleanPoint){ useTime = rit->time100ns; }
-                    break;
-                }
-                --rit;
-                if(rit->cleanPoint){ useTime = rit->time100ns; break; }
-            }
-        }else if(m_keyFrameSnapMode == L"Right"){
-            for(auto fit{it}; fit != m_frameIndex.end(); ++fit){
-                if(fit->cleanPoint){ useTime = fit->time100ns; break; }
-            }
-        }else{
-            int64_t left = -1;
-            int64_t right = -1;
-            if(it != m_frameIndex.begin()){
-                for(auto rit{it};;){
-                    --rit;
-                    if(rit->cleanPoint){ left = rit->time100ns; break; }
-                    if(rit == m_frameIndex.begin()){ break; }
-                }
-            }
-            for(auto fit{it}; fit != m_frameIndex.end(); ++fit){
-                if(fit->cleanPoint){ right = fit->time100ns; break; }
-            }
-            if(left >= 0 && right >= 0){
-                useTime = (llabs(target100ns - left) <= llabs(right - target100ns)) ? left : right;
-            }else if(left >= 0){
-                useTime = left;
-            }else if(right >= 0){
-                useTime = right;
-            }
-        }
-        target100ns = useTime;
-    }
+    const auto target100ns{static_cast<int64_t>(ratio * (m_timelineDurationSeconds * 10'000'000.0))};
 
     m_player.PlaybackSession().Position(TimeSpan{target100ns});
     updateTimelineCursorFromPlayback();
@@ -1088,41 +1055,6 @@ void MainWindow::stepByFrame(const int delta){
     updateTimelineCursorFromPlayback();
 }
 
-void MainWindow::stepByKeyframe(const int delta){
-    if(!m_player || m_frameIndex.empty() || delta == 0){
-        return;
-    }
-
-    vector<int64_t> keys;
-    keys.reserve(m_frameIndex.size());
-    for(const auto& f: m_frameIndex){
-        if(f.cleanPoint){
-            keys.push_back(f.time100ns);
-        }
-    }
-    if(keys.empty()){
-        return;
-    }
-
-    const auto current {m_player.PlaybackSession().Position().count()};
-    int64_t target = keys.front();
-
-    if(delta > 0){
-        const auto it {upper_bound(keys.begin(), keys.end(), current)};
-        target = (it != keys.end()) ? *it : keys.back();
-    }else{
-        const auto it {lower_bound(keys.begin(), keys.end(), current)};
-        if(it == keys.begin()){
-            target = keys.front();
-        }else{
-            target = *(it - 1);
-        }
-    }
-
-    m_player.PlaybackSession().Position(TimeSpan{target});
-    updateTimelineCursorFromPlayback();
-}
-
 void MainWindow::tryFocusTimelineCanvas(const FState focusState){
     const auto canvas{TimelineCanvas()};
     if(canvas && canvas.XamlRoot()){
@@ -1192,14 +1124,6 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         return true;
     case Windows::System::VirtualKey::Right:
         stepByFrame(1);
-        args.Handled(true);
-        return true;
-    case Windows::System::VirtualKey::Up:
-        stepByKeyframe(-1);
-        args.Handled(true);
-        return true;
-    case Windows::System::VirtualKey::Down:
-        stepByKeyframe(1);
         args.Handled(true);
         return true;
     default:
@@ -1712,17 +1636,14 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
 
 wstring MainWindow::buildProjectSnapshot(){
     auto snapshot{std::format(
-        L"file_path={}\nstoryline_zoom={:.15g}\nkeep_audio={}\naudio_crossfade_ms={}\nselected_keyframe_indices={}\ncut_interval_indices={}\n",
+        L"file_path={}\nstoryline_zoom={:.15g}\nkeep_audio={}\naudio_crossfade_ms={}\nmarker_indices={}\ncut_marker_ranges={}\nmarker_points={}\n",
         (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
         TimelineZoomSlider().Value(),
         m_keepAudio ? 1 : 0,
         m_audioCrossfadeMs,
         serializeIndexList(m_selectedKeyFrames),
-        serializeIndexPairs(m_cutIntervals))};
-
-    for(const auto& line: m_projectUnknownLines){
-        snapshot += line + L"\n";
-    }
+        serializeIndexPairs(m_cutIntervals),
+        serializeKeyframeVector(m_frameIndex))};
     return snapshot;
 }
 
@@ -1779,33 +1700,27 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
 
     const auto lines{co_await FileIO::ReadLinesAsync(file)};
 
-    vector<wstring> unknownLines;
-    vector<uint32_t> selectedKeyframeIndices;
-    vector<pair<uint32_t, uint32_t>> cutIntervalIndices;
+    vector<uint32_t> selectedMarkerIndices;
+    vector<pair<uint32_t, uint32_t>> cutMarkerRanges;
     wstring loadedFilePath;
     auto zoomLevel{TimelineZoomSlider().Value()};
     auto keepAudioSetting{m_keepAudio};
     auto audioCrossfadeSetting{m_audioCrossfadeMs};
-    vector<IndexedFrameSample> loadedKeyframeIndex;
+    vector<IndexedFrameSample> loadedMarkers;
 
     for(const auto& lineH: lines){
         const wstring line{lineH.c_str()};
         const auto trimmed{trim(line)};
         if(trimmed.empty()){
-            unknownLines.push_back(line);
             continue;
         }
 
         if(trimmed[0] == L'#'){
-            if(trimmed != L"# llvc project file"){
-                unknownLines.push_back(line);
-            }
             continue;
         }
 
         const auto eqPos{line.find(L'=')};
         if(eqPos == wstring::npos){
-            unknownLines.push_back(line);
             continue;
         }
 
@@ -1815,32 +1730,26 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
         if(key == L"file_path"){
             loadedFilePath = value;
         }else if(key == L"storyline_zoom"){
-            try{ zoomLevel = stod(value); }catch(...){ unknownLines.push_back(line); }
-        }else if(key == L"keyframe_snap_mode"){
-            // legacy project setting; snap mode is now app-wide
-        }else if(key == L"selected_keyframe_indices"){
-            selectedKeyframeIndices = parseIndexList(value);
-        }else if(key == L"cut_interval_indices"){
-            cutIntervalIndices = parseIndexPairs(value);
+            try{ zoomLevel = stod(value); }catch(...){ }
+        }else if(key == L"marker_indices"){
+            selectedMarkerIndices = parseIndexList(value);
+        }else if(key == L"cut_marker_ranges"){
+            cutMarkerRanges = parseIndexPairs(value);
         }else if(key == L"keep_audio"){
             keepAudioSetting = !(value == L"0" || value == L"false" || value == L"False");
         }else if(key == L"audio_crossfade_ms"){
-            try{ audioCrossfadeSetting = normalizeAudioCrossfadeMs(stoi(value)); }catch(...){ unknownLines.push_back(line); }
-        }else if(key == L"keyframe_index"){
-            loadedKeyframeIndex = parseKeyframeVector(value);
+            try{ audioCrossfadeSetting = normalizeAudioCrossfadeMs(stoi(value)); }catch(...){ }
+        }else if(key == L"marker_points"){
+            loadedMarkers = parseKeyframeVector(value);
         }else{
-            unknownLines.push_back(line);
+            continue;
         }
     }
 
     if(!loadedFilePath.empty()){
         try{
             const auto videoFile{co_await StorageFile::GetFileFromPathAsync(loadedFilePath)};
-            if(!loadedKeyframeIndex.empty()){
-                co_await loadVideoFileAsync(videoFile, &loadedKeyframeIndex);
-            }else{
-                co_await loadVideoFileAsync(videoFile);
-            }
+            co_await loadVideoFileAsync(videoFile);
         }catch(...){
             StatusText().Text(L"Project opened, but referenced video could not be loaded");
         }
@@ -1853,19 +1762,23 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     syncAudioCrossfadeComboSelection();
     updateAudioUiAndPlaybackState();
 
-    const auto cleanKeyTimes {buildCleanKeyframeTimes100ns(m_frameIndex)};
+    m_frameIndex = loadedMarkers;
+    sort(m_frameIndex.begin(), m_frameIndex.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
+        return a.time100ns < b.time100ns;
+    });
+    const auto markerCount{m_frameIndex.size()};
     m_selectedKeyFrames.clear();
-    m_selectedKeyFrames.reserve(selectedKeyframeIndices.size());
-    for(const auto ordinal : selectedKeyframeIndices){
-        if(ordinal < cleanKeyTimes.size()){
+    m_selectedKeyFrames.reserve(selectedMarkerIndices.size());
+    for(const auto ordinal : selectedMarkerIndices){
+        if(ordinal < markerCount){
             m_selectedKeyFrames.push_back(ordinal);
         }
     }
     sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
     m_selectedKeyFrames.erase(unique(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end()), m_selectedKeyFrames.end());
 
-    m_cutIntervals = normalizeAndMergeIndexIntervals(move(cutIntervalIndices), cleanKeyTimes.size());
-    m_projectUnknownLines = move(unknownLines);
+    m_cutIntervals = normalizeAndMergeIndexIntervals(move(cutMarkerRanges), markerCount);
+    m_projectUnknownLines.clear();
     m_projectPath = file.Path();
 
     addRecentProject(file.Path());
@@ -1881,16 +1794,9 @@ AAction MainWindow::saveProjectFileAsync(const SFile& file){
     lines.emplace_back(L"storyline_zoom=" + to_wstring(TimelineZoomSlider().Value()));
     lines.emplace_back(L"keep_audio=" + wstring(m_keepAudio ? L"1" : L"0"));
     lines.emplace_back(L"audio_crossfade_ms=" + to_wstring(m_audioCrossfadeMs));
-    lines.emplace_back(L"selected_keyframe_indices=" + serializeIndexList(m_selectedKeyFrames));
-    lines.emplace_back(L"cut_interval_indices=" + serializeIndexPairs(m_cutIntervals));
-    lines.emplace_back(L"keyframe_index=" + serializeKeyframeVector(m_frameIndex));
-
-    for(const auto& unknown: m_projectUnknownLines){
-        if(trim(unknown) == L"# llvc project file"){
-            continue;
-        }
-        lines.emplace_back(unknown);
-    }
+    lines.emplace_back(L"marker_indices=" + serializeIndexList(m_selectedKeyFrames));
+    lines.emplace_back(L"cut_marker_ranges=" + serializeIndexPairs(m_cutIntervals));
+    lines.emplace_back(L"marker_points=" + serializeKeyframeVector(m_frameIndex));
 
     co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(move(lines)));
     m_projectPath = file.Path();
@@ -1954,43 +1860,10 @@ AAction MainWindow::showOptionsDialogAsync(){
     projectsCount.SpinButtonPlacementMode(Controls::NumberBoxSpinButtonPlacementMode::Inline);
     projectsCount.Value(static_cast<double>(m_maxRecentProjects));
 
-    Controls::TextBlock snapLabel{};
-    snapLabel.Text(L"Random access point snap method");
-
-    Controls::StackPanel snapPanel{};
-    snapPanel.Orientation(Controls::Orientation::Horizontal);
-    snapPanel.Spacing(8);
-
-    Controls::RadioButton leftSnapRadio{};
-    leftSnapRadio.Content(box_value(L"Left"));
-    leftSnapRadio.GroupName(L"OptionsKeyFrameSnapMode");
-
-    Controls::RadioButton rightSnapRadio{};
-    rightSnapRadio.Content(box_value(L"Right"));
-    rightSnapRadio.GroupName(L"OptionsKeyFrameSnapMode");
-
-    Controls::RadioButton nearestSnapRadio{};
-    nearestSnapRadio.Content(box_value(L"Nearest"));
-    nearestSnapRadio.GroupName(L"OptionsKeyFrameSnapMode");
-
-    if(m_keyFrameSnapMode == L"Left"){
-        leftSnapRadio.IsChecked(true);
-    }else if(m_keyFrameSnapMode == L"Right"){
-        rightSnapRadio.IsChecked(true);
-    }else{
-        nearestSnapRadio.IsChecked(true);
-    }
-
-    snapPanel.Children().Append(leftSnapRadio);
-    snapPanel.Children().Append(rightSnapRadio);
-    snapPanel.Children().Append(nearestSnapRadio);
-
     panel.Children().Append(videosLabel);
     panel.Children().Append(videosCount);
     panel.Children().Append(projectsLabel);
     panel.Children().Append(projectsCount);
-    panel.Children().Append(snapLabel);
-    panel.Children().Append(snapPanel);
 
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(Content().XamlRoot());
@@ -2006,14 +1879,6 @@ AAction MainWindow::showOptionsDialogAsync(){
 
     m_maxRecentVideos = static_cast<uint32_t>(clamp(static_cast<int>(lround(videosCount.Value())), 1, 20));
     m_maxRecentProjects = static_cast<uint32_t>(clamp(static_cast<int>(lround(projectsCount.Value())), 1, 20));
-
-    if(leftSnapRadio.IsChecked().GetBoolean()){
-        m_keyFrameSnapMode = L"Left";
-    }else if(rightSnapRadio.IsChecked().GetBoolean()){
-        m_keyFrameSnapMode = L"Right";
-    }else{
-        m_keyFrameSnapMode = L"Nearest";
-    }
 
     if(m_recentVideos.size() > m_maxRecentVideos){
         m_recentVideos.resize(m_maxRecentVideos);
@@ -2175,110 +2040,6 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     return result;
 }
 
-vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(const wstring& filePath, const function<void(double)>& onProgress){
-    vector<IndexedFrameSample> index;
-    MFLifetime mf{};
-
-    com_ptr<IMFAttributes> readerAttributes;
-    check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
-    check_hresult(readerAttributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE));
-
-    com_ptr<IMFSourceReader> reader;
-    check_hresult(MFCreateSourceReaderFromURL(filePath.c_str(), readerAttributes.get(), reader.put()));
-
-    constexpr auto invalidStream{numeric_limits<DWORD>::max()};
-    auto videoStreamIndex{invalidStream};
-    for(DWORD streamIndex = 0;; ++streamIndex){
-        com_ptr<IMFMediaType> type;
-        const auto hr{reader->GetNativeMediaType(streamIndex, 0, type.put())};
-        if(hr == MF_E_INVALIDSTREAMNUMBER){
-            break;
-        }
-        check_hresult(hr);
-
-        GUID major{GUID_NULL};
-        check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
-        if(major == MFMediaType_Video){
-            videoStreamIndex = streamIndex;
-            break;
-        }
-    }
-
-    if(videoStreamIndex == invalidStream){
-        return index;
-    }
-
-    check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
-    check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
-
-    com_ptr<IMFMediaType> sourceVideoType;
-    check_hresult(reader->GetNativeMediaType(videoStreamIndex, 0, sourceVideoType.put()));
-    check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, sourceVideoType.get()));
-
-    GUID videoSubtype{GUID_NULL};
-    check_hresult(sourceVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
-    const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
-
-    PROPVARIANT duration{};
-    PropVariantInit(&duration);
-    LONGLONG totalDuration100ns{};
-    if(SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION, &duration)) && duration.vt == VT_UI8){
-        totalDuration100ns = duration.uhVal.QuadPart;
-    }
-    PropVariantClear(&duration);
-    if(onProgress){
-        onProgress(0.0);
-    }
-
-    double lastReportedProgress{-1.0};
-    for(uint32_t sampleIndex = 0;; ++sampleIndex){
-        DWORD actualStream{};
-        DWORD flags{};
-        LONGLONG timestamp{};
-        com_ptr<IMFSample> sample;
-        const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
-        if(FAILED(hr) || (flags & MF_SOURCE_READERF_ENDOFSTREAM)){
-            break;
-        }
-        if(!sample){
-            continue;
-        }
-
-        LONGLONG sampleDuration{};
-        (void)sample->GetSampleDuration(&sampleDuration);
-        LONGLONG sampleTime100ns{};
-        if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
-            sampleTime100ns = timestamp;
-        }
-
-        const auto containerSync{isContainerSyncSample(sample)};
-        const auto bitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, true)};
-        const auto trueRandomAccessPoint{containerSync && bitstreamRap};
-
-        index.push_back(IndexedFrameSample{
-            .time100ns = sampleTime100ns,
-            .duration100ns = sampleDuration,
-            .cleanPoint = trueRandomAccessPoint,
-            .sampleIndex = sampleIndex,
-        });
-
-        if(onProgress && totalDuration100ns > 0){
-            const auto ratio {clamp(1.0 * timestamp / totalDuration100ns, 0.0, 1.0)};
-            const auto percent {ratio * 100.0};
-            if(percent - lastReportedProgress >= 1.0 || percent >= 100.0){
-                onProgress(percent);
-                lastReportedProgress = percent;
-            }
-        }
-    }
-
-    if(onProgress){
-        onProgress(100.0);
-    }
-
-    return index;
-}
-
 void MainWindow::window_DragOver(const Control&, const DEArgs& e){
     e.AcceptedOperation(Windows::ApplicationModel::DataTransfer::DataPackageOperation::Copy);
 }
@@ -2316,7 +2077,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
     co_await loadVideoFileAsync(file);
 }
 
-AAction MainWindow::loadVideoFileAsync(const SFile& file, const vector<IndexedFrameSample>* preloadedKeyframeIndex){
+AAction MainWindow::loadVideoFileAsync(const SFile& file){
     MediaInspectionResult inspected{};
     try{
         inspected = inspectMediaFile(file.Path().c_str());
@@ -2340,33 +2101,13 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file, const vector<IndexedFr
     m_mediaInfo = inspected;
 
     KeyframeProgressBar().Value(0);
-    KeyframeProgressBar().Visibility(Visibility::Visible);
+    KeyframeProgressBar().Visibility(Visibility::Collapsed);
     wstring status{L"Loaded: "};
     status += file.Name().c_str();
-    status += L" (building random-access index...)";
+    status += L" (loading story line...)";
     StatusText().Text(status);
 
-    if(preloadedKeyframeIndex && !preloadedKeyframeIndex->empty()){
-        m_frameIndex = *preloadedKeyframeIndex;
-        KeyframeProgressBar().Value(100);
-    }else{
-        const auto weak{get_weak()};
-        auto progress{[weak](double percent){
-            if(const auto self{weak.get()}){
-                self->DispatcherQueue().TryEnqueue([weak, percent](){
-                    if(const auto uiSelf{weak.get()}){
-                        uiSelf->KeyframeProgressBar().Value(clamp(percent, 0.0, 100.0));
-                    }
-                });
-            }
-        }};
-
-        winrt::apartment_context uiThread;
-        co_await winrt::resume_background();
-        auto indexed {buildKeyframeIndexForFile(file.Path().c_str(), progress)};
-        co_await uiThread;
-        m_frameIndex = move(indexed);
-    }
+    m_frameIndex.clear();
 
     const auto source{Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
     m_player.Source(source);
@@ -2389,10 +2130,6 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file, const vector<IndexedFr
 
     KeyframeProgressBar().Visibility(Visibility::Collapsed);
 
-    status = L"Loaded: ";
-    status += file.Name().c_str();
-    status += L" (loading story line...)";
-    StatusText().Text(status);
     updateAudioUiAndPlaybackState();
     updateWindowTitle();
 }
