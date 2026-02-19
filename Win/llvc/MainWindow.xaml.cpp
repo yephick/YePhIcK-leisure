@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <format>
 #include <limits>
+#include <optional>
 #include <string_view>
 #include <functional>
 #include <vector>
@@ -163,51 +164,80 @@ bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID&
 
     com_ptr<IMFMediaBuffer> contiguousBuffer;
     if(FAILED(sample->ConvertToContiguousBuffer(contiguousBuffer.put())) || !contiguousBuffer){
-        return false;
+        return true; // parsing unavailable; fall back to container sync decision
     }
 
     BYTE* data{};
     DWORD maxLength{};
     DWORD currentLength{};
     if(FAILED(contiguousBuffer->Lock(&data, &maxLength, &currentLength)) || !data || currentLength == 0){
-        return false;
+        return true;
     }
 
-    const auto nalSizeField = std::clamp<std::uint32_t>(nalLengthFieldSize, 1, 4);
-    size_t offset{};
-    while(offset + nalSizeField <= currentLength){
-        std::uint32_t nalLength{};
-        for(std::uint32_t i = 0; i < nalSizeField; ++i){
-            nalLength = (nalLength << 8) | data[offset + i];
-        }
-        offset += nalSizeField;
-
-        if(nalLength == 0 || offset + nalLength > currentLength){
-            break;
-        }
-
-        const auto nalHeader = data[offset];
+    auto classifyNalType = [&](const std::uint8_t nalHeader) -> std::optional<bool>{
         if(subtype == MFVideoFormat_H264){
             const auto nalType = static_cast<std::uint8_t>(nalHeader & 0x1F);
             if(nalType >= 1 && nalType <= 5){
-                const auto result{nalType == 5}; // IDR only
-                contiguousBuffer->Unlock();
-                return result;
+                return nalType == 5; // IDR only
             }
         }else{
             const auto nalType = static_cast<std::uint8_t>((nalHeader >> 1) & 0x3F);
             if(nalType <= 31){
-                const auto result{nalType == 19 || nalType == 20 || nalType == 21}; // HEVC IDR/CRA
+                return nalType == 19 || nalType == 20 || nalType == 21; // HEVC IDR/CRA
+            }
+        }
+        return std::nullopt;
+    };
+
+    // Try MP4/MOV length-prefixed NAL units first.
+    {
+        const auto nalSizeField = std::clamp<std::uint32_t>(nalLengthFieldSize, 1, 4);
+        size_t offset{};
+        while(offset + nalSizeField <= currentLength){
+            std::uint32_t nalLength{};
+            for(std::uint32_t i = 0; i < nalSizeField; ++i){
+                nalLength = (nalLength << 8) | data[offset + i];
+            }
+            offset += nalSizeField;
+
+            if(nalLength == 0 || offset + nalLength > currentLength){
+                break;
+            }
+
+            if(const auto maybeRap = classifyNalType(data[offset]); maybeRap.has_value()){
+                const auto result{maybeRap.value()};
                 contiguousBuffer->Unlock();
                 return result;
             }
+
+            offset += nalLength;
+        }
+    }
+
+    // Fallback: try Annex B start-code format.
+    for(size_t i = 0; i + 4 < currentLength; ++i){
+        size_t nalStart{};
+        if(data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1){
+            nalStart = i + 3;
+        }else if(i + 4 < currentLength && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1){
+            nalStart = i + 4;
+        }else{
+            continue;
         }
 
-        offset += nalLength;
+        if(nalStart >= currentLength){
+            continue;
+        }
+
+        if(const auto maybeRap = classifyNalType(data[nalStart]); maybeRap.has_value()){
+            const auto result{maybeRap.value()};
+            contiguousBuffer->Unlock();
+            return result;
+        }
     }
 
     contiguousBuffer->Unlock();
-    return false;
+    return true; // inconclusive parsing; keep container sync points usable
 }
 
 bool isContainerSyncSample(const com_ptr<IMFSample>& sample){
