@@ -84,7 +84,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Visible" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="TimelineScrollViewer_ViewChanged" SizeChanged="TimelineScrollViewer_SizeChanged">
+                    <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="TimelineScrollViewer_ViewChanged" SizeChanged="TimelineScrollViewer_SizeChanged">
                         <StackPanel Orientation="Vertical" Spacing="4">
                             <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#111111" PointerReleased="TimelineTickCanvas_PointerReleased"/>
                             <Canvas x:Name="TimelineCanvas" Height="86" IsTabStop="True" Loaded="TimelineCanvas_Loaded" PointerPressed="TimelineCanvas_PointerPressed" PointerMoved="TimelineCanvas_PointerMoved" PointerReleased="TimelineCanvas_PointerReleased" PointerCanceled="TimelineCanvas_PointerCanceled" PointerCaptureLost="TimelineCanvas_PointerCaptureLost" Background="#111111">
@@ -96,7 +96,7 @@
                     </ScrollViewer>
 
                     <Border Grid.Row="1" Margin="0,4,0,0" Padding="0" MinHeight="28" Background="#202020" BorderBrush="#6A6A6A" BorderThickness="1" CornerRadius="2">
-                        <ScrollBar x:Name="TimelineHorizontalScrollBar" Minimum="0" Orientation="Horizontal" IsTabStop="False" Height="20" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="6,2" Background="#2A2A2A" Foreground="#CFCFCF" Visibility="Visible" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
+                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" IsTabStop="False" Height="20" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="6,2" Background="#2A2A2A" Foreground="#CFCFCF" Visibility="Visible" ValueChanged="TimelineHorizontalScrollBar_ValueChanged"/>
                     </Border>
                 </Grid>
             </Border>

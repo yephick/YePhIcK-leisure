@@ -823,8 +823,7 @@ void MainWindow::SyncTimelineHorizontalScrollBar(){
 
     auto bar{TimelineHorizontalScrollBar()};
     bar.Minimum(0.0);
-    bar.Maximum(scrollableWidth);
-    bar.ViewportSize(viewportWidth);
+    bar.Maximum(std::max(1.0, scrollableWidth));
     bar.LargeChange(std::max(32.0, viewportWidth * 0.8));
     bar.SmallChange(24.0);
     bar.IsEnabled(scrollableWidth > 0.0);
