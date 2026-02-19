@@ -1390,8 +1390,15 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     for(auto const& lineH : lines){
         const std::wstring line{lineH.c_str()};
         const auto trimmed{Trim(line)};
-        if(trimmed.empty() || trimmed[0] == L'#'){
+        if(trimmed.empty()){
             unknownLines.push_back(line);
+            continue;
+        }
+
+        if(trimmed[0] == L'#'){
+            if(trimmed != L"# llvc project file"){
+                unknownLines.push_back(line);
+            }
             continue;
         }
 
@@ -1469,6 +1476,9 @@ Windows::Foundation::IAsyncAction MainWindow::SaveProjectFileAsync(Windows::Stor
     lines.emplace_back(L"keyframe_index=" + SerializeKeyframeVector(m_frameIndex));
 
     for(auto const& unknown : m_projectUnknownLines){
+        if(Trim(unknown) == L"# llvc project file"){
+            continue;
+        }
         lines.emplace_back(unknown);
     }
 
