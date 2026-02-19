@@ -711,7 +711,7 @@ bool MainWindow::ToggleSelectedKeyframeAtCanvasX(const double pointerX){
 
 void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
-    if(point.Properties().PointerUpdateKind() == Input::PointerUpdateKind::RightButtonReleased){
+    if(point.Properties().PointerUpdateKind() == Windows::UI::Input::PointerUpdateKind::RightButtonReleased){
         if(ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
             e.Handled(true);
             return;
@@ -760,7 +760,7 @@ void MainWindow::TimelineCanvas_Loaded(IInspectable const&, RoutedEventArgs cons
 
 void MainWindow::TimelineTickCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
     const auto point{e.GetCurrentPoint(TimelineTickCanvas())};
-    if(point.Properties().PointerUpdateKind() == Input::PointerUpdateKind::RightButtonReleased && ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
+    if(point.Properties().PointerUpdateKind() == Windows::UI::Input::PointerUpdateKind::RightButtonReleased && ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
         TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
         e.Handled(true);
     }
