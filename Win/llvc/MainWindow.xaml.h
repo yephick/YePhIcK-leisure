@@ -62,6 +62,8 @@ struct MainWindow: MainWindowT<MainWindow>{
     void pauseButton_Click(const Control& sender, const REArgs& args);
     void stopButton_Click(const Control& sender, const REArgs& args);
     void timelineZoomSlider_ValueChanged(const Control& sender, const RBVArgs& args);
+    void keepAudioCheckBox_Changed(const Control& sender, const REArgs& args);
+    void audioCrossfadeComboBox_SelectionChanged(const Control& sender, const Control& args);
     void timelineHorizontalScrollBar_ValueChanged(const Control& sender, const RBVArgs& args);
     void timelineScrollViewer_ViewChanged(const Control& sender, const SVVCArgs& args);
     void timelineScrollViewer_SizeChanged(const Control& sender, const SCArgs& args);
@@ -112,6 +114,8 @@ private:
     winrt::hstring m_projectPath{};
     std::wstring m_lastSavedProjectSnapshot{};
     bool m_isClosing{false};
+    bool m_keepAudio{true};
+    std::int32_t m_audioCrossfadeMs{0};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};
     std::uint32_t m_timelineDragPointerId{0};
@@ -159,6 +163,11 @@ private:
     void ensureTimelineCursorVisible(double cursorLeft);
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
+    void updateAudioUiAndPlaybackState();
+    void applyAudioSettingsToPlayer();
+    static std::int32_t normalizeAudioCrossfadeMs(std::int32_t valueMs);
+    void syncAudioCrossfadeComboSelection();
+    bool sourceHasAudio() const;
     static TS secondsToTimeSpan(double seconds);
     static bool isRectVisibleOnAnyMonitor(const RECT& rect);
 };

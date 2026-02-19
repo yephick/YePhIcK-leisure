@@ -59,9 +59,20 @@
             </Grid.RowDefinitions>
 
             <Grid VerticalAlignment="Center">
-                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                     <TextBlock Text="Zoom" VerticalAlignment="Center" Margin="-4,0,0,0"/>
                     <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="12" Value="3" SmallChange="0.25" LargeChange="1" ValueChanged="timelineZoomSlider_ValueChanged"/>
+                    <CheckBox x:Name="KeepAudioCheckBox" Content="Keep audio" IsEnabled="False" VerticalAlignment="Center" Checked="keepAudioCheckBox_Changed" Unchecked="keepAudioCheckBox_Changed"/>
+                    <ComboBox x:Name="AudioCrossfadeComboBox" Width="120" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
+                        <ComboBoxItem Content="0 ms" Tag="0"/>
+                        <ComboBoxItem Content="10 ms" Tag="10"/>
+                        <ComboBoxItem Content="50 ms" Tag="50"/>
+                        <ComboBoxItem Content="100 ms" Tag="100"/>
+                        <ComboBoxItem Content="250 ms" Tag="250"/>
+                        <ComboBoxItem Content="500 ms" Tag="500"/>
+                        <ComboBoxItem Content="750 ms" Tag="750"/>
+                        <ComboBoxItem Content="1 s" Tag="1000"/>
+                    </ComboBox>
                 </StackPanel>
             </Grid>
 
