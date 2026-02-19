@@ -73,7 +73,7 @@ struct MFLifetime{
     }
 };
 
-wstring formatGuid(GUID const& guid){
+wstring formatGuid(const GUID& guid){
     constexpr auto guidBufferLength{40};
     OLECHAR raw[guidBufferLength]{};
     StringFromGUID2(guid, raw, guidBufferLength);
@@ -101,7 +101,7 @@ wstring formatRatio(uint32_t num, uint32_t den){
     return std::format(L"{:.3f}", (1.0 * num) / den);
 }
 
-wstring joinRecentItems(vector<hstring> const& values){
+wstring joinRecentItems(const vector<hstring>& values){
     wstring out;
     for(size_t i = 0; i < values.size(); ++i){
         if(i > 0){
@@ -112,7 +112,7 @@ wstring joinRecentItems(vector<hstring> const& values){
     return out;
 }
 
-vector<hstring> splitRecentItems(wstring const& source){
+vector<hstring> splitRecentItems(const wstring& source){
     vector<hstring> items;
     size_t start{};
     while(start <= source.size()){
@@ -129,7 +129,7 @@ vector<hstring> splitRecentItems(wstring const& source){
     return items;
 }
 
-bool isInMenuSubtree(DependencyObject const& object){
+bool isInMenuSubtree(const DependencyObject& object){
     DependencyObject current{object};
     while(current){
         if(current.try_as<Controls::MenuBar>() || current.try_as<Controls::MenuFlyoutItem>() || current.try_as<Controls::MenuFlyoutSubItem>() || current.try_as<Controls::MenuFlyoutPresenter>()){
@@ -140,7 +140,7 @@ bool isInMenuSubtree(DependencyObject const& object){
     return false;
 }
 
-bool isInDialogSubtree(DependencyObject const& object){
+bool isInDialogSubtree(const DependencyObject& object){
     DependencyObject current{object};
     while(current){
         if(current.try_as<Controls::ContentDialog>() || current.try_as<Controls::Primitives::Popup>()){
@@ -160,7 +160,7 @@ wstring trim(wstring value){
     return value.substr(first, last - first + 1);
 }
 
-vector<uint32_t> parseIndexList(wstring const& text){
+vector<uint32_t> parseIndexList(const wstring& text){
     vector<uint32_t> values;
     size_t start{};
     while(start <= text.size()){
@@ -175,7 +175,7 @@ vector<uint32_t> parseIndexList(wstring const& text){
     return values;
 }
 
-vector<pair<uint32_t, uint32_t>> parseIndexPairs(wstring const& text){
+vector<pair<uint32_t, uint32_t>> parseIndexPairs(const wstring& text){
     vector<pair<uint32_t, uint32_t>> pairs;
     size_t start{};
     while(start <= text.size()){
@@ -197,7 +197,7 @@ vector<pair<uint32_t, uint32_t>> parseIndexPairs(wstring const& text){
     return pairs;
 }
 
-wstring serializeIndexList(vector<uint32_t> const& values){
+wstring serializeIndexList(const vector<uint32_t>& values){
     wstring out;
     for(size_t i = 0; i < values.size(); ++i){
         if(i > 0){ out += L","; }
@@ -206,7 +206,7 @@ wstring serializeIndexList(vector<uint32_t> const& values){
     return out;
 }
 
-wstring serializeIndexPairs(vector<pair<uint32_t, uint32_t>> const& values){
+wstring serializeIndexPairs(const vector<pair<uint32_t, uint32_t>>& values){
     wstring out;
     for(size_t i = 0; i < values.size(); ++i){
         if(i > 0){ out += L";"; }
@@ -217,10 +217,10 @@ wstring serializeIndexPairs(vector<pair<uint32_t, uint32_t>> const& values){
 
 constexpr uint32_t TIMELINE_EDGE_SENTINEL = numeric_limits<uint32_t>::max();
 
-vector<int64_t> buildCleanKeyframeTimes100ns(vector<IndexedFrameSample> const& index){
+vector<int64_t> buildCleanKeyframeTimes100ns(const vector<IndexedFrameSample>& index){
     vector<int64_t> times;
     times.reserve(index.size());
-    for(auto const& sample : index){
+    for(const auto& sample : index){
         if(sample.cleanPoint){
             times.push_back(sample.time100ns);
         }
@@ -233,7 +233,7 @@ vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(vector<pair<uin
     vector<RankedInterval> normalized;
     normalized.reserve(intervals.size());
 
-    for(auto const& interval : intervals){
+    for(const auto& interval : intervals){
         if((interval.first == TIMELINE_EDGE_SENTINEL && interval.second == TIMELINE_EDGE_SENTINEL)
             || (interval.first == TIMELINE_EDGE_SENTINEL && interval.second >= keyframeCount)
             || (interval.second == TIMELINE_EDGE_SENTINEL && interval.first >= keyframeCount)
@@ -252,7 +252,7 @@ vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(vector<pair<uin
     sort(normalized.begin(), normalized.end());
 
     vector<RankedInterval> mergedRanks;
-    for(auto const& interval : normalized){
+    for(const auto& interval : normalized){
         if(mergedRanks.empty() || interval.first > mergedRanks.back().second){
             mergedRanks.push_back(interval);
         }else{
@@ -262,7 +262,7 @@ vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(vector<pair<uin
 
     vector<pair<uint32_t, uint32_t>> merged;
     merged.reserve(mergedRanks.size());
-    for(auto const& interval : mergedRanks){
+    for(const auto& interval : mergedRanks){
         const auto start {interval.first < 0 ? TIMELINE_EDGE_SENTINEL : static_cast<uint32_t>(interval.first)};
         const auto end {interval.second >= static_cast<int64_t>(keyframeCount) ? TIMELINE_EDGE_SENTINEL : static_cast<uint32_t>(interval.second)};
         merged.emplace_back(start, end);
@@ -272,7 +272,7 @@ vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(vector<pair<uin
 }
 
 
-vector<IndexedFrameSample> parseKeyframeVector(wstring const& text){
+vector<IndexedFrameSample> parseKeyframeVector(const wstring& text){
     vector<IndexedFrameSample> out;
     size_t start{};
     while(start <= text.size()){
@@ -294,10 +294,10 @@ vector<IndexedFrameSample> parseKeyframeVector(wstring const& text){
     return out;
 }
 
-wstring serializeKeyframeVector(vector<IndexedFrameSample> const& index){
+wstring serializeKeyframeVector(const vector<IndexedFrameSample>& index){
     wstring out;
     bool first{true};
-    for(auto const& k : index){
+    for(const auto& k : index){
         if(!k.cleanPoint){ continue; }
         if(!first){ out += L";"; }
         first = false;
@@ -306,7 +306,7 @@ wstring serializeKeyframeVector(vector<IndexedFrameSample> const& index){
     return out;
 }
 
-bool hasDecoderForSubtype(GUID const& subtype){
+bool hasDecoderForSubtype(const GUID& subtype){
     MFT_REGISTER_TYPE_INFO inType{};
     inType.guidMajorType = MFMediaType_Video;
     inType.guidSubtype = subtype;
@@ -451,7 +451,7 @@ int32_t DipsToPixels(const int32_t dipValue, const uint32_t dpi){
     return static_cast<int32_t>(lround((dipValue * (dpi == 0 ? 96U : dpi)) / 96.0));
 }
 
-bool MainWindow::isRectVisibleOnAnyMonitor(RECT const& rect){
+bool MainWindow::isRectVisibleOnAnyMonitor(const RECT& rect){
     const auto monitor{::MonitorFromRect(&rect, MONITOR_DEFAULTTONULL)};
     if(!monitor){
         return false;
@@ -561,7 +561,7 @@ void MainWindow::saveWindowPlacement() const{
     values.Insert(W_POS_DPI, box_value(static_cast<int32_t>(dpi)));
 }
 
-void MainWindow::onClosed(IInspectable const&, WindowEventArgs const&){
+void MainWindow::onClosed(const IInspectable&, const WindowEventArgs&){
     m_isClosing = true;
 
     if(m_positionTimer){
@@ -573,19 +573,19 @@ void MainWindow::onClosed(IInspectable const&, WindowEventArgs const&){
     saveAppSettings();
 }
 
-void MainWindow::startButton_Click(IInspectable const&, RoutedEventArgs const&){
+void MainWindow::startButton_Click(const IInspectable&, const RoutedEventArgs&){
     if(m_player){
         m_player.Play();
     }
 }
 
-void MainWindow::pauseButton_Click(IInspectable const&, RoutedEventArgs const&){
+void MainWindow::pauseButton_Click(const IInspectable&, const RoutedEventArgs&){
     if(m_player){
         m_player.Pause();
     }
 }
 
-void MainWindow::stopButton_Click(IInspectable const&, RoutedEventArgs const&){
+void MainWindow::stopButton_Click(const IInspectable&, const RoutedEventArgs&){
     if(m_player){
         m_player.Pause();
         m_player.PlaybackSession().Position(chrono::seconds(0));
@@ -593,14 +593,14 @@ void MainWindow::stopButton_Click(IInspectable const&, RoutedEventArgs const&){
     }
 }
 
-void MainWindow::timelineZoomSlider_ValueChanged(IInspectable const&, Controls::Primitives::RangeBaseValueChangedEventArgs const&){
+void MainWindow::timelineZoomSlider_ValueChanged(const IInspectable&, const Controls::Primitives::RangeBaseValueChangedEventArgs&){
     if(m_loadedFile && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-void MainWindow::timelineHorizontalScrollBar_ValueChanged(IInspectable const&, Controls::Primitives::RangeBaseValueChangedEventArgs const& args){
+void MainWindow::timelineHorizontalScrollBar_ValueChanged(const IInspectable&, const Controls::Primitives::RangeBaseValueChangedEventArgs& args){
     if(m_isClosing){
         return;
     }
@@ -613,15 +613,15 @@ void MainWindow::timelineHorizontalScrollBar_ValueChanged(IInspectable const&, C
     }
 }
 
-void MainWindow::timelineScrollViewer_ViewChanged(IInspectable const&, Controls::ScrollViewerViewChangedEventArgs const&){
+void MainWindow::timelineScrollViewer_ViewChanged(const IInspectable&, const Controls::ScrollViewerViewChangedEventArgs&){
     syncTimelineHorizontalScrollBar();
 }
 
-void MainWindow::timelineScrollViewer_SizeChanged(IInspectable const&, SizeChangedEventArgs const&){
+void MainWindow::timelineScrollViewer_SizeChanged(const IInspectable&, const SizeChangedEventArgs&){
     syncTimelineHorizontalScrollBar();
 }
 
-void MainWindow::timelineCanvas_PointerPressed(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+void MainWindow::timelineCanvas_PointerPressed(const IInspectable&, const Input::PointerRoutedEventArgs& e){
     if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
     }
@@ -642,7 +642,7 @@ void MainWindow::timelineCanvas_PointerPressed(IInspectable const&, Input::Point
     e.Handled(true);
 }
 
-void MainWindow::timelineCanvas_PointerMoved(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+void MainWindow::timelineCanvas_PointerMoved(const IInspectable&, const Input::PointerRoutedEventArgs& e){
     if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
         return;
     }
@@ -676,7 +676,7 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
     bool foundNearest{false};
     uint32_t cleanOrdinal{};
     double nearestDistance{hitTolerancePx + 1.0};
-    for(auto const& frame : m_frameIndex){
+    for(const auto& frame : m_frameIndex){
         if(!frame.cleanPoint){
             continue;
         }
@@ -709,7 +709,7 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
     return true;
 }
 
-void MainWindow::timelineCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+void MainWindow::timelineCanvas_PointerReleased(const IInspectable&, const Input::PointerRoutedEventArgs& e){
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
     if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased){
         if(toggleSelectedKeyframeAtCanvasX(point.Position().X)){
@@ -740,7 +740,7 @@ void MainWindow::timelineCanvas_PointerReleased(IInspectable const&, Input::Poin
     e.Handled(true);
 }
 
-void MainWindow::timelineCanvas_PointerCanceled(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+void MainWindow::timelineCanvas_PointerCanceled(const IInspectable&, const Input::PointerRoutedEventArgs& e){
     if(m_isTimelineDragging && e.Pointer().PointerId() == m_timelineDragPointerId){
         m_isTimelineDragging = false;
         m_timelineDragMoved = false;
@@ -749,16 +749,16 @@ void MainWindow::timelineCanvas_PointerCanceled(IInspectable const&, Input::Poin
     }
 }
 
-void MainWindow::timelineCanvas_PointerCaptureLost(IInspectable const&, Input::PointerRoutedEventArgs const&){
+void MainWindow::timelineCanvas_PointerCaptureLost(const IInspectable&, const Input::PointerRoutedEventArgs&){
     m_isTimelineDragging = false;
     m_timelineDragMoved = false;
 }
 
-void MainWindow::timelineCanvas_Loaded(IInspectable const&, RoutedEventArgs const&){
+void MainWindow::timelineCanvas_Loaded(const IInspectable&, const RoutedEventArgs&){
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-void MainWindow::timelineTickCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+void MainWindow::timelineTickCanvas_PointerReleased(const IInspectable&, const Input::PointerRoutedEventArgs& e){
     const auto point{e.GetCurrentPoint(TimelineTickCanvas())};
     if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased && toggleSelectedKeyframeAtCanvasX(point.Position().X)){
         tryFocusTimelineCanvas(FocusState::Programmatic);
@@ -767,7 +767,7 @@ void MainWindow::timelineTickCanvas_PointerReleased(IInspectable const&, Input::
 }
 
 
-void MainWindow::onNaturalDurationChanged(MediaPlaybackSession const& sender, IInspectable const&){
+void MainWindow::onNaturalDurationChanged(const MediaPlaybackSession& sender, const IInspectable&){
     const auto duration{sender.NaturalDuration()};
     m_timelineDurationSeconds = max(0.0, duration.count() / 10'000'000.0);
 
@@ -786,7 +786,7 @@ void MainWindow::onNaturalDurationChanged(MediaPlaybackSession const& sender, II
     }
 }
 
-void MainWindow::onPositionTimerTick(IInspectable const&, IInspectable const&){
+void MainWindow::onPositionTimerTick(const IInspectable&, const IInspectable&){
     if(m_isClosing){
         return;
     }
@@ -847,7 +847,7 @@ void MainWindow::seekTimelineToCanvasX(const double pointerX, const bool bypassS
 
     if(!bypassSnap && !m_frameIndex.empty()){
         const auto toSeconds {[](int64_t v){ return static_cast<double>(v) / 10'000'000.0; }};
-        const auto it{lower_bound(m_frameIndex.begin(), m_frameIndex.end(), target100ns, [](IndexedFrameSample const& a, int64_t v){
+        const auto it{lower_bound(m_frameIndex.begin(), m_frameIndex.end(), target100ns, [](const IndexedFrameSample& a, int64_t v){
             return a.time100ns < v;
         })};
 
@@ -967,7 +967,7 @@ void MainWindow::renderKeyframeTicks(){
     const auto width {TimelineTickCanvas().Width()};
     const auto total100ns {static_cast<double>(m_timelineDurationSeconds * 10'000'000.0)};
     uint32_t cleanOrdinal{};
-    for(auto const& frame : m_frameIndex){
+    for(const auto& frame : m_frameIndex){
         if(!frame.cleanPoint){
             continue;
         }
@@ -1004,7 +1004,7 @@ void MainWindow::renderCutOverlays(){
     }
 
     const auto overlayColor {Windows::UI::ColorHelper::FromArgb(90, 180, 180, 180)};
-    for(auto const& interval : m_cutIntervals){
+    for(const auto& interval : m_cutIntervals){
         const auto startTime100ns {interval.first == TIMELINE_EDGE_SENTINEL ? static_cast<int64_t>(0)
             : (interval.first < cleanKeyTimes.size() ? cleanKeyTimes[interval.first] : static_cast<int64_t>(-1))};
         const auto endTime100ns {interval.second == TIMELINE_EDGE_SENTINEL ? static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)
@@ -1094,7 +1094,7 @@ bool MainWindow::toggleCutBlockAtCanvasX(const double pointerX){
     auto removed{false};
     vector<pair<uint32_t, uint32_t>> updated;
     updated.reserve(m_cutIntervals.size() + 1);
-    for(auto const& interval : m_cutIntervals){
+    for(const auto& interval : m_cutIntervals){
         const auto intervalStartRank {rankOfStart(interval.first)};
         const auto intervalEndRank {rankOfEnd(interval.second)};
         if(intervalEndRank <= blockStartRank || intervalStartRank >= blockEndRank){
@@ -1136,7 +1136,7 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
     }
 
     const auto now100ns{max<int64_t>(0, m_player.PlaybackSession().Position().count())};
-    for(auto const& interval : m_cutIntervals){
+    for(const auto& interval : m_cutIntervals){
         const auto start100ns {interval.first == TIMELINE_EDGE_SENTINEL ? static_cast<int64_t>(0)
             : (interval.first < cleanKeyTimes.size() ? cleanKeyTimes[interval.first] : static_cast<int64_t>(-1))};
         const auto end100ns {interval.second == TIMELINE_EDGE_SENTINEL ? static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)
@@ -1164,7 +1164,7 @@ void MainWindow::stepByFrame(const int delta){
 
     vector<int64_t> frameDurations;
     frameDurations.reserve(m_frameIndex.size());
-    for(auto const& sample : m_frameIndex){
+    for(const auto& sample : m_frameIndex){
         if(sample.duration100ns > 0){
             frameDurations.push_back(sample.duration100ns);
         }
@@ -1200,7 +1200,7 @@ void MainWindow::stepByKeyframe(const int delta){
 
     vector<int64_t> keys;
     keys.reserve(m_frameIndex.size());
-    for(auto const& f : m_frameIndex){
+    for(const auto& f : m_frameIndex){
         if(f.cleanPoint){
             keys.push_back(f.time100ns);
         }
@@ -1228,14 +1228,14 @@ void MainWindow::stepByKeyframe(const int delta){
     updateTimelineCursorFromPlayback();
 }
 
-void MainWindow::tryFocusTimelineCanvas(FocusState const focusState){
+void MainWindow::tryFocusTimelineCanvas(const FocusState focusState){
     const auto canvas{TimelineCanvas()};
     if(canvas && canvas.XamlRoot()){
         canvas.Focus(focusState);
     }
 }
 
-bool MainWindow::handleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
+bool MainWindow::handleStorylineKeyDown(const Input::KeyRoutedEventArgs& args){
     const auto focused{Input::FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
     const auto focusOnMenu{focused && isInMenuSubtree(focused)};
     const auto focusInDialog{focused && isInDialogSubtree(focused)};
@@ -1312,15 +1312,15 @@ bool MainWindow::handleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
     }
 }
 
-void MainWindow::window_PreviewKeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
+void MainWindow::window_PreviewKeyDown(const IInspectable&, const Input::KeyRoutedEventArgs& args){
     (void)handleStorylineKeyDown(args);
 }
 
-void MainWindow::window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
+void MainWindow::window_KeyDown(const IInspectable&, const Input::KeyRoutedEventArgs& args){
     (void)handleStorylineKeyDown(args);
 }
 
-void MainWindow::rootGrid_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& args){
+void MainWindow::rootGrid_PointerReleased(const IInspectable&, const Input::PointerRoutedEventArgs& args){
     const auto source {args.OriginalSource().try_as<DependencyObject>()};
     if(!source){
         return;
@@ -1335,7 +1335,7 @@ TimeSpan MainWindow::secondsToTimeSpan(const double seconds){
     return chrono::duration_cast<TimeSpan>(chrono::duration<double>(seconds));
 }
 
-void MainWindow::keyFrameSnapMode_Checked(IInspectable const& sender, RoutedEventArgs const&){
+void MainWindow::keyFrameSnapMode_Checked(const IInspectable& sender, const RoutedEventArgs&){
     const auto radio{sender.try_as<Controls::RadioButton>()};
     if(!radio || !radio.Tag()){
         return;
@@ -1345,7 +1345,7 @@ void MainWindow::keyFrameSnapMode_Checked(IInspectable const& sender, RoutedEven
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-IAsyncAction MainWindow::newProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+IAsyncAction MainWindow::newProjectMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
@@ -1354,7 +1354,7 @@ IAsyncAction MainWindow::newProjectMenuItem_Click(IInspectable const&, RoutedEve
     StatusText().Text(L"New project created");
 }
 
-IAsyncAction MainWindow::openProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+IAsyncAction MainWindow::openProjectMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
@@ -1371,7 +1371,7 @@ IAsyncAction MainWindow::openProjectMenuItem_Click(IInspectable const&, RoutedEv
     }
 }
 
-IAsyncAction MainWindow::saveProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+IAsyncAction MainWindow::saveProjectMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
     StorageFile target{nullptr};
 
     if(!m_projectPath.empty()){
@@ -1400,7 +1400,7 @@ IAsyncAction MainWindow::saveProjectMenuItem_Click(IInspectable const&, RoutedEv
     co_await saveProjectFileAsync(target);
 }
 
-IAsyncAction MainWindow::closeProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+IAsyncAction MainWindow::closeProjectMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
@@ -1409,11 +1409,11 @@ IAsyncAction MainWindow::closeProjectMenuItem_Click(IInspectable const&, RoutedE
     StatusText().Text(L"Project closed");
 }
 
-IAsyncAction MainWindow::loadVideoMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+IAsyncAction MainWindow::loadVideoMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
     co_await pickAndLoadVideoAsync();
 }
 
-IAsyncAction MainWindow::recentVideoMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&){
+IAsyncAction MainWindow::recentVideoMenuItem_Click(const IInspectable& sender, const RoutedEventArgs&){
     const auto item{sender.try_as<Controls::MenuFlyoutItem>()};
     if(!item || !item.Tag()){
         co_return;
@@ -1424,7 +1424,7 @@ IAsyncAction MainWindow::recentVideoMenuItem_Click(IInspectable const& sender, R
     try{
         const auto file{co_await StorageFile::GetFileFromPathAsync(path)};
         co_await loadVideoFileAsync(file);
-    }catch(winrt::hresult_error const&){
+    }catch(const winrt::hresult_error&){
         openFailed = true;
     }
 
@@ -1433,7 +1433,7 @@ IAsyncAction MainWindow::recentVideoMenuItem_Click(IInspectable const& sender, R
     }
 }
 
-IAsyncAction MainWindow::recentProjectMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&){
+IAsyncAction MainWindow::recentProjectMenuItem_Click(const IInspectable& sender, const RoutedEventArgs&){
     const auto item{sender.try_as<Controls::MenuFlyoutItem>()};
     if(!item || !item.Tag()){
         co_return;
@@ -1457,11 +1457,11 @@ IAsyncAction MainWindow::recentProjectMenuItem_Click(IInspectable const& sender,
     }
 }
 
-IAsyncAction MainWindow::propertiesMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+IAsyncAction MainWindow::propertiesMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
     co_await showPropertiesDialogAsync();
 }
 
-IAsyncAction MainWindow::exitMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+IAsyncAction MainWindow::exitMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
@@ -1469,11 +1469,11 @@ IAsyncAction MainWindow::exitMenuItem_Click(IInspectable const&, RoutedEventArgs
     Close();
 }
 
-IAsyncAction MainWindow::aboutMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+IAsyncAction MainWindow::aboutMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
     co_await showInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut\nPreview and timeline exploration tool.");
 }
 
-IAsyncAction MainWindow::optionsMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+IAsyncAction MainWindow::optionsMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
     co_await showOptionsDialogAsync();
 }
 
@@ -1504,7 +1504,7 @@ void MainWindow::refreshRecentVideosMenu(){
         return;
     }
 
-    for(auto const& path : m_recentVideos){
+    for(const auto& path : m_recentVideos){
         Controls::MenuFlyoutItem item{};
         item.Text(path);
         item.Tag(box_value(path));
@@ -1525,7 +1525,7 @@ void MainWindow::refreshRecentProjectsMenu(){
         return;
     }
 
-    for(auto const& path : m_recentProjects){
+    for(const auto& path : m_recentProjects){
         Controls::MenuFlyoutItem item{};
         item.Text(path);
         item.Tag(box_value(path));
@@ -1534,7 +1534,7 @@ void MainWindow::refreshRecentProjectsMenu(){
     }
 }
 
-void MainWindow::addRecentVideo(hstring const& path){
+void MainWindow::addRecentVideo(const hstring& path){
     if(path.empty()){
         return;
     }
@@ -1548,7 +1548,7 @@ void MainWindow::addRecentVideo(hstring const& path){
     saveAppSettings();
 }
 
-void MainWindow::addRecentProject(hstring const& path){
+void MainWindow::addRecentProject(const hstring& path){
     if(path.empty()){
         return;
     }
@@ -1606,7 +1606,7 @@ wstring MainWindow::buildProjectSnapshot(){
         serializeIndexList(m_selectedKeyFrames),
         serializeIndexPairs(m_cutIntervals))};
 
-    for(auto const& line : m_projectUnknownLines){
+    for(const auto& line : m_projectUnknownLines){
         snapshot += line + L"\n";
     }
     return snapshot;
@@ -1641,7 +1641,7 @@ IAsyncOperation<bool> MainWindow::ensureProjectSavedBeforeContinuingAsync(){
     co_return false;
 }
 
-IAsyncAction MainWindow::openProjectFileAsync(StorageFile const& file){
+IAsyncAction MainWindow::openProjectFileAsync(const StorageFile& file){
     resetProjectState(true);
 
     const auto lines{co_await FileIO::ReadLinesAsync(file)};
@@ -1654,7 +1654,7 @@ IAsyncAction MainWindow::openProjectFileAsync(StorageFile const& file){
     double zoomLevel{TimelineZoomSlider().Value()};
     vector<IndexedFrameSample> loadedKeyframeIndex;
 
-    for(auto const& lineH : lines){
+    for(const auto& lineH : lines){
         const wstring line{lineH.c_str()};
         const auto trimmed{trim(line)};
         if(trimmed.empty()){
@@ -1744,7 +1744,7 @@ IAsyncAction MainWindow::openProjectFileAsync(StorageFile const& file){
     StatusText().Text(L"Project loaded");
 }
 
-IAsyncAction MainWindow::saveProjectFileAsync(StorageFile const& file){
+IAsyncAction MainWindow::saveProjectFileAsync(const StorageFile& file){
     vector<hstring> lines;
     lines.emplace_back(L"# llvc project file");
     lines.emplace_back(L"file_path=" + wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
@@ -1754,7 +1754,7 @@ IAsyncAction MainWindow::saveProjectFileAsync(StorageFile const& file){
     lines.emplace_back(L"cut_interval_indices=" + serializeIndexPairs(m_cutIntervals));
     lines.emplace_back(L"keyframe_index=" + serializeKeyframeVector(m_frameIndex));
 
-    for(auto const& unknown : m_projectUnknownLines){
+    for(const auto& unknown : m_projectUnknownLines){
         if(trim(unknown) == L"# llvc project file"){
             continue;
         }
@@ -1768,7 +1768,7 @@ IAsyncAction MainWindow::saveProjectFileAsync(StorageFile const& file){
     StatusText().Text(L"Project saved");
 }
 
-IAsyncAction MainWindow::showInfoDialogAsync(hstring const& title, hstring const& message){
+IAsyncAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& message){
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(Content().XamlRoot());
     dialog.Title(box_value(title));
@@ -1854,11 +1854,11 @@ IAsyncAction MainWindow::showOptionsDialogAsync(){
     saveAppSettings();
 }
 
-bool MainWindow::isSupportedVideoSubtype(GUID const& subtype){
+bool MainWindow::isSupportedVideoSubtype(const GUID& subtype){
     return subtype == MFVideoFormat_H264 || subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265;
 }
 
-wstring MainWindow::guidToCodecName(GUID const& subtype, bool isVideo){
+wstring MainWindow::guidToCodecName(const GUID& subtype, bool isVideo){
     if(isVideo){
         if(subtype == MFVideoFormat_H264){
             return L"H.264";
@@ -1881,7 +1881,7 @@ wstring MainWindow::guidToCodecName(GUID const& subtype, bool isVideo){
     return formatGuid(subtype);
 }
 
-MediaInspectionResult MainWindow::inspectMediaFile(wstring const& filePath){
+MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     MediaInspectionResult result{};
     result.keyFrameSummary = L"unknown";
     result.keyFrameInterval = L"unknown";
@@ -2002,7 +2002,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(wstring const& filePath){
     return result;
 }
 
-vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(wstring const& filePath, function<void(double)> const& onProgress){
+vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(const wstring& filePath, const function<void(double)>& onProgress){
     vector<IndexedFrameSample> index;
     MFLifetime mf{};
 
@@ -2088,11 +2088,11 @@ vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(wstring const& 
     return index;
 }
 
-void MainWindow::window_DragOver(IInspectable const&, DragEventArgs const& e){
+void MainWindow::window_DragOver(const IInspectable&, const DragEventArgs& e){
     e.AcceptedOperation(Windows::ApplicationModel::DataTransfer::DataPackageOperation::Copy);
 }
 
-IAsyncAction MainWindow::window_Drop(IInspectable const&, DragEventArgs const& e){
+IAsyncAction MainWindow::window_Drop(const IInspectable&, const DragEventArgs& e){
     const auto view{e.DataView()};
     if(!view.Contains(Windows::ApplicationModel::DataTransfer::StandardDataFormats::StorageItems())){
         StatusText().Text(L"Dropped content is not a file");
@@ -2125,11 +2125,11 @@ IAsyncAction MainWindow::window_Drop(IInspectable const&, DragEventArgs const& e
     co_await loadVideoFileAsync(file);
 }
 
-IAsyncAction MainWindow::loadVideoFileAsync(StorageFile const& file, vector<IndexedFrameSample> const* preloadedKeyframeIndex){
+IAsyncAction MainWindow::loadVideoFileAsync(const StorageFile& file, const vector<IndexedFrameSample>* preloadedKeyframeIndex){
     MediaInspectionResult inspected{};
     try{
         inspected = inspectMediaFile(file.Path().c_str());
-    }catch(winrt::hresult_error const& ex){
+    }catch(const winrt::hresult_error& ex){
         inspected.errorMessage = L"No decoder available";
         if(ex.code() == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)){
             inspected.errorMessage = L"File not found";
@@ -2316,7 +2316,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         status += m_loadedFile.Name().c_str();
         status += L" (story line ready)";
         StatusText().Text(status);
-    }catch(winrt::hresult_error const& ex){
+    }catch(const winrt::hresult_error& ex){
         wstring status{L"Failed to render story line: "};
         status += ex.message().c_str();
         StatusText().Text(status);
