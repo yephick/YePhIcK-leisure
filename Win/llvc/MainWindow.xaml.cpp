@@ -2129,8 +2129,12 @@ vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(const wstring& 
     vector<IndexedFrameSample> index;
     MFLifetime mf{};
 
+    com_ptr<IMFAttributes> readerAttributes;
+    check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
+    check_hresult(readerAttributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE));
+
     com_ptr<IMFSourceReader> reader;
-    check_hresult(MFCreateSourceReaderFromURL(filePath.c_str(), nullptr, reader.put()));
+    check_hresult(MFCreateSourceReaderFromURL(filePath.c_str(), readerAttributes.get(), reader.put()));
 
     constexpr auto invalidStream{numeric_limits<DWORD>::max()};
     auto videoStreamIndex{invalidStream};
