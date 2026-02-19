@@ -539,7 +539,7 @@ void MainWindow::TimelineZoomSlider_ValueChanged(IInspectable const&, Controls::
     if(m_loadedFile && m_timelineDurationSeconds > 0){
         RenderTimelineAsync();
     }
-    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
+    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
 }
 
 void MainWindow::TimelineHorizontalScrollBar_ValueChanged(IInspectable const&, Controls::Primitives::RangeBaseValueChangedEventArgs const& args){
@@ -579,7 +579,7 @@ void MainWindow::TimelineCanvas_PointerPressed(IInspectable const&, Input::Point
     m_timelineDragStartX = static_cast<double>(point.Position().X);
     m_timelineDragStartOffset = TimelineScrollViewer().HorizontalOffset();
 
-    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
+    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
     TimelineCanvas().CapturePointer(e.Pointer());
     e.Handled(true);
 }
@@ -639,7 +639,7 @@ void MainWindow::TimelineCanvas_PointerCaptureLost(IInspectable const&, Input::P
 }
 
 void MainWindow::TimelineCanvas_Loaded(IInspectable const&, RoutedEventArgs const&){
-    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
+    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
 }
 
 void MainWindow::OnNaturalDurationChanged(Windows::Media::Playback::MediaPlaybackSession const& sender, IInspectable const&){
@@ -917,6 +917,13 @@ void MainWindow::StepByKeyframe(const int delta){
     UpdateTimelineCursorFromPlayback();
 }
 
+void MainWindow::TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState const focusState){
+    const auto canvas{TimelineCanvas()};
+    if(canvas && canvas.XamlRoot()){
+        canvas.Focus(focusState);
+    }
+}
+
 bool MainWindow::HandleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
     const auto focused{Input::FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
     const bool focusOnMenu = focused && IsInMenuSubtree(focused);
@@ -929,7 +936,7 @@ bool MainWindow::HandleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
     }
 
     if(args.Key() == Windows::System::VirtualKey::Tab && !focusOnMenu && !focusInDialog){
-        TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
+        TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
         args.Handled(true);
         return true;
     }
@@ -938,7 +945,7 @@ bool MainWindow::HandleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
         return false;
     }
 
-    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
+    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
 
     const auto ctrlState{Microsoft::UI::Input::InputKeyboardSource::GetKeyStateForCurrentThread(Windows::System::VirtualKey::Control)};
     const bool ctrlDown{(ctrlState & Windows::UI::Core::CoreVirtualKeyStates::Down) == Windows::UI::Core::CoreVirtualKeyStates::Down};
@@ -1010,7 +1017,7 @@ void MainWindow::RootGrid_PointerReleased(IInspectable const&, Input::PointerRou
     if(IsInMenuSubtree(source) || IsInDialogSubtree(source)){
         return;
     }
-    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
+    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
 }
 
 Windows::Foundation::TimeSpan MainWindow::SecondsToTimeSpan(const double seconds){
@@ -1024,7 +1031,7 @@ void MainWindow::KeyFrameSnapMode_Checked(IInspectable const& sender, RoutedEven
     }
 
     m_keyFrameSnapMode = unbox_value<hstring>(radio.Tag()).c_str();
-    TimelineCanvas().Focus(Microsoft::UI::Xaml::FocusState::Programmatic);
+    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
 }
 
 Windows::Foundation::IAsyncAction MainWindow::NewProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){

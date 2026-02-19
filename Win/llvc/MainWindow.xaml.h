@@ -133,6 +133,7 @@ private:
     void StepByFrame(int delta);
     void StepByKeyframe(int delta);
     void EnsureTimelineCursorVisible(double cursorLeft);
+    void TryFocusTimelineCanvas(winrt::Microsoft::UI::Xaml::FocusState const focusState);
     bool HandleStorylineKeyDown(winrt::Microsoft::UI::Xaml::Input::KeyRoutedEventArgs const& args);
     static winrt::Windows::Foundation::TimeSpan SecondsToTimeSpan(double seconds);
     static bool IsRectVisibleOnAnyMonitor(RECT const& rect);
