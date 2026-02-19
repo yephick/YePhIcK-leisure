@@ -968,7 +968,7 @@ void MainWindow::RenderCutOverlays(){
         return;
     }
 
-    constexpr auto overlayColor = Windows::UI::ColorHelper::FromArgb(90, 180, 180, 180);
+    const auto overlayColor = Windows::UI::ColorHelper::FromArgb(90, 180, 180, 180);
     for(auto const& interval : m_cutIntervals){
         const auto start{std::clamp(interval.first / m_timelineDurationSeconds, 0.0, 1.0)};
         const auto end{std::clamp(interval.second / m_timelineDurationSeconds, 0.0, 1.0)};
