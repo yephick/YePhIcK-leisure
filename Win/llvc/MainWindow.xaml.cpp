@@ -166,21 +166,21 @@ std::uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, cons
     return 4;
 }
 
-bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID& subtype, const std::uint32_t nalLengthFieldSize){
+bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID& subtype, const std::uint32_t nalLengthFieldSize, const bool allowInconclusive){
     if(subtype != MFVideoFormat_H264 && subtype != MFVideoFormat_HEVC && subtype != MFVideoFormat_H265){
         return true;
     }
 
     com_ptr<IMFMediaBuffer> contiguousBuffer;
     if(FAILED(sample->ConvertToContiguousBuffer(contiguousBuffer.put())) || !contiguousBuffer){
-        return true; // parsing unavailable; fall back to container sync decision
+        return allowInconclusive; // parsing unavailable
     }
 
     BYTE* data{};
     DWORD maxLength{};
     DWORD currentLength{};
     if(FAILED(contiguousBuffer->Lock(&data, &maxLength, &currentLength)) || !data || currentLength == 0){
-        return true;
+        return allowInconclusive;
     }
 
     auto classifyNalType = [&](const std::uint8_t nalHeader) -> std::optional<bool>{
@@ -246,7 +246,7 @@ bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID&
     }
 
     contiguousBuffer->Unlock();
-    return true; // inconclusive parsing; keep container sync points usable
+    return allowInconclusive; // inconclusive parsing
 }
 
 bool isContainerSyncSample(const com_ptr<IMFSample>& sample){
@@ -1481,7 +1481,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
             if(waitingForCleanPoint){
                 const auto isContainerSync{isContainerSyncSample(sample)};
-                const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize)};
+                const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
                 if(!(isContainerSync && isBitstreamRap)){
                     continue;
                 }
@@ -2252,7 +2252,7 @@ vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(const wstring& 
         }
 
         const auto containerSync{isContainerSyncSample(sample)};
-        const auto bitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize)};
+        const auto bitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, true)};
         const auto trueRandomAccessPoint{containerSync && bitstreamRap};
 
         index.push_back(IndexedFrameSample{
