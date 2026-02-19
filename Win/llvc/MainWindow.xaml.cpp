@@ -2025,6 +2025,7 @@ std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstri
         onProgress(0.0);
     }
 
+    double lastReportedProgress{-1.0};
     for(std::uint32_t sampleIndex = 0;; ++sampleIndex){
         DWORD actualStream{};
         DWORD flags{};
@@ -2052,7 +2053,11 @@ std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstri
 
         if(onProgress && totalDuration100ns > 0){
             const auto ratio = std::clamp(static_cast<double>(timestamp) / static_cast<double>(totalDuration100ns), 0.0, 1.0);
-            onProgress(ratio * 100.0);
+            const auto percent = ratio * 100.0;
+            if(percent - lastReportedProgress >= 1.0 || percent >= 100.0){
+                onProgress(percent);
+                lastReportedProgress = percent;
+            }
         }
     }
 
