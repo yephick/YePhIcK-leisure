@@ -208,6 +208,127 @@ std::wstring SerializeNumberPairs(std::vector<std::pair<double, double>> const& 
     return ss.str();
 }
 
+std::vector<std::uint32_t> ParseIndexList(std::wstring const& text){
+    std::vector<std::uint32_t> values;
+    size_t start{};
+    while(start <= text.size()){
+        const auto pos = text.find(L',', start);
+        auto token = Trim(text.substr(start, pos == std::wstring::npos ? std::wstring::npos : pos - start));
+        if(!token.empty()){
+            try{ values.push_back(static_cast<std::uint32_t>(std::stoul(token))); }catch(...){ }
+        }
+        if(pos == std::wstring::npos){ break; }
+        start = pos + 1;
+    }
+    return values;
+}
+
+std::vector<std::pair<std::uint32_t, std::uint32_t>> ParseIndexPairs(std::wstring const& text){
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> pairs;
+    size_t start{};
+    while(start <= text.size()){
+        const auto sep = text.find(L';', start);
+        const auto chunk = Trim(text.substr(start, sep == std::wstring::npos ? std::wstring::npos : sep - start));
+        if(!chunk.empty()){
+            const auto comma = chunk.find(L',');
+            if(comma != std::wstring::npos){
+                try{
+                    const auto a = static_cast<std::uint32_t>(std::stoul(Trim(chunk.substr(0, comma))));
+                    const auto b = static_cast<std::uint32_t>(std::stoul(Trim(chunk.substr(comma + 1))));
+                    pairs.emplace_back(a, b);
+                }catch(...){ }
+            }
+        }
+        if(sep == std::wstring::npos){ break; }
+        start = sep + 1;
+    }
+    return pairs;
+}
+
+std::wstring SerializeIndexList(std::vector<std::uint32_t> const& values){
+    std::wstringstream ss;
+    for(size_t i = 0; i < values.size(); ++i){
+        if(i > 0){ ss << L","; }
+        ss << values[i];
+    }
+    return ss.str();
+}
+
+std::wstring SerializeIndexPairs(std::vector<std::pair<std::uint32_t, std::uint32_t>> const& values){
+    std::wstringstream ss;
+    for(size_t i = 0; i < values.size(); ++i){
+        if(i > 0){ ss << L";"; }
+        ss << values[i].first << L"," << values[i].second;
+    }
+    return ss.str();
+}
+
+std::vector<double> BuildCleanKeyframeTimes(std::vector<IndexedFrameSample> const& index){
+    std::vector<double> times;
+    times.reserve(index.size());
+    for(auto const& sample : index){
+        if(sample.cleanPoint){
+            times.push_back(static_cast<double>(sample.time100ns) / 10'000'000.0);
+        }
+    }
+    return times;
+}
+
+std::uint32_t FindNearestKeyframeOrdinal(std::vector<double> const& keyTimes, double seconds){
+    const auto it = std::lower_bound(keyTimes.begin(), keyTimes.end(), seconds);
+    if(it == keyTimes.begin()){
+        return 0;
+    }
+    if(it == keyTimes.end()){
+        return static_cast<std::uint32_t>(keyTimes.size() - 1);
+    }
+
+    const auto rightIndex = static_cast<std::uint32_t>(std::distance(keyTimes.begin(), it));
+    const auto leftIndex = rightIndex - 1;
+    return (std::fabs(seconds - keyTimes[leftIndex]) <= std::fabs(keyTimes[rightIndex] - seconds)) ? leftIndex : rightIndex;
+}
+
+std::vector<std::uint32_t> ConvertSelectedKeyframeTimesToOrdinals(std::vector<double> const& selectedKeyframes, std::vector<IndexedFrameSample> const& index){
+    std::vector<std::uint32_t> out;
+    const auto keyTimes = BuildCleanKeyframeTimes(index);
+    if(keyTimes.empty()){
+        return out;
+    }
+
+    out.reserve(selectedKeyframes.size());
+    for(const auto selectedTime : selectedKeyframes){
+        out.push_back(FindNearestKeyframeOrdinal(keyTimes, selectedTime));
+    }
+
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::vector<std::pair<std::uint32_t, std::uint32_t>> ConvertCutIntervalsToOrdinalPairs(std::vector<std::pair<double, double>> const& cutIntervals, std::vector<IndexedFrameSample> const& index){
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
+    const auto keyTimes = BuildCleanKeyframeTimes(index);
+    if(keyTimes.empty()){
+        return out;
+    }
+
+    out.reserve(cutIntervals.size());
+    for(auto const& interval : cutIntervals){
+        auto first = FindNearestKeyframeOrdinal(keyTimes, interval.first);
+        auto second = FindNearestKeyframeOrdinal(keyTimes, interval.second);
+        if(first > second){
+            std::swap(first, second);
+        }
+        if(first != second){
+            out.emplace_back(first, second);
+        }
+    }
+
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 
 std::pair<double, double> NormalizeInterval(double a, double b){
     if(a > b){
@@ -1499,8 +1620,8 @@ std::wstring MainWindow::BuildProjectSnapshot(){
     ss << L"file_path=" << (m_loadedFile ? m_loadedFile.Path().c_str() : L"") << L"\n";
     ss << L"storyline_zoom=" << std::setprecision(15) << TimelineZoomSlider().Value() << L"\n";
     ss << L"keyframe_snap_mode=" << m_keyFrameSnapMode << L"\n";
-    ss << L"selected_key_frames=" << SerializeNumberList(m_selectedKeyFrames) << L"\n";
-    ss << L"cut_intervals=" << SerializeNumberPairs(m_cutIntervals) << L"\n";
+    ss << L"selected_keyframe_indices=" << SerializeIndexList(ConvertSelectedKeyframeTimesToOrdinals(m_selectedKeyFrames, m_frameIndex)) << L"\n";
+    ss << L"cut_interval_indices=" << SerializeIndexPairs(ConvertCutIntervalsToOrdinalPairs(m_cutIntervals, m_frameIndex)) << L"\n";
     for(auto const& line : m_projectUnknownLines){
         ss << line << L"\n";
     }
@@ -1542,6 +1663,8 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     std::vector<std::wstring> unknownLines;
     std::vector<double> selectedKeyFrames;
     std::vector<std::pair<double, double>> cutIntervals;
+    std::vector<std::uint32_t> selectedKeyframeIndices;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> cutIntervalIndices;
     std::wstring loadedFilePath;
     std::wstring snapMode{L"Nearest"};
     double zoomLevel{TimelineZoomSlider().Value()};
@@ -1585,6 +1708,10 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
             selectedKeyFrames = ParseNumberList(value);
         }else if(key == L"cut_intervals"){
             cutIntervals = ParseNumberPairs(value);
+        }else if(key == L"selected_keyframe_indices"){
+            selectedKeyframeIndices = ParseIndexList(value);
+        }else if(key == L"cut_interval_indices"){
+            cutIntervalIndices = ParseIndexPairs(value);
         }else if(key == L"keyframe_index"){
             loadedKeyframeIndex = ParseKeyframeVector(value);
         }else{
@@ -1604,6 +1731,33 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     zoomLevel = std::clamp(zoomLevel, TimelineZoomSlider().Minimum(), TimelineZoomSlider().Maximum());
     TimelineZoomSlider().Value(zoomLevel);
     m_keyFrameSnapMode = snapMode;
+
+    const auto& effectiveIndex = !loadedKeyframeIndex.empty() ? loadedKeyframeIndex : m_frameIndex;
+    const auto keyTimes = BuildCleanKeyframeTimes(effectiveIndex);
+
+    if(!selectedKeyframeIndices.empty() && !keyTimes.empty()){
+        selectedKeyFrames.clear();
+        for(const auto ordinal : selectedKeyframeIndices){
+            if(ordinal < keyTimes.size()){
+                selectedKeyFrames.push_back(keyTimes[ordinal]);
+            }
+        }
+    }
+
+    if(!cutIntervalIndices.empty() && !keyTimes.empty()){
+        cutIntervals.clear();
+        for(auto const& interval : cutIntervalIndices){
+            auto a = interval.first;
+            auto b = interval.second;
+            if(a > b){
+                std::swap(a, b);
+            }
+            if(a < keyTimes.size() && b < keyTimes.size() && a != b){
+                cutIntervals.emplace_back(keyTimes[a], keyTimes[b]);
+            }
+        }
+    }
+
     m_selectedKeyFrames = std::move(selectedKeyFrames);
     m_cutIntervals = NormalizeAndMergeIntervals(std::move(cutIntervals), m_timelineDurationSeconds > 0 ? m_timelineDurationSeconds : std::numeric_limits<double>::max());
     m_projectUnknownLines = std::move(unknownLines);
@@ -1631,8 +1785,8 @@ Windows::Foundation::IAsyncAction MainWindow::SaveProjectFileAsync(Windows::Stor
     lines.emplace_back(L"file_path=" + std::wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
     lines.emplace_back(L"storyline_zoom=" + std::to_wstring(TimelineZoomSlider().Value()));
     lines.emplace_back(L"keyframe_snap_mode=" + m_keyFrameSnapMode);
-    lines.emplace_back(L"selected_key_frames=" + SerializeNumberList(m_selectedKeyFrames));
-    lines.emplace_back(L"cut_intervals=" + SerializeNumberPairs(m_cutIntervals));
+    lines.emplace_back(L"selected_keyframe_indices=" + SerializeIndexList(ConvertSelectedKeyframeTimesToOrdinals(m_selectedKeyFrames, m_frameIndex)));
+    lines.emplace_back(L"cut_interval_indices=" + SerializeIndexPairs(ConvertCutIntervalsToOrdinalPairs(m_cutIntervals, m_frameIndex)));
     lines.emplace_back(L"keyframe_index=" + SerializeKeyframeVector(m_frameIndex));
 
     for(auto const& unknown : m_projectUnknownLines){
