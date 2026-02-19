@@ -3,6 +3,7 @@
 #include "MainWindow.g.cpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cwctype>
 #include <filesystem>
@@ -81,6 +82,8 @@ constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
 constexpr auto S_KEYFRAME_SNAP_MODE{L"KeyframeSnapMode"};
 constexpr auto S_DEFAULT_MAX_RECENT{5};
 constexpr wchar_t RECENT_DELIMITER{0x1F};
+
+constexpr std::array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 10, 50, 100, 250, 500, 750, 1000}};
 
 struct MFLifetime{
     MFLifetime(){
@@ -445,6 +448,9 @@ MainWindow::MainWindow(){
     m_positionTimer.Tick({this, &MainWindow::onPositionTimerTick});
     m_positionTimer.Start();
 
+    syncAudioCrossfadeComboSelection();
+    updateAudioUiAndPlaybackState();
+
     restoreWindowPlacement();
     loadAppSettings();
     Closed({this, &MainWindow::onClosed});
@@ -601,6 +607,7 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
 
 void MainWindow::startButton_Click(const Control&, const REArgs&){
     if(m_player){
+        applyAudioSettingsToPlayer();
         m_player.Play();
     }
 }
@@ -625,6 +632,33 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
     }
     updateWindowTitle();
     tryFocusTimelineCanvas(FocusState::Programmatic);
+}
+
+void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
+    m_keepAudio = KeepAudioCheckBox().IsChecked().GetBoolean();
+    updateAudioUiAndPlaybackState();
+    updateWindowTitle();
+}
+
+void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const Control&){
+    const auto selected{AudioCrossfadeComboBox().SelectedItem().try_as<Controls::ComboBoxItem>()};
+    if(!selected){
+        return;
+    }
+
+    if(!selected.Tag()){
+        return;
+    }
+
+    try{
+        const auto tag{unbox_value<hstring>(selected.Tag())};
+        m_audioCrossfadeMs = normalizeAudioCrossfadeMs(stoi(wstring(tag.c_str())));
+    }catch(...){
+        m_audioCrossfadeMs = 0;
+    }
+
+    syncAudioCrossfadeComboSelection();
+    updateWindowTitle();
 }
 
 void MainWindow::timelineHorizontalScrollBar_ValueChanged(const Control&, const RBVArgs& args){
@@ -1175,6 +1209,8 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
         }
 
         if(now100ns >= start100ns && now100ns < end100ns){
+            // Intentionally jump directly to the next sample when preview playback skips
+            // a cut region. Cross-fade duration settings are ignored for this operation.
             m_player.PlaybackSession().Position(TimeSpan{end100ns});
             return true;
         }
@@ -1419,6 +1455,23 @@ AAction MainWindow::saveProjectMenuItem_Click(const Control&, const REArgs&){
     co_await saveProjectFileAsync(target);
 }
 
+AAction MainWindow::saveProjectAsMenuItem_Click(const Control&, const REArgs&){
+    FileSavePicker picker{};
+    picker.SuggestedStartLocation(PickerLocationId::DocumentsLibrary);
+    picker.FileTypeChoices().Insert(L"llvc project", single_threaded_vector<hstring>({L".llvc"}));
+    picker.SuggestedFileName(L"project");
+
+    auto initWithWindow{picker.as<IInitializeWithWindow>()};
+    check_hresult(initWithWindow->Initialize(getWindowHandle()));
+
+    const auto target{co_await picker.PickSaveFileAsync()};
+    if(!target){
+        co_return;
+    }
+
+    co_await saveProjectFileAsync(target);
+}
+
 AAction MainWindow::closeProjectMenuItem_Click(const Control&, const REArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
@@ -1590,7 +1643,11 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
     m_frameIndex.clear();
     m_mediaInfo = MediaInspectionResult{};
     m_timelineDurationSeconds = 0;
+    m_keepAudio = true;
+    m_audioCrossfadeMs = 0;
     TimelineZoomSlider().Value(3);
+    syncAudioCrossfadeComboSelection();
+    updateAudioUiAndPlaybackState();
 
     ThumbnailLayer().Children().Clear();
     CutOverlayLayer().Children().Clear();
@@ -1617,9 +1674,11 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
 
 wstring MainWindow::buildProjectSnapshot(){
     auto snapshot{std::format(
-        L"file_path={}\nstoryline_zoom={:.15g}\nselected_keyframe_indices={}\ncut_interval_indices={}\n",
+        L"file_path={}\nstoryline_zoom={:.15g}\nkeep_audio={}\naudio_crossfade_ms={}\nselected_keyframe_indices={}\ncut_interval_indices={}\n",
         (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
         TimelineZoomSlider().Value(),
+        m_keepAudio ? 1 : 0,
+        m_audioCrossfadeMs,
         serializeIndexList(m_selectedKeyFrames),
         serializeIndexPairs(m_cutIntervals))};
 
@@ -1687,6 +1746,8 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     vector<pair<uint32_t, uint32_t>> cutIntervalIndices;
     wstring loadedFilePath;
     auto zoomLevel{TimelineZoomSlider().Value()};
+    auto keepAudioSetting{m_keepAudio};
+    auto audioCrossfadeSetting{m_audioCrossfadeMs};
     vector<IndexedFrameSample> loadedKeyframeIndex;
 
     for(const auto& lineH: lines){
@@ -1723,6 +1784,10 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
             selectedKeyframeIndices = parseIndexList(value);
         }else if(key == L"cut_interval_indices"){
             cutIntervalIndices = parseIndexPairs(value);
+        }else if(key == L"keep_audio"){
+            keepAudioSetting = !(value == L"0" || value == L"false" || value == L"False");
+        }else if(key == L"audio_crossfade_ms"){
+            try{ audioCrossfadeSetting = normalizeAudioCrossfadeMs(stoi(value)); }catch(...){ unknownLines.push_back(line); }
         }else if(key == L"keyframe_index"){
             loadedKeyframeIndex = parseKeyframeVector(value);
         }else{
@@ -1745,6 +1810,10 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
 
     zoomLevel = clamp(zoomLevel, TimelineZoomSlider().Minimum(), TimelineZoomSlider().Maximum());
     TimelineZoomSlider().Value(zoomLevel);
+    m_keepAudio = keepAudioSetting;
+    m_audioCrossfadeMs = normalizeAudioCrossfadeMs(audioCrossfadeSetting);
+    syncAudioCrossfadeComboSelection();
+    updateAudioUiAndPlaybackState();
 
     const auto cleanKeyTimes {buildCleanKeyframeTimes100ns(m_frameIndex)};
     m_selectedKeyFrames.clear();
@@ -1772,6 +1841,8 @@ AAction MainWindow::saveProjectFileAsync(const SFile& file){
     lines.emplace_back(L"# llvc project file");
     lines.emplace_back(L"file_path=" + wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
     lines.emplace_back(L"storyline_zoom=" + to_wstring(TimelineZoomSlider().Value()));
+    lines.emplace_back(L"keep_audio=" + wstring(m_keepAudio ? L"1" : L"0"));
+    lines.emplace_back(L"audio_crossfade_ms=" + to_wstring(m_audioCrossfadeMs));
     lines.emplace_back(L"selected_keyframe_indices=" + serializeIndexList(m_selectedKeyFrames));
     lines.emplace_back(L"cut_interval_indices=" + serializeIndexPairs(m_cutIntervals));
     lines.emplace_back(L"keyframe_index=" + serializeKeyframeVector(m_frameIndex));
@@ -2243,6 +2314,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file, const vector<IndexedFr
 
     const auto source{Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
     m_player.Source(source);
+    m_player.IsMuted(false);
     m_loadedFile = file;
     if(m_projectPath.empty()){
         m_selectedKeyFrames.clear();
@@ -2265,7 +2337,68 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file, const vector<IndexedFr
     status += file.Name().c_str();
     status += L" (loading story line...)";
     StatusText().Text(status);
+    updateAudioUiAndPlaybackState();
     updateWindowTitle();
+}
+
+bool MainWindow::sourceHasAudio() const{
+    return m_mediaInfo.isValid && m_mediaInfo.audioCodec != L"none";
+}
+
+int32_t MainWindow::normalizeAudioCrossfadeMs(const int32_t valueMs){
+    const auto nearest = min_element(AUDIO_CROSSFADE_PRESETS_MS.begin(), AUDIO_CROSSFADE_PRESETS_MS.end(), [valueMs](const auto a, const auto b){
+        return abs(a - valueMs) < abs(b - valueMs);
+    });
+    return nearest == AUDIO_CROSSFADE_PRESETS_MS.end() ? 0 : *nearest;
+}
+
+void MainWindow::syncAudioCrossfadeComboSelection(){
+    const auto target{normalizeAudioCrossfadeMs(m_audioCrossfadeMs)};
+    m_audioCrossfadeMs = target;
+
+    const auto combo{AudioCrossfadeComboBox()};
+    const auto items{combo.Items()};
+    for(uint32_t i = 0; i < items.Size(); ++i){
+        const auto item{items.GetAt(i).try_as<Controls::ComboBoxItem>()};
+        if(!item){
+            continue;
+        }
+
+        if(!item.Tag()){
+            continue;
+        }
+
+        try{
+            const auto tag{unbox_value<hstring>(item.Tag())};
+            if(stoi(wstring(tag.c_str())) == target){
+                combo.SelectedIndex(static_cast<int32_t>(i));
+                return;
+            }
+        }catch(...){ }
+    }
+
+    combo.SelectedIndex(0);
+}
+
+void MainWindow::applyAudioSettingsToPlayer(){
+    if(!m_player){
+        return;
+    }
+
+    const auto allowAudio{sourceHasAudio() && m_keepAudio};
+    m_player.IsMuted(!allowAudio);
+}
+
+void MainWindow::updateAudioUiAndPlaybackState(){
+    const auto hasAudio{sourceHasAudio()};
+    if(!hasAudio){
+        m_keepAudio = false;
+    }
+
+    KeepAudioCheckBox().IsEnabled(hasAudio);
+    KeepAudioCheckBox().IsChecked(box_value(hasAudio && m_keepAudio).as<IReference<bool>>());
+    AudioCrossfadeComboBox().IsEnabled(hasAudio && m_keepAudio);
+    applyAudioSettingsToPlayer();
 }
 
 winrt::fire_and_forget MainWindow::renderTimelineAsync(){
