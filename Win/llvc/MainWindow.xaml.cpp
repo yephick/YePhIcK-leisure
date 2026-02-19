@@ -11,6 +11,7 @@
 #include <string_view>
 #include <functional>
 #include <vector>
+#include <utility>
 
 #include <mfapi.h>
 #include <mferror.h>
@@ -64,6 +65,11 @@ constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
 constexpr auto S_DEFAULT_MAX_RECENT{5};
 constexpr wchar_t RECENT_DELIMITER{0x1F};
 
+template<typename... Args>
+wstring formatW(std::wformat_string<Args...> fmt, Args&&... args){
+    return std::format(fmt, std::forward<Args>(args)...);
+}
+
 struct MFLifetime{
     MFLifetime(){
         check_hresult(MFStartup(MF_VERSION, MFSTARTUP_FULL));
@@ -84,11 +90,11 @@ wstring formatFileSize(uint64_t bytes){
     constexpr double MB = KB * 1024.0;
     constexpr double GB = MB * 1024.0;
 
-    auto text = std::format(L"{} bytes", bytes);
+    auto text = formatW(L"{} bytes", bytes);
     if(bytes >= static_cast<uint64_t>(GB)){
-        text += std::format(L" ({:.2f} GB)", bytes / GB);
+        text += formatW(L" ({:.2f} GB)", bytes / GB);
     }else if(bytes >= static_cast<uint64_t>(MB)){
-        text += std::format(L" ({:.2f} MB)", bytes / MB);
+        text += formatW(L" ({:.2f} MB)", bytes / MB);
     }
     return text;
 }
@@ -97,7 +103,7 @@ wstring formatRatio(uint32_t num, uint32_t den){
     if(den == 0){
         return L"-";
     }
-    return std::format(L"{:.3f}", static_cast<double>(num) / den);
+    return formatW(L"{:.3f}", static_cast<double>(num) / den);
 }
 
 wstring joinRecentItems(vector<hstring> const& values){
@@ -209,7 +215,7 @@ wstring serializeIndexPairs(vector<pair<uint32_t, uint32_t>> const& values){
     wstring out;
     for(size_t i = 0; i < values.size(); ++i){
         if(i > 0){ out += L";"; }
-        out += std::format(L"{},{}", values[i].first, values[i].second);
+        out += formatW(L"{},{}", values[i].first, values[i].second);
     }
     return out;
 }
@@ -300,7 +306,7 @@ wstring serializeKeyframeVector(vector<IndexedFrameSample> const& index){
         if(!k.cleanPoint){ continue; }
         if(!first){ out += L";"; }
         first = false;
-        out += std::format(L"{}@{}", k.time100ns, k.sampleIndex);
+        out += formatW(L"{}@{}", k.time100ns, k.sampleIndex);
     }
     return out;
 }
@@ -391,7 +397,7 @@ void analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uin
     }
 
     const auto ratio = static_cast<double>(keyFrames) / static_cast<double>(sampledFrames);
-    result.keyFrameSummary = std::format(L"{} key frames / {} sampled frames ({:.2f}%)", keyFrames, sampledFrames, ratio * 100.0);
+    result.keyFrameSummary = formatW(L"{} key frames / {} sampled frames ({:.2f}%)", keyFrames, sampledFrames, ratio * 100.0);
 
     if(keyIntervalsSec.empty()){
         result.keyFrameInterval = L"unknown (insufficient key frames sampled)";
@@ -403,11 +409,11 @@ void analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uin
     const auto minIt = min_element(keyIntervalsSec.begin(), keyIntervalsSec.end());
     const auto maxIt = max_element(keyIntervalsSec.begin(), keyIntervalsSec.end());
 
-    auto text = std::format(L"avg {:.3f} s, min {:.3f} s, max {:.3f} s", avg, *minIt, *maxIt);
+    auto text = formatW(L"avg {:.3f} s, min {:.3f} s, max {:.3f} s", avg, *minIt, *maxIt);
 
     if(fpsNum > 0 && fpsDen > 0){
         const double fps = static_cast<double>(fpsNum) / fpsDen;
-        text += std::format(L" (~{:.1f} frames avg)", avg * fps);
+        text += formatW(L" (~{:.1f} frames avg)", avg * fps);
     }
 
     result.keyFrameInterval = text;
@@ -1597,7 +1603,7 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
 }
 
 wstring MainWindow::buildProjectSnapshot(){
-    auto snapshot = std::format(
+    auto snapshot = formatW(
         L"file_path={}\nstoryline_zoom={:.15g}\nkeyframe_snap_mode={}\nselected_keyframe_indices={}\ncut_interval_indices={}\n",
         (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
         TimelineZoomSlider().Value(),
@@ -1984,7 +1990,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(wstring const& filePath){
     PropVariantInit(&duration);
     if(SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION, &duration)) && duration.vt == VT_UI8){
         const auto seconds = static_cast<double>(duration.uhVal.QuadPart) / 10'000'000.0;
-        result.duration = std::format(L"{:.3f} s", seconds);
+        result.duration = formatW(L"{:.3f} s", seconds);
     }
     PropVariantClear(&duration);
 
