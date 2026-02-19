@@ -9,6 +9,7 @@
 #include <cwctype>
 #include <cwchar>
 #include <filesystem>
+#include <fstream>
 #include <format>
 #include <limits>
 #include <optional>
@@ -1349,9 +1350,33 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     }
 
     winrt::hstring exportErrorMessage{};
+    std::ofstream exportLog{};
 
     try{
         StatusText().Text(L"Exporting...");
+
+        const auto logPath{filesystem::path(outputPath).replace_extension(L".log")};
+        exportLog.open(logPath, std::ios::out | std::ios::trunc);
+        if(exportLog){
+            exportLog << "llvc export debug log\n";
+            exportLog << "source_duration_100ns=" << sourceDuration100ns << "\n";
+            exportLog << "cut_scenes=";
+            for(size_t i = 0; i < m_cutScenes.size(); ++i){
+                if(i > 0){
+                    exportLog << ",";
+                }
+                exportLog << m_cutScenes[i];
+            }
+            exportLog << "\n";
+            exportLog << "marker_points=";
+            for(size_t i = 0; i < m_frameIndex.size(); ++i){
+                if(i > 0){
+                    exportLog << ";";
+                }
+                exportLog << m_frameIndex[i].time100ns << "@" << m_frameIndex[i].sampleIndex;
+            }
+            exportLog << "\n";
+        }
 
         com_ptr<IMFAttributes> readerAttributes;
         check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
@@ -1422,8 +1447,20 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         }
         std::sort(rapTimes100ns.begin(), rapTimes100ns.end());
         rapTimes100ns.erase(std::unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
+        if(exportLog){
+            exportLog << "rap_count=" << rapTimes100ns.size() << "\n";
+            for(size_t i = 0; i < rapTimes100ns.size(); ++i){
+                exportLog << "rap[" << i << "]=" << rapTimes100ns[i] << "\n";
+            }
+        }
 
         const auto effectiveCutRanges100ns{buildEffectiveCutRangesWithRapPreroll(m_cutScenes, m_frameIndex, sourceDuration100ns, rapTimes100ns)};
+        if(exportLog){
+            exportLog << "effective_cut_ranges_count=" << effectiveCutRanges100ns.size() << "\n";
+            for(size_t i = 0; i < effectiveCutRanges100ns.size(); ++i){
+                exportLog << "cut_range[" << i << "]=" << effectiveCutRanges100ns[i].first << "," << effectiveCutRanges100ns[i].second << "\n";
+            }
+        }
 
         PROPVARIANT startPos{};
         startPos.vt = VT_I8;
@@ -1441,6 +1478,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
         auto waitingForCleanPoint{false};
         auto markDiscontinuityOnNextWrittenSample{false};
+        std::uint64_t readSampleCount{};
+        std::uint64_t droppedByCutCount{};
+        std::uint64_t droppedWaitingRapCount{};
+        std::uint64_t writtenSampleCount{};
 
         for(;;){
             DWORD actualStream{};
@@ -1458,6 +1499,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 continue;
             }
 
+            ++readSampleCount;
+
             LONGLONG sampleTime100ns{};
             if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
                 sampleTime100ns = timestamp;
@@ -1474,6 +1517,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 }
             }
             if(dropped){
+                ++droppedByCutCount;
+                if(exportLog){
+                    exportLog << "drop_cut in=" << inTime100ns << "\n";
+                }
                 waitingForCleanPoint = true;
                 markDiscontinuityOnNextWrittenSample = true;
                 continue;
@@ -1483,7 +1530,14 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 const auto isContainerSync{isContainerSyncSample(sample)};
                 const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
                 if(!(isContainerSync && isBitstreamRap)){
+                    ++droppedWaitingRapCount;
+                    if(exportLog){
+                        exportLog << "drop_waiting_rap in=" << inTime100ns << " clean=" << (isContainerSync ? 1 : 0) << " rap=" << (isBitstreamRap ? 1 : 0) << "\n";
+                    }
                     continue;
+                }
+                if(exportLog){
+                    exportLog << "resume_at in=" << inTime100ns << "\n";
                 }
                 waitingForCleanPoint = false;
             }
@@ -1505,17 +1559,36 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
             if(markDiscontinuityOnNextWrittenSample){
                 check_hresult(sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE));
+                if(exportLog){
+                    exportLog << "set_discontinuity in=" << inTime100ns << " out=" << outTime100ns << "\n";
+                }
                 markDiscontinuityOnNextWrittenSample = false;
             }
 
             check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
+            ++writtenSampleCount;
+            if(exportLog){
+                exportLog << "write in=" << inTime100ns << " out=" << outTime100ns << "\n";
+            }
         }
 
         check_hresult(writer->Finalize());
+        if(exportLog){
+            exportLog << "summary read=" << readSampleCount
+                << " dropped_cut=" << droppedByCutCount
+                << " dropped_waiting_rap=" << droppedWaitingRapCount
+                << " written=" << writtenSampleCount << "\n";
+            exportLog << "finalize=ok\n";
+            exportLog.flush();
+        }
         StatusText().Text(L"Export completed");
     }catch(const hresult_error& ex){
         StatusText().Text(L"Export failed");
         exportErrorMessage = ex.message();
+        if(exportLog){
+            exportLog << "error_hresult\n";
+            exportLog.flush();
+        }
     }
 
     if(!exportErrorMessage.empty()){
