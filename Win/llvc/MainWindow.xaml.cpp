@@ -710,11 +710,17 @@ bool MainWindow::ToggleSelectedKeyframeAtCanvasX(const double pointerX){
 }
 
 void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+    const auto point{e.GetCurrentPoint(TimelineCanvas())};
+    if(point.Properties().PointerUpdateKind() == Input::PointerUpdateKind::RightButtonReleased){
+        if(ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
+            e.Handled(true);
+            return;
+        }
+    }
+
     if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
         return;
     }
-
-    const auto point{e.GetCurrentPoint(TimelineCanvas())};
     const bool dragged{m_timelineDragMoved};
 
     m_isTimelineDragging = false;
@@ -726,7 +732,7 @@ void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::Poin
         const bool ctrlPressed{(modifiers & Windows::System::VirtualKeyModifiers::Control) == Windows::System::VirtualKeyModifiers::Control};
         if(ctrlPressed){
             ToggleCutBlockAtCanvasX(point.Position().X);
-        }else if(!ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
+        }else{
             SeekTimelineToCanvasX(point.Position().X, (modifiers & Windows::System::VirtualKeyModifiers::Shift) == Windows::System::VirtualKeyModifiers::Shift);
         }
     }
@@ -754,7 +760,7 @@ void MainWindow::TimelineCanvas_Loaded(IInspectable const&, RoutedEventArgs cons
 
 void MainWindow::TimelineTickCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
     const auto point{e.GetCurrentPoint(TimelineTickCanvas())};
-    if(ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
+    if(point.Properties().PointerUpdateKind() == Input::PointerUpdateKind::RightButtonReleased && ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
         TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
         e.Handled(true);
     }
