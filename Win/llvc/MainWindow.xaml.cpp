@@ -52,6 +52,22 @@ using namespace Windows::Storage::Pickers;
 
 namespace winrt::llvc::implementation{
 
+using Control = MainWindow::Control;
+using REArgs = MainWindow::REArgs;
+using PREArgs = MainWindow::PREArgs;
+using AAction = MainWindow::AAction;
+using RBVArgs = MainWindow::RBVArgs;
+using SVVCArgs = MainWindow::SVVCArgs;
+using SCArgs = MainWindow::SCArgs;
+using KRArgs = MainWindow::KRArgs;
+using DEArgs = MainWindow::DEArgs;
+using WEArgs = MainWindow::WEArgs;
+using MPSession = MainWindow::MPSession;
+using SFile = MainWindow::SFile;
+using FState = MainWindow::FState;
+using IOpBool = MainWindow::IOpBool;
+using TS = MainWindow::TS;
+
 constexpr auto W_POS_L{L"WindowLeft"};
 constexpr auto W_POS_T{L"WindowTop"};
 constexpr auto W_POS_W{L"WindowWidth"};
@@ -569,7 +585,7 @@ void MainWindow::saveWindowPlacement() const{
     values.Insert(W_POS_DPI, box_value(static_cast<int32_t>(dpi)));
 }
 
-void MainWindow::onClosed(const IInspectable&, const WindowEventArgs&){
+void MainWindow::onClosed(const Control&, const WEArgs&){
     m_isClosing = true;
 
     if(m_positionTimer){
@@ -581,19 +597,19 @@ void MainWindow::onClosed(const IInspectable&, const WindowEventArgs&){
     saveAppSettings();
 }
 
-void MainWindow::startButton_Click(const IInspectable&, const RoutedEventArgs&){
+void MainWindow::startButton_Click(const Control&, const REArgs&){
     if(m_player){
         m_player.Play();
     }
 }
 
-void MainWindow::pauseButton_Click(const IInspectable&, const RoutedEventArgs&){
+void MainWindow::pauseButton_Click(const Control&, const REArgs&){
     if(m_player){
         m_player.Pause();
     }
 }
 
-void MainWindow::stopButton_Click(const IInspectable&, const RoutedEventArgs&){
+void MainWindow::stopButton_Click(const Control&, const REArgs&){
     if(m_player){
         m_player.Pause();
         m_player.PlaybackSession().Position(chrono::seconds(0));
@@ -601,14 +617,14 @@ void MainWindow::stopButton_Click(const IInspectable&, const RoutedEventArgs&){
     }
 }
 
-void MainWindow::timelineZoomSlider_ValueChanged(const IInspectable&, const Controls::Primitives::RangeBaseValueChangedEventArgs&){
+void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&){
     if(m_loadedFile && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-void MainWindow::timelineHorizontalScrollBar_ValueChanged(const IInspectable&, const Controls::Primitives::RangeBaseValueChangedEventArgs& args){
+void MainWindow::timelineHorizontalScrollBar_ValueChanged(const Control&, const RBVArgs& args){
     if(m_isClosing){
         return;
     }
@@ -621,15 +637,15 @@ void MainWindow::timelineHorizontalScrollBar_ValueChanged(const IInspectable&, c
     }
 }
 
-void MainWindow::timelineScrollViewer_ViewChanged(const IInspectable&, const Controls::ScrollViewerViewChangedEventArgs&){
+void MainWindow::timelineScrollViewer_ViewChanged(const Control&, const SVVCArgs&){
     syncTimelineHorizontalScrollBar();
 }
 
-void MainWindow::timelineScrollViewer_SizeChanged(const IInspectable&, const SizeChangedEventArgs&){
+void MainWindow::timelineScrollViewer_SizeChanged(const Control&, const SCArgs&){
     syncTimelineHorizontalScrollBar();
 }
 
-void MainWindow::timelineCanvas_PointerPressed(const IInspectable&, const Input::PointerRoutedEventArgs& e){
+void MainWindow::timelineCanvas_PointerPressed(const Control&, const PREArgs& e){
     if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
     }
@@ -650,7 +666,7 @@ void MainWindow::timelineCanvas_PointerPressed(const IInspectable&, const Input:
     e.Handled(true);
 }
 
-void MainWindow::timelineCanvas_PointerMoved(const IInspectable&, const Input::PointerRoutedEventArgs& e){
+void MainWindow::timelineCanvas_PointerMoved(const Control&, const PREArgs& e){
     if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
         return;
     }
@@ -717,7 +733,7 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
     return true;
 }
 
-void MainWindow::timelineCanvas_PointerReleased(const IInspectable&, const Input::PointerRoutedEventArgs& e){
+void MainWindow::timelineCanvas_PointerReleased(const Control&, const PREArgs& e){
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
     if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased){
         if(toggleSelectedKeyframeAtCanvasX(point.Position().X)){
@@ -748,7 +764,7 @@ void MainWindow::timelineCanvas_PointerReleased(const IInspectable&, const Input
     e.Handled(true);
 }
 
-void MainWindow::timelineCanvas_PointerCanceled(const IInspectable&, const Input::PointerRoutedEventArgs& e){
+void MainWindow::timelineCanvas_PointerCanceled(const Control&, const PREArgs& e){
     if(m_isTimelineDragging && e.Pointer().PointerId() == m_timelineDragPointerId){
         m_isTimelineDragging = false;
         m_timelineDragMoved = false;
@@ -757,16 +773,16 @@ void MainWindow::timelineCanvas_PointerCanceled(const IInspectable&, const Input
     }
 }
 
-void MainWindow::timelineCanvas_PointerCaptureLost(const IInspectable&, const Input::PointerRoutedEventArgs&){
+void MainWindow::timelineCanvas_PointerCaptureLost(const Control&, const PREArgs&){
     m_isTimelineDragging = false;
     m_timelineDragMoved = false;
 }
 
-void MainWindow::timelineCanvas_Loaded(const IInspectable&, const RoutedEventArgs&){
+void MainWindow::timelineCanvas_Loaded(const Control&, const REArgs&){
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-void MainWindow::timelineTickCanvas_PointerReleased(const IInspectable&, const Input::PointerRoutedEventArgs& e){
+void MainWindow::timelineTickCanvas_PointerReleased(const Control&, const PREArgs& e){
     const auto point{e.GetCurrentPoint(TimelineTickCanvas())};
     if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased && toggleSelectedKeyframeAtCanvasX(point.Position().X)){
         tryFocusTimelineCanvas(FocusState::Programmatic);
@@ -775,7 +791,7 @@ void MainWindow::timelineTickCanvas_PointerReleased(const IInspectable&, const I
 }
 
 
-void MainWindow::onNaturalDurationChanged(const MediaPlaybackSession& sender, const IInspectable&){
+void MainWindow::onNaturalDurationChanged(const MPSession& sender, const Control&){
     const auto duration{sender.NaturalDuration()};
     m_timelineDurationSeconds = max(0.0, duration.count() / 10'000'000.0);
 
@@ -794,7 +810,7 @@ void MainWindow::onNaturalDurationChanged(const MediaPlaybackSession& sender, co
     }
 }
 
-void MainWindow::onPositionTimerTick(const IInspectable&, const IInspectable&){
+void MainWindow::onPositionTimerTick(const Control&, const Control&){
     if(m_isClosing){
         return;
     }
@@ -1011,7 +1027,7 @@ void MainWindow::renderCutOverlays(){
         return;
     }
 
-    const auto overlayColor {Windows::UI::ColorHelper::FromArgb(90, 180, 180, 180)};
+    const auto overlayColor {Windows::UI::ColorHelper::FromArgb(120, 0, 0, 0)};
     for(const auto& interval : m_cutIntervals){
         const auto startTime100ns {interval.first == TIMELINE_EDGE_SENTINEL ? static_cast<int64_t>(0)
             : (interval.first < cleanKeyTimes.size() ? cleanKeyTimes[interval.first] : static_cast<int64_t>(-1))};
@@ -1236,14 +1252,14 @@ void MainWindow::stepByKeyframe(const int delta){
     updateTimelineCursorFromPlayback();
 }
 
-void MainWindow::tryFocusTimelineCanvas(const FocusState focusState){
+void MainWindow::tryFocusTimelineCanvas(const FState focusState){
     const auto canvas{TimelineCanvas()};
     if(canvas && canvas.XamlRoot()){
         canvas.Focus(focusState);
     }
 }
 
-bool MainWindow::handleStorylineKeyDown(const Input::KeyRoutedEventArgs& args){
+bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
     const auto focused{Input::FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
     const auto focusOnMenu{focused && isInMenuSubtree(focused)};
     const auto focusInDialog{focused && isInDialogSubtree(focused)};
@@ -1320,15 +1336,15 @@ bool MainWindow::handleStorylineKeyDown(const Input::KeyRoutedEventArgs& args){
     }
 }
 
-void MainWindow::window_PreviewKeyDown(const IInspectable&, const Input::KeyRoutedEventArgs& args){
+void MainWindow::window_PreviewKeyDown(const Control&, const KRArgs& args){
     (void)handleStorylineKeyDown(args);
 }
 
-void MainWindow::window_KeyDown(const IInspectable&, const Input::KeyRoutedEventArgs& args){
+void MainWindow::window_KeyDown(const Control&, const KRArgs& args){
     (void)handleStorylineKeyDown(args);
 }
 
-void MainWindow::rootGrid_PointerReleased(const IInspectable&, const Input::PointerRoutedEventArgs& args){
+void MainWindow::rootGrid_PointerReleased(const Control&, const PREArgs& args){
     const auto source {args.OriginalSource().try_as<DependencyObject>()};
     if(!source){
         return;
@@ -1339,11 +1355,11 @@ void MainWindow::rootGrid_PointerReleased(const IInspectable&, const Input::Poin
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-TimeSpan MainWindow::secondsToTimeSpan(const double seconds){
+TS MainWindow::secondsToTimeSpan(const double seconds){
     return chrono::duration_cast<TimeSpan>(chrono::duration<double>(seconds));
 }
 
-IAsyncAction MainWindow::newProjectMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
+AAction MainWindow::newProjectMenuItem_Click(const Control&, const REArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
@@ -1352,7 +1368,7 @@ IAsyncAction MainWindow::newProjectMenuItem_Click(const IInspectable&, const Rou
     StatusText().Text(L"New project created");
 }
 
-IAsyncAction MainWindow::openProjectMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
+AAction MainWindow::openProjectMenuItem_Click(const Control&, const REArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
@@ -1369,7 +1385,7 @@ IAsyncAction MainWindow::openProjectMenuItem_Click(const IInspectable&, const Ro
     }
 }
 
-IAsyncAction MainWindow::saveProjectMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
+AAction MainWindow::saveProjectMenuItem_Click(const Control&, const REArgs&){
     StorageFile target{nullptr};
 
     if(!m_projectPath.empty()){
@@ -1398,7 +1414,7 @@ IAsyncAction MainWindow::saveProjectMenuItem_Click(const IInspectable&, const Ro
     co_await saveProjectFileAsync(target);
 }
 
-IAsyncAction MainWindow::closeProjectMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
+AAction MainWindow::closeProjectMenuItem_Click(const Control&, const REArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
@@ -1407,11 +1423,11 @@ IAsyncAction MainWindow::closeProjectMenuItem_Click(const IInspectable&, const R
     StatusText().Text(L"Project closed");
 }
 
-IAsyncAction MainWindow::loadVideoMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
+AAction MainWindow::loadVideoMenuItem_Click(const Control&, const REArgs&){
     co_await pickAndLoadVideoAsync();
 }
 
-IAsyncAction MainWindow::recentVideoMenuItem_Click(const IInspectable& sender, const RoutedEventArgs&){
+AAction MainWindow::recentVideoMenuItem_Click(const Control& sender, const REArgs&){
     const auto item{sender.try_as<Controls::MenuFlyoutItem>()};
     if(!item || !item.Tag()){
         co_return;
@@ -1431,7 +1447,7 @@ IAsyncAction MainWindow::recentVideoMenuItem_Click(const IInspectable& sender, c
     }
 }
 
-IAsyncAction MainWindow::recentProjectMenuItem_Click(const IInspectable& sender, const RoutedEventArgs&){
+AAction MainWindow::recentProjectMenuItem_Click(const Control& sender, const REArgs&){
     const auto item{sender.try_as<Controls::MenuFlyoutItem>()};
     if(!item || !item.Tag()){
         co_return;
@@ -1455,11 +1471,11 @@ IAsyncAction MainWindow::recentProjectMenuItem_Click(const IInspectable& sender,
     }
 }
 
-IAsyncAction MainWindow::propertiesMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
+AAction MainWindow::propertiesMenuItem_Click(const Control&, const REArgs&){
     co_await showPropertiesDialogAsync();
 }
 
-IAsyncAction MainWindow::exitMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
+AAction MainWindow::exitMenuItem_Click(const Control&, const REArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
@@ -1467,15 +1483,15 @@ IAsyncAction MainWindow::exitMenuItem_Click(const IInspectable&, const RoutedEve
     Close();
 }
 
-IAsyncAction MainWindow::aboutMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
+AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
     co_await showInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut\nPreview and timeline exploration tool.");
 }
 
-IAsyncAction MainWindow::optionsMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
+AAction MainWindow::optionsMenuItem_Click(const Control&, const REArgs&){
     co_await showOptionsDialogAsync();
 }
 
-IAsyncAction MainWindow::pickAndLoadVideoAsync(){
+AAction MainWindow::pickAndLoadVideoAsync(){
     FileOpenPicker picker{};
     picker.SuggestedStartLocation(PickerLocationId::VideosLibrary);
     picker.FileTypeFilter().Append(L".mp4");
@@ -1611,7 +1627,7 @@ bool MainWindow::isProjectDirty(){
     return buildProjectSnapshot() != m_lastSavedProjectSnapshot;
 }
 
-IAsyncOperation<bool> MainWindow::ensureProjectSavedBeforeContinuingAsync(){
+IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){
     if(!isProjectDirty()){
         co_return true;
     }
@@ -1636,7 +1652,7 @@ IAsyncOperation<bool> MainWindow::ensureProjectSavedBeforeContinuingAsync(){
     co_return false;
 }
 
-IAsyncAction MainWindow::openProjectFileAsync(const StorageFile& file){
+AAction MainWindow::openProjectFileAsync(const SFile& file){
     resetProjectState(true);
 
     const auto lines{co_await FileIO::ReadLinesAsync(file)};
@@ -1725,7 +1741,7 @@ IAsyncAction MainWindow::openProjectFileAsync(const StorageFile& file){
     StatusText().Text(L"Project loaded");
 }
 
-IAsyncAction MainWindow::saveProjectFileAsync(const StorageFile& file){
+AAction MainWindow::saveProjectFileAsync(const SFile& file){
     vector<hstring> lines;
     lines.emplace_back(L"# llvc project file");
     lines.emplace_back(L"file_path=" + wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
@@ -1748,7 +1764,7 @@ IAsyncAction MainWindow::saveProjectFileAsync(const StorageFile& file){
     StatusText().Text(L"Project saved");
 }
 
-IAsyncAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& message){
+AAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& message){
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(Content().XamlRoot());
     dialog.Title(box_value(title));
@@ -1757,7 +1773,7 @@ IAsyncAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring
     co_await dialog.ShowAsync();
 }
 
-IAsyncAction MainWindow::showPropertiesDialogAsync(){
+AAction MainWindow::showPropertiesDialogAsync(){
     if(!m_loadedFile || !m_mediaInfo.isValid){
         co_await showInfoDialogAsync(L"Properties", L"No video is currently loaded.");
         co_return;
@@ -1782,7 +1798,7 @@ IAsyncAction MainWindow::showPropertiesDialogAsync(){
     co_await showInfoDialogAsync(L"Properties", hstring(content));
 }
 
-IAsyncAction MainWindow::showOptionsDialogAsync(){
+AAction MainWindow::showOptionsDialogAsync(){
     Controls::StackPanel panel{};
     panel.Spacing(10);
 
@@ -2109,11 +2125,11 @@ vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(const wstring& 
     return index;
 }
 
-void MainWindow::window_DragOver(const IInspectable&, const DragEventArgs& e){
+void MainWindow::window_DragOver(const Control&, const DEArgs& e){
     e.AcceptedOperation(Windows::ApplicationModel::DataTransfer::DataPackageOperation::Copy);
 }
 
-IAsyncAction MainWindow::window_Drop(const IInspectable&, const DragEventArgs& e){
+AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
     const auto view{e.DataView()};
     if(!view.Contains(Windows::ApplicationModel::DataTransfer::StandardDataFormats::StorageItems())){
         StatusText().Text(L"Dropped content is not a file");
@@ -2146,7 +2162,7 @@ IAsyncAction MainWindow::window_Drop(const IInspectable&, const DragEventArgs& e
     co_await loadVideoFileAsync(file);
 }
 
-IAsyncAction MainWindow::loadVideoFileAsync(const StorageFile& file, const vector<IndexedFrameSample>* preloadedKeyframeIndex){
+AAction MainWindow::loadVideoFileAsync(const SFile& file, const vector<IndexedFrameSample>* preloadedKeyframeIndex){
     MediaInspectionResult inspected{};
     try{
         inspected = inspectMediaFile(file.Path().c_str());
