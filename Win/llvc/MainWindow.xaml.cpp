@@ -1542,20 +1542,35 @@ void MainWindow::AddRecentProject(hstring const& path){
 }
 
 void MainWindow::ResetProjectState(const bool clearLoadedVideo){
+    ++m_timelineRenderVersion;
     m_projectPath.clear();
     m_projectUnknownLines.clear();
     m_selectedKeyFrames.clear();
     m_cutIntervals.clear();
     m_frameIndex.clear();
+    m_mediaInfo = MediaInspectionResult{};
+    m_timelineDurationSeconds = 0;
     m_keyFrameSnapMode = L"Nearest";
     NearestSnapRadio().IsChecked(true);
     TimelineZoomSlider().Value(3);
 
+    ThumbnailLayer().Children().Clear();
+    CutOverlayLayer().Children().Clear();
+    TimelineTickCanvas().Children().Clear();
+    TimelineCanvas().Width(640.0);
+    TimelineTickCanvas().Width(640.0);
+    Controls::Canvas::SetLeft(TimelineCursor(), 0);
+    SyncTimelineHorizontalScrollBar();
+
     if(clearLoadedVideo){
+        if(m_player){
+            m_player.Pause();
+        }
         m_loadedFile = nullptr;
         m_player.Source(nullptr);
     }
 
+    StatusText().Text(L"Load or drag-and-drop a .mp4/.mov file to preview.");
     m_lastSavedProjectSnapshot = BuildProjectSnapshot();
 }
 
@@ -1602,6 +1617,8 @@ Windows::Foundation::IAsyncOperation<bool> MainWindow::EnsureProjectSavedBeforeC
 }
 
 Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Storage::StorageFile const& file){
+    ResetProjectState(true);
+
     const auto lines{co_await Windows::Storage::FileIO::ReadLinesAsync(file)};
 
     std::vector<std::wstring> unknownLines;
