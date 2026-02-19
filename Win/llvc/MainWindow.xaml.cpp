@@ -523,9 +523,9 @@ void MainWindow::loadAppSettings(){
         m_recentProjects = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
     }
     if(values.HasKey(S_KEYFRAME_SNAP_MODE)){
-        const auto snapMode{unbox_value<hstring>(values.Lookup(S_KEYFRAME_SNAP_MODE)).c_str()};
+        const auto snapMode{unbox_value<hstring>(values.Lookup(S_KEYFRAME_SNAP_MODE))};
         if(snapMode == L"Left" || snapMode == L"Right" || snapMode == L"Nearest"){
-            m_keyFrameSnapMode = snapMode;
+            m_keyFrameSnapMode = snapMode.c_str();
         }
     }
 
