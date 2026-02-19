@@ -38,6 +38,7 @@
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.System.h>
 
+#pragma comment(lib, "Shell32.lib")
 
 using namespace std;
 using namespace winrt;
