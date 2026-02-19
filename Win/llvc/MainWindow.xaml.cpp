@@ -646,12 +646,12 @@ void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const C
         return;
     }
 
-    const auto tag{selected.Tag().try_as<hstring>()};
-    if(!tag){
+    if(!selected.Tag()){
         return;
     }
 
     try{
+        const auto tag{unbox_value<hstring>(selected.Tag())};
         m_audioCrossfadeMs = normalizeAudioCrossfadeMs(stoi(wstring(tag.c_str())));
     }catch(...){
         m_audioCrossfadeMs = 0;
@@ -2347,12 +2347,12 @@ void MainWindow::syncAudioCrossfadeComboSelection(){
             continue;
         }
 
-        const auto tag{item.Tag().try_as<hstring>()};
-        if(!tag){
+        if(!item.Tag()){
             continue;
         }
 
         try{
+            const auto tag{unbox_value<hstring>(item.Tag())};
             if(stoi(wstring(tag.c_str())) == target){
                 combo.SelectedIndex(static_cast<int32_t>(i));
                 return;
