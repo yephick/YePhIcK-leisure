@@ -86,7 +86,7 @@
 
                     <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="TimelineScrollViewer_ViewChanged" SizeChanged="TimelineScrollViewer_SizeChanged">
                         <StackPanel Orientation="Vertical" Spacing="4">
-                            <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#111111"/>
+                            <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#111111" PointerReleased="TimelineTickCanvas_PointerReleased"/>
                             <Canvas x:Name="TimelineCanvas" Height="86" IsTabStop="True" Loaded="TimelineCanvas_Loaded" PointerPressed="TimelineCanvas_PointerPressed" PointerMoved="TimelineCanvas_PointerMoved" PointerReleased="TimelineCanvas_PointerReleased" PointerCanceled="TimelineCanvas_PointerCanceled" PointerCaptureLost="TimelineCanvas_PointerCaptureLost" Background="#111111">
                                 <Canvas x:Name="ThumbnailLayer" Height="86"/>
                                 <Rectangle x:Name="TimelineCursor" Canvas.Left="0" Width="2" Height="86" Fill="White"/>

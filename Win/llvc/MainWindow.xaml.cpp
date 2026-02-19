@@ -605,6 +605,52 @@ void MainWindow::TimelineCanvas_PointerMoved(IInspectable const&, Input::Pointer
     e.Handled(true);
 }
 
+bool MainWindow::ToggleSelectedKeyframeAtCanvasX(const double pointerX){
+    if(m_frameIndex.empty() || m_timelineDurationSeconds <= 0 || TimelineTickCanvas().Width() <= 0){
+        return false;
+    }
+
+    constexpr double hitTolerancePx{4.0};
+    const auto width{TimelineTickCanvas().Width()};
+    const auto total100ns{m_timelineDurationSeconds * 10'000'000.0};
+
+    std::int64_t nearestKeyTime{-1};
+    double nearestDistance{hitTolerancePx + 1.0};
+    for(auto const& frame : m_frameIndex){
+        if(!frame.cleanPoint){
+            continue;
+        }
+
+        const auto x{std::clamp((static_cast<double>(frame.time100ns) / total100ns) * width, 0.0, width)};
+        const auto distance{std::fabs(pointerX - x)};
+        if(distance <= hitTolerancePx && distance < nearestDistance){
+            nearestDistance = distance;
+            nearestKeyTime = frame.time100ns;
+        }
+    }
+
+    if(nearestKeyTime < 0){
+        return false;
+    }
+
+    const auto keySeconds{static_cast<double>(nearestKeyTime) / 10'000'000.0};
+    constexpr double duplicateToleranceSeconds{0.000001};
+    const auto it = std::find_if(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), [keySeconds](double t){
+        return std::fabs(t - keySeconds) <= duplicateToleranceSeconds;
+    });
+
+    if(it == m_selectedKeyFrames.end()){
+        m_selectedKeyFrames.push_back(keySeconds);
+    }else{
+        m_selectedKeyFrames.erase(it);
+    }
+
+    std::sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
+    RenderTimelineTicks();
+    RenderKeyframeTicks();
+    return true;
+}
+
 void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
     if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
         return;
@@ -618,7 +664,9 @@ void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::Poin
     TimelineCanvas().ReleasePointerCapture(e.Pointer());
 
     if(!dragged){
-        SeekTimelineToCanvasX(point.Position().X, (e.KeyModifiers() & Windows::System::VirtualKeyModifiers::Shift) == Windows::System::VirtualKeyModifiers::Shift);
+        if(!ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
+            SeekTimelineToCanvasX(point.Position().X, (e.KeyModifiers() & Windows::System::VirtualKeyModifiers::Shift) == Windows::System::VirtualKeyModifiers::Shift);
+        }
     }
 
     e.Handled(true);
@@ -641,6 +689,15 @@ void MainWindow::TimelineCanvas_PointerCaptureLost(IInspectable const&, Input::P
 void MainWindow::TimelineCanvas_Loaded(IInspectable const&, RoutedEventArgs const&){
     TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
 }
+
+void MainWindow::TimelineTickCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+    const auto point{e.GetCurrentPoint(TimelineTickCanvas())};
+    if(ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
+        TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
+        e.Handled(true);
+    }
+}
+
 
 void MainWindow::OnNaturalDurationChanged(Windows::Media::Playback::MediaPlaybackSession const& sender, IInspectable const&){
     const auto duration{sender.NaturalDuration()};
@@ -842,13 +899,21 @@ void MainWindow::RenderKeyframeTicks(){
         }
 
         const auto x = std::clamp((frame.time100ns / total100ns) * width, 0.0, width);
+        const auto keySeconds = static_cast<double>(frame.time100ns) / 10'000'000.0;
+        constexpr double selectedToleranceSeconds{0.000001};
+        const bool isSelected = std::any_of(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), [keySeconds](double t){
+            return std::fabs(t - keySeconds) <= selectedToleranceSeconds;
+        });
+
         Shapes::Line tick{};
         tick.X1(x);
         tick.X2(x);
         tick.Y1(0);
-        tick.Y2(5);
-        tick.Stroke(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 80, 200, 255)));
-        tick.StrokeThickness(1.0);
+        tick.Y2(isSelected ? 8.0 : 5.0);
+        tick.Stroke(Media::SolidColorBrush(isSelected
+            ? Windows::UI::ColorHelper::FromArgb(255, 255, 80, 80)
+            : Windows::UI::ColorHelper::FromArgb(255, 80, 200, 255)));
+        tick.StrokeThickness(isSelected ? 2.0 : 1.0);
         TimelineTickCanvas().Children().Append(tick);
     }
 }
