@@ -40,8 +40,16 @@
 #pragma comment(lib, "mfreadwrite.lib")
 #pragma comment(lib, "mfuuid.lib")
 
+using namespace std;
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
+using namespace Microsoft::UI::Input;
+using namespace Microsoft::UI::Xaml::Controls;
+using namespace Microsoft::UI::Xaml::Input;
+using namespace Windows::Foundation;
+using namespace Windows::Media::Playback;
+using namespace Windows::Storage;
+using namespace Windows::Storage::Pickers;
 
 namespace winrt::llvc::implementation{
 
@@ -66,13 +74,13 @@ struct MFLifetime{
     }
 };
 
-std::wstring FormatGuid(GUID const& guid){
+std::wstring formatGuid(GUID const& guid){
     OLECHAR raw[40]{};
     StringFromGUID2(guid, raw, static_cast<int>(std::size(raw)));
     return std::wstring(raw);
 }
 
-std::wstring FormatFileSize(uint64_t bytes){
+std::wstring formatFileSize(uint64_t bytes){
     std::wstringstream ss;
     constexpr double KB = 1024.0;
     constexpr double MB = KB * 1024.0;
@@ -86,7 +94,7 @@ std::wstring FormatFileSize(uint64_t bytes){
     return ss.str();
 }
 
-std::wstring FormatRatio(uint32_t num, uint32_t den){
+std::wstring formatRatio(uint32_t num, uint32_t den){
     if(den == 0){
         return L"-";
     }
@@ -95,7 +103,7 @@ std::wstring FormatRatio(uint32_t num, uint32_t den){
     return ss.str();
 }
 
-std::wstring JoinRecentItems(std::vector<hstring> const& values){
+std::wstring joinRecentItems(std::vector<hstring> const& values){
     std::wstring out;
     for(size_t i = 0; i < values.size(); ++i){
         if(i > 0){
@@ -106,7 +114,7 @@ std::wstring JoinRecentItems(std::vector<hstring> const& values){
     return out;
 }
 
-std::vector<hstring> SplitRecentItems(std::wstring const& source){
+std::vector<hstring> splitRecentItems(std::wstring const& source){
     std::vector<hstring> items;
     size_t start{};
     while(start <= source.size()){
@@ -123,7 +131,7 @@ std::vector<hstring> SplitRecentItems(std::wstring const& source){
     return items;
 }
 
-bool IsInMenuSubtree(DependencyObject const& object){
+bool isInMenuSubtree(DependencyObject const& object){
     DependencyObject current{object};
     while(current){
         if(current.try_as<Controls::MenuBar>() || current.try_as<Controls::MenuFlyoutItem>() || current.try_as<Controls::MenuFlyoutSubItem>() || current.try_as<Controls::MenuFlyoutPresenter>()){
@@ -134,7 +142,7 @@ bool IsInMenuSubtree(DependencyObject const& object){
     return false;
 }
 
-bool IsInDialogSubtree(DependencyObject const& object){
+bool isInDialogSubtree(DependencyObject const& object){
     DependencyObject current{object};
     while(current){
         if(current.try_as<Controls::ContentDialog>() || current.try_as<Controls::Primitives::Popup>()){
@@ -145,7 +153,7 @@ bool IsInDialogSubtree(DependencyObject const& object){
     return false;
 }
 
-std::wstring Trim(std::wstring value){
+std::wstring trim(std::wstring value){
     const auto first = value.find_first_not_of(L" \t\r\n");
     if(first == std::wstring::npos){
         return L"";
@@ -154,12 +162,12 @@ std::wstring Trim(std::wstring value){
     return value.substr(first, last - first + 1);
 }
 
-std::vector<std::uint32_t> ParseIndexList(std::wstring const& text){
+std::vector<std::uint32_t> parseIndexList(std::wstring const& text){
     std::vector<std::uint32_t> values;
     size_t start{};
     while(start <= text.size()){
         const auto pos = text.find(L',', start);
-        auto token = Trim(text.substr(start, pos == std::wstring::npos ? std::wstring::npos : pos - start));
+        auto token = trim(text.substr(start, pos == std::wstring::npos ? std::wstring::npos : pos - start));
         if(!token.empty()){
             try{ values.push_back(static_cast<std::uint32_t>(std::stoul(token))); }catch(...){ }
         }
@@ -169,18 +177,18 @@ std::vector<std::uint32_t> ParseIndexList(std::wstring const& text){
     return values;
 }
 
-std::vector<std::pair<std::uint32_t, std::uint32_t>> ParseIndexPairs(std::wstring const& text){
+std::vector<std::pair<std::uint32_t, std::uint32_t>> parseIndexPairs(std::wstring const& text){
     std::vector<std::pair<std::uint32_t, std::uint32_t>> pairs;
     size_t start{};
     while(start <= text.size()){
         const auto sep = text.find(L';', start);
-        const auto chunk = Trim(text.substr(start, sep == std::wstring::npos ? std::wstring::npos : sep - start));
+        const auto chunk = trim(text.substr(start, sep == std::wstring::npos ? std::wstring::npos : sep - start));
         if(!chunk.empty()){
             const auto comma = chunk.find(L',');
             if(comma != std::wstring::npos){
                 try{
-                    const auto a = static_cast<std::uint32_t>(std::stoul(Trim(chunk.substr(0, comma))));
-                    const auto b = static_cast<std::uint32_t>(std::stoul(Trim(chunk.substr(comma + 1))));
+                    const auto a = static_cast<std::uint32_t>(std::stoul(trim(chunk.substr(0, comma))));
+                    const auto b = static_cast<std::uint32_t>(std::stoul(trim(chunk.substr(comma + 1))));
                     pairs.emplace_back(a, b);
                 }catch(...){ }
             }
@@ -191,7 +199,7 @@ std::vector<std::pair<std::uint32_t, std::uint32_t>> ParseIndexPairs(std::wstrin
     return pairs;
 }
 
-std::wstring SerializeIndexList(std::vector<std::uint32_t> const& values){
+std::wstring serializeIndexList(std::vector<std::uint32_t> const& values){
     std::wstringstream ss;
     for(size_t i = 0; i < values.size(); ++i){
         if(i > 0){ ss << L","; }
@@ -200,7 +208,7 @@ std::wstring SerializeIndexList(std::vector<std::uint32_t> const& values){
     return ss.str();
 }
 
-std::wstring SerializeIndexPairs(std::vector<std::pair<std::uint32_t, std::uint32_t>> const& values){
+std::wstring serializeIndexPairs(std::vector<std::pair<std::uint32_t, std::uint32_t>> const& values){
     std::wstringstream ss;
     for(size_t i = 0; i < values.size(); ++i){
         if(i > 0){ ss << L";"; }
@@ -211,7 +219,7 @@ std::wstring SerializeIndexPairs(std::vector<std::pair<std::uint32_t, std::uint3
 
 constexpr std::uint32_t TIMELINE_EDGE_SENTINEL = std::numeric_limits<std::uint32_t>::max();
 
-std::vector<std::int64_t> BuildCleanKeyframeTimes100ns(std::vector<IndexedFrameSample> const& index){
+std::vector<std::int64_t> buildCleanKeyframeTimes100ns(std::vector<IndexedFrameSample> const& index){
     std::vector<std::int64_t> times;
     times.reserve(index.size());
     for(auto const& sample : index){
@@ -222,7 +230,7 @@ std::vector<std::int64_t> BuildCleanKeyframeTimes100ns(std::vector<IndexedFrameS
     return times;
 }
 
-std::vector<std::pair<std::uint32_t, std::uint32_t>> NormalizeAndMergeIndexIntervals(std::vector<std::pair<std::uint32_t, std::uint32_t>> intervals, std::size_t keyframeCount){
+std::vector<std::pair<std::uint32_t, std::uint32_t>> normalizeAndMergeIndexIntervals(std::vector<std::pair<std::uint32_t, std::uint32_t>> intervals, std::size_t keyframeCount){
     using RankedInterval = std::pair<std::int64_t, std::int64_t>;
     std::vector<RankedInterval> normalized;
     normalized.reserve(intervals.size());
@@ -266,18 +274,18 @@ std::vector<std::pair<std::uint32_t, std::uint32_t>> NormalizeAndMergeIndexInter
 }
 
 
-std::vector<IndexedFrameSample> ParseKeyframeVector(std::wstring const& text){
+std::vector<IndexedFrameSample> parseKeyframeVector(std::wstring const& text){
     std::vector<IndexedFrameSample> out;
     size_t start{};
     while(start <= text.size()){
         const auto sep = text.find(L';', start);
-        const auto item = Trim(text.substr(start, sep == std::wstring::npos ? std::wstring::npos : sep - start));
+        const auto item = trim(text.substr(start, sep == std::wstring::npos ? std::wstring::npos : sep - start));
         if(!item.empty()){
             const auto at = item.find(L'@');
             if(at != std::wstring::npos){
                 try{
-                    const auto t = static_cast<std::int64_t>(std::stoll(Trim(item.substr(0, at))));
-                    const auto i = static_cast<std::uint32_t>(std::stoul(Trim(item.substr(at + 1))));
+                    const auto t = static_cast<std::int64_t>(std::stoll(trim(item.substr(0, at))));
+                    const auto i = static_cast<std::uint32_t>(std::stoul(trim(item.substr(at + 1))));
                     out.push_back(IndexedFrameSample{.time100ns=t, .duration100ns=0, .cleanPoint=true, .sampleIndex=i});
                 }catch(...){ }
             }
@@ -288,7 +296,7 @@ std::vector<IndexedFrameSample> ParseKeyframeVector(std::wstring const& text){
     return out;
 }
 
-std::wstring SerializeKeyframeVector(std::vector<IndexedFrameSample> const& index){
+std::wstring serializeKeyframeVector(std::vector<IndexedFrameSample> const& index){
     std::wstringstream ss;
     bool first{true};
     for(auto const& k : index){
@@ -300,7 +308,7 @@ std::wstring SerializeKeyframeVector(std::vector<IndexedFrameSample> const& inde
     return ss.str();
 }
 
-bool HasDecoderForSubtype(GUID const& subtype){
+bool hasDecoderForSubtype(GUID const& subtype){
     MFT_REGISTER_TYPE_INFO inType{};
     inType.guidMajorType = MFMediaType_Video;
     inType.guidSubtype = subtype;
@@ -325,7 +333,7 @@ bool HasDecoderForSubtype(GUID const& subtype){
     return SUCCEEDED(hr) && count > 0;
 }
 
-void AnalyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uint32_t fpsNum, uint32_t fpsDen, MediaInspectionResult& result){
+void analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uint32_t fpsNum, uint32_t fpsDen, MediaInspectionResult& result){
     constexpr uint32_t maxSamplesToInspect{1500};
     constexpr LONGLONG maxSpan100ns{120LL * 10'000'000LL};
 
@@ -417,25 +425,25 @@ void AnalyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uin
 MainWindow::MainWindow(){
     InitializeComponent();
 
-    m_player = Windows::Media::Playback::MediaPlayer();
+    m_player = MediaPlayer();
     PreviewPlayer().SetMediaPlayer(m_player);
 
-    m_naturalDurationChangedRevoker = m_player.PlaybackSession().NaturalDurationChanged(auto_revoke, {this, &MainWindow::OnNaturalDurationChanged});
+    m_naturalDurationChangedRevoker = m_player.PlaybackSession().NaturalDurationChanged(auto_revoke, {this, &MainWindow::onNaturalDurationChanged});
 
     m_positionTimer = DispatcherTimer();
     m_positionTimer.Interval(std::chrono::milliseconds(80));
-    m_positionTimer.Tick({this, &MainWindow::OnPositionTimerTick});
+    m_positionTimer.Tick({this, &MainWindow::onPositionTimerTick});
     m_positionTimer.Start();
 
-    RestoreWindowPlacement();
-    LoadAppSettings();
-    Closed({this, &MainWindow::OnClosed});
-    RefreshRecentVideosMenu();
-    RefreshRecentProjectsMenu();
-    m_lastSavedProjectSnapshot = BuildProjectSnapshot();
+    restoreWindowPlacement();
+    loadAppSettings();
+    Closed({this, &MainWindow::onClosed});
+    refreshRecentVideosMenu();
+    refreshRecentProjectsMenu();
+    m_lastSavedProjectSnapshot = buildProjectSnapshot();
 }
 
-HWND MainWindow::GetWindowHandle() const{
+HWND MainWindow::getWindowHandle() const{
     HWND hwnd{};
     const auto projected{const_cast<MainWindow*>(this)->get_strong()};
     check_hresult(projected.as<::IWindowNative>()->get_WindowHandle(&hwnd));
@@ -451,7 +459,7 @@ int32_t DipsToPixels(const int32_t dipValue, const uint32_t dpi){
     return static_cast<int32_t>(std::lround((dipValue * (dpi == 0 ? 96U : dpi)) / 96.0));
 }
 
-bool MainWindow::IsRectVisibleOnAnyMonitor(RECT const& rect){
+bool MainWindow::isRectVisibleOnAnyMonitor(RECT const& rect){
     const auto monitor{::MonitorFromRect(&rect, MONITOR_DEFAULTTONULL)};
     if(!monitor){
         return false;
@@ -466,8 +474,8 @@ bool MainWindow::IsRectVisibleOnAnyMonitor(RECT const& rect){
     return ::IntersectRect(&intersection, &rect, &monitorInfo.rcWork) != FALSE;
 }
 
-void MainWindow::RestoreWindowPlacement(){
-    const auto localSettings{Windows::Storage::ApplicationData::Current().LocalSettings()};
+void MainWindow::restoreWindowPlacement(){
+    const auto localSettings{ApplicationData::Current().LocalSettings()};
     const auto values{localSettings.Values()};
 
     if(!values.HasKey(W_POS_L) || !values.HasKey(W_POS_T) || !values.HasKey(W_POS_W) || !values.HasKey(W_POS_H)){
@@ -477,7 +485,7 @@ void MainWindow::RestoreWindowPlacement(){
     const auto left{unbox_value<int32_t>(values.Lookup(W_POS_L))};
     const auto top{unbox_value<int32_t>(values.Lookup(W_POS_T))};
 
-    const auto hwnd{GetWindowHandle()};
+    const auto hwnd{getWindowHandle()};
 
     SetWindowPos(hwnd, nullptr, left, top, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
 
@@ -488,7 +496,7 @@ void MainWindow::RestoreWindowPlacement(){
     const auto width{hasDpiData ? DipsToPixels(storedWidth, currentDpi) : storedWidth};
     const auto height{hasDpiData ? DipsToPixels(storedHeight, currentDpi) : storedHeight};
 
-    if(!IsRectVisibleOnAnyMonitor(RECT{left, top, left + width, top + height})){
+    if(!isRectVisibleOnAnyMonitor(RECT{left, top, left + width, top + height})){
         values.Remove(W_POS_L);
         values.Remove(W_POS_T);
         values.Remove(W_POS_W);
@@ -500,8 +508,8 @@ void MainWindow::RestoreWindowPlacement(){
     SetWindowPos(hwnd, nullptr, left, top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
-void MainWindow::LoadAppSettings(){
-    const auto values{Windows::Storage::ApplicationData::Current().LocalSettings().Values()};
+void MainWindow::loadAppSettings(){
+    const auto values{ApplicationData::Current().LocalSettings().Values()};
 
     m_maxRecentVideos = S_DEFAULT_MAX_RECENT;
     m_maxRecentProjects = S_DEFAULT_MAX_RECENT;
@@ -516,10 +524,10 @@ void MainWindow::LoadAppSettings(){
     }
 
     if(values.HasKey(S_RECENT_VIDEOS)){
-        m_recentVideos = SplitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_VIDEOS)).c_str());
+        m_recentVideos = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_VIDEOS)).c_str());
     }
     if(values.HasKey(S_RECENT_PROJECTS)){
-        m_recentProjects = SplitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
+        m_recentProjects = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
     }
 
     if(m_recentVideos.size() > m_maxRecentVideos){
@@ -530,16 +538,16 @@ void MainWindow::LoadAppSettings(){
     }
 }
 
-void MainWindow::SaveAppSettings() const{
-    const auto values{Windows::Storage::ApplicationData::Current().LocalSettings().Values()};
+void MainWindow::saveAppSettings() const{
+    const auto values{ApplicationData::Current().LocalSettings().Values()};
     values.Insert(S_MAX_RECENT_VIDEOS, box_value(static_cast<int32_t>(m_maxRecentVideos)));
     values.Insert(S_MAX_RECENT_PROJECTS, box_value(static_cast<int32_t>(m_maxRecentProjects)));
-    values.Insert(S_RECENT_VIDEOS, box_value(hstring(JoinRecentItems(m_recentVideos))));
-    values.Insert(S_RECENT_PROJECTS, box_value(hstring(JoinRecentItems(m_recentProjects))));
+    values.Insert(S_RECENT_VIDEOS, box_value(hstring(joinRecentItems(m_recentVideos))));
+    values.Insert(S_RECENT_PROJECTS, box_value(hstring(joinRecentItems(m_recentProjects))));
 }
 
-void MainWindow::SaveWindowPlacement() const{
-    const auto hwnd{GetWindowHandle()};
+void MainWindow::saveWindowPlacement() const{
+    const auto hwnd{getWindowHandle()};
 
     RECT bounds{};
     if(!GetWindowRect(hwnd, &bounds)){
@@ -551,7 +559,7 @@ void MainWindow::SaveWindowPlacement() const{
         bounds = placement.rcNormalPosition;
     }
 
-    const auto localSettings{Windows::Storage::ApplicationData::Current().LocalSettings()};
+    const auto localSettings{ApplicationData::Current().LocalSettings()};
     const auto values{localSettings.Values()};
     const auto dpi{::GetDpiForWindow(hwnd)};
     values.Insert(W_POS_L, box_value(static_cast<int32_t>(bounds.left)));
@@ -561,7 +569,7 @@ void MainWindow::SaveWindowPlacement() const{
     values.Insert(W_POS_DPI, box_value(static_cast<int32_t>(dpi)));
 }
 
-void MainWindow::OnClosed(IInspectable const&, WindowEventArgs const&){
+void MainWindow::onClosed(IInspectable const&, WindowEventArgs const&){
     m_isClosing = true;
 
     if(m_positionTimer){
@@ -569,38 +577,38 @@ void MainWindow::OnClosed(IInspectable const&, WindowEventArgs const&){
     }
 
     m_naturalDurationChangedRevoker.revoke();
-    SaveWindowPlacement();
-    SaveAppSettings();
+    saveWindowPlacement();
+    saveAppSettings();
 }
 
-void MainWindow::StartButton_Click(IInspectable const&, RoutedEventArgs const&){
+void MainWindow::startButton_Click(IInspectable const&, RoutedEventArgs const&){
     if(m_player){
         m_player.Play();
     }
 }
 
-void MainWindow::PauseButton_Click(IInspectable const&, RoutedEventArgs const&){
+void MainWindow::pauseButton_Click(IInspectable const&, RoutedEventArgs const&){
     if(m_player){
         m_player.Pause();
     }
 }
 
-void MainWindow::StopButton_Click(IInspectable const&, RoutedEventArgs const&){
+void MainWindow::stopButton_Click(IInspectable const&, RoutedEventArgs const&){
     if(m_player){
         m_player.Pause();
         m_player.PlaybackSession().Position(std::chrono::seconds(0));
-        UpdateTimelineCursorFromPlayback();
+        updateTimelineCursorFromPlayback();
     }
 }
 
-void MainWindow::TimelineZoomSlider_ValueChanged(IInspectable const&, Controls::Primitives::RangeBaseValueChangedEventArgs const&){
+void MainWindow::timelineZoomSlider_ValueChanged(IInspectable const&, Controls::Primitives::RangeBaseValueChangedEventArgs const&){
     if(m_loadedFile && m_timelineDurationSeconds > 0){
-        RenderTimelineAsync();
+        renderTimelineAsync();
     }
-    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-void MainWindow::TimelineHorizontalScrollBar_ValueChanged(IInspectable const&, Controls::Primitives::RangeBaseValueChangedEventArgs const& args){
+void MainWindow::timelineHorizontalScrollBar_ValueChanged(IInspectable const&, Controls::Primitives::RangeBaseValueChangedEventArgs const& args){
     if(m_isClosing){
         return;
     }
@@ -608,20 +616,20 @@ void MainWindow::TimelineHorizontalScrollBar_ValueChanged(IInspectable const&, C
     const auto scrollViewer{TimelineScrollViewer()};
     const auto offset{scrollViewer.HorizontalOffset()};
     if(std::fabs(offset - args.NewValue()) > 0.5){
-        const auto targetOffset{box_value(args.NewValue()).as<Windows::Foundation::IReference<double>>()};
+        const auto targetOffset{box_value(args.NewValue()).as<IReference<double>>()};
         scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     }
 }
 
-void MainWindow::TimelineScrollViewer_ViewChanged(IInspectable const&, Controls::ScrollViewerViewChangedEventArgs const&){
-    SyncTimelineHorizontalScrollBar();
+void MainWindow::timelineScrollViewer_ViewChanged(IInspectable const&, Controls::ScrollViewerViewChangedEventArgs const&){
+    syncTimelineHorizontalScrollBar();
 }
 
-void MainWindow::TimelineScrollViewer_SizeChanged(IInspectable const&, SizeChangedEventArgs const&){
-    SyncTimelineHorizontalScrollBar();
+void MainWindow::timelineScrollViewer_SizeChanged(IInspectable const&, SizeChangedEventArgs const&){
+    syncTimelineHorizontalScrollBar();
 }
 
-void MainWindow::TimelineCanvas_PointerPressed(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+void MainWindow::timelineCanvas_PointerPressed(IInspectable const&, Input::PointerRoutedEventArgs const& e){
     if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
     }
@@ -637,12 +645,12 @@ void MainWindow::TimelineCanvas_PointerPressed(IInspectable const&, Input::Point
     m_timelineDragStartX = static_cast<double>(point.Position().X);
     m_timelineDragStartOffset = TimelineScrollViewer().HorizontalOffset();
 
-    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
+    tryFocusTimelineCanvas(FocusState::Programmatic);
     TimelineCanvas().CapturePointer(e.Pointer());
     e.Handled(true);
 }
 
-void MainWindow::TimelineCanvas_PointerMoved(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+void MainWindow::timelineCanvas_PointerMoved(IInspectable const&, Input::PointerRoutedEventArgs const& e){
     if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
         return;
     }
@@ -658,12 +666,12 @@ void MainWindow::TimelineCanvas_PointerMoved(IInspectable const&, Input::Pointer
     const auto viewportWidth{scrollViewer.ViewportWidth()};
     const auto maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
     const auto target{std::clamp(m_timelineDragStartOffset - deltaX, 0.0, maxOffset)};
-    const auto targetOffset{box_value(target).as<Windows::Foundation::IReference<double>>()};
+    const auto targetOffset{box_value(target).as<IReference<double>>()};
     scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     e.Handled(true);
 }
 
-bool MainWindow::ToggleSelectedKeyframeAtCanvasX(const double pointerX){
+bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
     if(m_frameIndex.empty() || m_timelineDurationSeconds <= 0 || TimelineTickCanvas().Width() <= 0){
         return false;
     }
@@ -704,15 +712,15 @@ bool MainWindow::ToggleSelectedKeyframeAtCanvasX(const double pointerX){
     }
 
     std::sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
-    RenderTimelineTicks();
-    RenderKeyframeTicks();
+    renderTimelineTicks();
+    renderKeyframeTicks();
     return true;
 }
 
-void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+void MainWindow::timelineCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
-    if(point.Properties().PointerUpdateKind() == Microsoft::UI::Input::PointerUpdateKind::RightButtonReleased){
-        if(ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
+    if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased){
+        if(toggleSelectedKeyframeAtCanvasX(point.Position().X)){
             e.Handled(true);
             return;
         }
@@ -731,16 +739,16 @@ void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::Poin
         const auto modifiers{e.KeyModifiers()};
         const bool ctrlPressed{(modifiers & Windows::System::VirtualKeyModifiers::Control) == Windows::System::VirtualKeyModifiers::Control};
         if(ctrlPressed){
-            ToggleCutBlockAtCanvasX(point.Position().X);
+            toggleCutBlockAtCanvasX(point.Position().X);
         }else{
-            SeekTimelineToCanvasX(point.Position().X, (modifiers & Windows::System::VirtualKeyModifiers::Shift) == Windows::System::VirtualKeyModifiers::Shift);
+            seekTimelineToCanvasX(point.Position().X, (modifiers & Windows::System::VirtualKeyModifiers::Shift) == Windows::System::VirtualKeyModifiers::Shift);
         }
     }
 
     e.Handled(true);
 }
 
-void MainWindow::TimelineCanvas_PointerCanceled(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+void MainWindow::timelineCanvas_PointerCanceled(IInspectable const&, Input::PointerRoutedEventArgs const& e){
     if(m_isTimelineDragging && e.Pointer().PointerId() == m_timelineDragPointerId){
         m_isTimelineDragging = false;
         m_timelineDragMoved = false;
@@ -749,53 +757,53 @@ void MainWindow::TimelineCanvas_PointerCanceled(IInspectable const&, Input::Poin
     }
 }
 
-void MainWindow::TimelineCanvas_PointerCaptureLost(IInspectable const&, Input::PointerRoutedEventArgs const&){
+void MainWindow::timelineCanvas_PointerCaptureLost(IInspectable const&, Input::PointerRoutedEventArgs const&){
     m_isTimelineDragging = false;
     m_timelineDragMoved = false;
 }
 
-void MainWindow::TimelineCanvas_Loaded(IInspectable const&, RoutedEventArgs const&){
-    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
+void MainWindow::timelineCanvas_Loaded(IInspectable const&, RoutedEventArgs const&){
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-void MainWindow::TimelineTickCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
+void MainWindow::timelineTickCanvas_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& e){
     const auto point{e.GetCurrentPoint(TimelineTickCanvas())};
-    if(point.Properties().PointerUpdateKind() == Microsoft::UI::Input::PointerUpdateKind::RightButtonReleased && ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
-        TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
+    if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased && toggleSelectedKeyframeAtCanvasX(point.Position().X)){
+        tryFocusTimelineCanvas(FocusState::Programmatic);
         e.Handled(true);
     }
 }
 
 
-void MainWindow::OnNaturalDurationChanged(Windows::Media::Playback::MediaPlaybackSession const& sender, IInspectable const&){
+void MainWindow::onNaturalDurationChanged(MediaPlaybackSession const& sender, IInspectable const&){
     const auto duration{sender.NaturalDuration()};
     m_timelineDurationSeconds = std::max(0.0, duration.count() / 10'000'000.0);
 
     if(m_loadedFile && m_timelineDurationSeconds > 0){
         const auto weak{get_weak()};
         if(DispatcherQueue().HasThreadAccess()){
-            RenderTimelineAsync();
+            renderTimelineAsync();
             return;
         }
 
         DispatcherQueue().TryEnqueue([weak](){
             if(const auto self{weak.get()}){
-                self->RenderTimelineAsync();
+                self->renderTimelineAsync();
             }
         });
     }
 }
 
-void MainWindow::OnPositionTimerTick(IInspectable const&, IInspectable const&){
+void MainWindow::onPositionTimerTick(IInspectable const&, IInspectable const&){
     if(m_isClosing){
         return;
     }
 
-    (void)TrySkipCurrentCutDuringPlayback();
-    UpdateTimelineCursorFromPlayback();
+    (void)trySkipCurrentCutDuringPlayback();
+    updateTimelineCursorFromPlayback();
 }
 
-void MainWindow::UpdateTimelineCursorFromPlayback(){
+void MainWindow::updateTimelineCursorFromPlayback(){
     if(m_isClosing || !m_player || m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
     }
@@ -806,14 +814,14 @@ void MainWindow::UpdateTimelineCursorFromPlayback(){
     const auto left{ratio * TimelineCanvas().Width()};
     Controls::Canvas::SetLeft(TimelineCursor(), left);
 
-    if(m_player.PlaybackSession().PlaybackState() == Windows::Media::Playback::MediaPlaybackState::Playing){
-        EnsureTimelineCursorVisible(left);
+    if(m_player.PlaybackSession().PlaybackState() == MediaPlaybackState::Playing){
+        ensureTimelineCursorVisible(left);
     }
 
-    SyncTimelineHorizontalScrollBar();
+    syncTimelineHorizontalScrollBar();
 }
 
-void MainWindow::SyncTimelineHorizontalScrollBar(){
+void MainWindow::syncTimelineHorizontalScrollBar(){
     const auto scrollViewer{TimelineScrollViewer()};
     scrollViewer.UpdateLayout();
 
@@ -836,7 +844,7 @@ void MainWindow::SyncTimelineHorizontalScrollBar(){
     }
 }
 
-void MainWindow::SeekTimelineToCanvasX(const double pointerX, const bool bypassSnap){
+void MainWindow::seekTimelineToCanvasX(const double pointerX, const bool bypassSnap){
     if(!m_player || m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
     }
@@ -889,11 +897,11 @@ void MainWindow::SeekTimelineToCanvasX(const double pointerX, const bool bypassS
         target100ns = useTime;
     }
 
-    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{target100ns});
-    UpdateTimelineCursorFromPlayback();
+    m_player.PlaybackSession().Position(TimeSpan{target100ns});
+    updateTimelineCursorFromPlayback();
 }
 
-void MainWindow::EnsureTimelineCursorVisible(const double cursorLeft){
+void MainWindow::ensureTimelineCursorVisible(const double cursorLeft){
     const auto scrollViewer{TimelineScrollViewer()};
     const auto currentOffset{scrollViewer.HorizontalOffset()};
     const auto viewportWidth{scrollViewer.ViewportWidth()};
@@ -908,15 +916,15 @@ void MainWindow::EnsureTimelineCursorVisible(const double cursorLeft){
     const auto maxOffset{std::max(0.0, TimelineCanvas().Width() - viewportWidth)};
 
     if(cursorLeft < minVisible){
-        const auto targetOffset{box_value(std::clamp(cursorLeft - cursorPadding, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
+        const auto targetOffset{box_value(std::clamp(cursorLeft - cursorPadding, 0.0, maxOffset)).as<IReference<double>>()};
         scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     }else if(cursorLeft > maxVisible){
-        const auto targetOffset{box_value(std::clamp(cursorLeft + cursorPadding - viewportWidth, 0.0, maxOffset)).as<Windows::Foundation::IReference<double>>()};
+        const auto targetOffset{box_value(std::clamp(cursorLeft + cursorPadding - viewportWidth, 0.0, maxOffset)).as<IReference<double>>()};
         scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     }
 }
 
-void MainWindow::RenderTimelineTicks(){
+void MainWindow::renderTimelineTicks(){
     TimelineTickCanvas().Children().Clear();
 
     const double width{TimelineCanvas().Width()};
@@ -959,7 +967,7 @@ void MainWindow::RenderTimelineTicks(){
     }
 }
 
-void MainWindow::RenderKeyframeTicks(){
+void MainWindow::renderKeyframeTicks(){
     if(m_frameIndex.empty() || m_timelineDurationSeconds <= 0 || TimelineTickCanvas().Width() <= 0){
         return;
     }
@@ -989,7 +997,7 @@ void MainWindow::RenderKeyframeTicks(){
     }
 }
 
-void MainWindow::RenderCutOverlays(){
+void MainWindow::renderCutOverlays(){
     CutOverlayLayer().Children().Clear();
 
     const auto width{TimelineCanvas().Width()};
@@ -998,7 +1006,7 @@ void MainWindow::RenderCutOverlays(){
         return;
     }
 
-    const auto cleanKeyTimes = BuildCleanKeyframeTimes100ns(m_frameIndex);
+    const auto cleanKeyTimes = buildCleanKeyframeTimes100ns(m_frameIndex);
     if(cleanKeyTimes.empty()){
         return;
     }
@@ -1031,7 +1039,7 @@ void MainWindow::RenderCutOverlays(){
     }
 }
 
-bool MainWindow::ToggleCutBlockAtCanvasX(const double pointerX){
+bool MainWindow::toggleCutBlockAtCanvasX(const double pointerX){
     if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return false;
     }
@@ -1048,7 +1056,7 @@ bool MainWindow::ToggleCutBlockAtCanvasX(const double pointerX){
     std::sort(selectedMarkers.begin(), selectedMarkers.end());
     selectedMarkers.erase(std::unique(selectedMarkers.begin(), selectedMarkers.end()), selectedMarkers.end());
 
-    const auto cleanKeyTimes = BuildCleanKeyframeTimes100ns(m_frameIndex);
+    const auto cleanKeyTimes = buildCleanKeyframeTimes100ns(m_frameIndex);
     if(cleanKeyTimes.size() < 2){
         return false;
     }
@@ -1115,22 +1123,22 @@ bool MainWindow::ToggleCutBlockAtCanvasX(const double pointerX){
         updated.emplace_back(blockStart, blockEnd);
     }
 
-    m_cutIntervals = NormalizeAndMergeIndexIntervals(std::move(updated), cleanKeyTimes.size());
-    RenderCutOverlays();
+    m_cutIntervals = normalizeAndMergeIndexIntervals(std::move(updated), cleanKeyTimes.size());
+    renderCutOverlays();
     return true;
 }
 
-bool MainWindow::TrySkipCurrentCutDuringPlayback(){
+bool MainWindow::trySkipCurrentCutDuringPlayback(){
     if(!m_player || m_cutIntervals.empty() || m_timelineDurationSeconds <= 0){
         return false;
     }
 
     const auto state{m_player.PlaybackSession().PlaybackState()};
-    if(state != Windows::Media::Playback::MediaPlaybackState::Playing){
+    if(state != MediaPlaybackState::Playing){
         return false;
     }
 
-    const auto cleanKeyTimes = BuildCleanKeyframeTimes100ns(m_frameIndex);
+    const auto cleanKeyTimes = buildCleanKeyframeTimes100ns(m_frameIndex);
     if(cleanKeyTimes.empty()){
         return false;
     }
@@ -1146,7 +1154,7 @@ bool MainWindow::TrySkipCurrentCutDuringPlayback(){
         }
 
         if(now100ns >= start100ns && now100ns < end100ns){
-            m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{end100ns});
+            m_player.PlaybackSession().Position(TimeSpan{end100ns});
             return true;
         }
     }
@@ -1154,7 +1162,7 @@ bool MainWindow::TrySkipCurrentCutDuringPlayback(){
     return false;
 }
 
-void MainWindow::StepByFrame(const int delta){
+void MainWindow::stepByFrame(const int delta){
     if(!m_player || m_frameIndex.empty() || delta == 0){
         return;
     }
@@ -1189,11 +1197,11 @@ void MainWindow::StepByFrame(const int delta){
     const auto direction = delta < 0 ? static_cast<std::int64_t>(-1) : static_cast<std::int64_t>(1);
     const auto duration100ns = static_cast<std::int64_t>(std::max(0.0, m_timelineDurationSeconds) * 10'000'000.0);
     const auto target = std::clamp(current + (direction * frameStep100ns), static_cast<std::int64_t>(0), duration100ns);
-    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{target});
-    UpdateTimelineCursorFromPlayback();
+    m_player.PlaybackSession().Position(TimeSpan{target});
+    updateTimelineCursorFromPlayback();
 }
 
-void MainWindow::StepByKeyframe(const int delta){
+void MainWindow::stepByKeyframe(const int delta){
     if(!m_player || m_frameIndex.empty() || delta == 0){
         return;
     }
@@ -1224,30 +1232,30 @@ void MainWindow::StepByKeyframe(const int delta){
         }
     }
 
-    m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{target});
-    UpdateTimelineCursorFromPlayback();
+    m_player.PlaybackSession().Position(TimeSpan{target});
+    updateTimelineCursorFromPlayback();
 }
 
-void MainWindow::TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState const focusState){
+void MainWindow::tryFocusTimelineCanvas(FocusState const focusState){
     const auto canvas{TimelineCanvas()};
     if(canvas && canvas.XamlRoot()){
         canvas.Focus(focusState);
     }
 }
 
-bool MainWindow::HandleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
+bool MainWindow::handleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
     const auto focused{Input::FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
-    const bool focusOnMenu = focused && IsInMenuSubtree(focused);
-    const bool focusInDialog = focused && IsInDialogSubtree(focused);
+    const bool focusOnMenu = focused && isInMenuSubtree(focused);
+    const bool focusInDialog = focused && isInDialogSubtree(focused);
 
     if(args.Key() == Windows::System::VirtualKey::Menu || args.Key() == Windows::System::VirtualKey::LeftMenu || args.Key() == Windows::System::VirtualKey::RightMenu){
-        MainMenuBar().Focus(Microsoft::UI::Xaml::FocusState::Keyboard);
+        MainMenuBar().Focus(FocusState::Keyboard);
         args.Handled(true);
         return true;
     }
 
     if(args.Key() == Windows::System::VirtualKey::Tab && !focusOnMenu && !focusInDialog){
-        TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
+        tryFocusTimelineCanvas(FocusState::Programmatic);
         args.Handled(true);
         return true;
     }
@@ -1256,24 +1264,24 @@ bool MainWindow::HandleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
         return false;
     }
 
-    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 
     const auto ctrlState{Microsoft::UI::Input::InputKeyboardSource::GetKeyStateForCurrentThread(Windows::System::VirtualKey::Control)};
     const bool ctrlDown{(ctrlState & Windows::UI::Core::CoreVirtualKeyStates::Down) == Windows::UI::Core::CoreVirtualKeyStates::Down};
 
     if(ctrlDown){
         if(args.Key() == Windows::System::VirtualKey::O){
-            (void)OpenProjectMenuItem_Click(nullptr, RoutedEventArgs{});
+            (void)openProjectMenuItem_Click(nullptr, RoutedEventArgs{});
             args.Handled(true);
             return true;
         }
         if(args.Key() == Windows::System::VirtualKey::S){
-            (void)SaveProjectMenuItem_Click(nullptr, RoutedEventArgs{});
+            (void)saveProjectMenuItem_Click(nullptr, RoutedEventArgs{});
             args.Handled(true);
             return true;
         }
         if(args.Key() == Windows::System::VirtualKey::N){
-            (void)NewProjectMenuItem_Click(nullptr, RoutedEventArgs{});
+            (void)newProjectMenuItem_Click(nullptr, RoutedEventArgs{});
             args.Handled(true);
             return true;
         }
@@ -1283,7 +1291,7 @@ bool MainWindow::HandleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
     case Windows::System::VirtualKey::Space:
         if(m_player){
             const auto state = m_player.PlaybackSession().PlaybackState();
-            if(state == Windows::Media::Playback::MediaPlaybackState::Playing){
+            if(state == MediaPlaybackState::Playing){
                 m_player.Pause();
             }else{
                 m_player.Play();
@@ -1292,19 +1300,19 @@ bool MainWindow::HandleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
         args.Handled(true);
         return true;
     case Windows::System::VirtualKey::Left:
-        StepByFrame(-1);
+        stepByFrame(-1);
         args.Handled(true);
         return true;
     case Windows::System::VirtualKey::Right:
-        StepByFrame(1);
+        stepByFrame(1);
         args.Handled(true);
         return true;
     case Windows::System::VirtualKey::Up:
-        StepByKeyframe(-1);
+        stepByKeyframe(-1);
         args.Handled(true);
         return true;
     case Windows::System::VirtualKey::Down:
-        StepByKeyframe(1);
+        stepByKeyframe(1);
         args.Handled(true);
         return true;
     default:
@@ -1312,84 +1320,84 @@ bool MainWindow::HandleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
     }
 }
 
-void MainWindow::Window_PreviewKeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
-    (void)HandleStorylineKeyDown(args);
+void MainWindow::window_PreviewKeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
+    (void)handleStorylineKeyDown(args);
 }
 
-void MainWindow::Window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
-    (void)HandleStorylineKeyDown(args);
+void MainWindow::window_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args){
+    (void)handleStorylineKeyDown(args);
 }
 
-void MainWindow::RootGrid_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& args){
+void MainWindow::rootGrid_PointerReleased(IInspectable const&, Input::PointerRoutedEventArgs const& args){
     const auto source = args.OriginalSource().try_as<DependencyObject>();
     if(!source){
         return;
     }
-    if(IsInMenuSubtree(source) || IsInDialogSubtree(source)){
+    if(isInMenuSubtree(source) || isInDialogSubtree(source)){
         return;
     }
-    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-Windows::Foundation::TimeSpan MainWindow::SecondsToTimeSpan(const double seconds){
-    return std::chrono::duration_cast<Windows::Foundation::TimeSpan>(std::chrono::duration<double>(seconds));
+TimeSpan MainWindow::secondsToTimeSpan(const double seconds){
+    return std::chrono::duration_cast<TimeSpan>(std::chrono::duration<double>(seconds));
 }
 
-void MainWindow::KeyFrameSnapMode_Checked(IInspectable const& sender, RoutedEventArgs const&){
+void MainWindow::keyFrameSnapMode_Checked(IInspectable const& sender, RoutedEventArgs const&){
     const auto radio{sender.try_as<Controls::RadioButton>()};
     if(!radio || !radio.Tag()){
         return;
     }
 
     m_keyFrameSnapMode = unbox_value<hstring>(radio.Tag()).c_str();
-    TryFocusTimelineCanvas(Microsoft::UI::Xaml::FocusState::Programmatic);
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-Windows::Foundation::IAsyncAction MainWindow::NewProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    if(!co_await EnsureProjectSavedBeforeContinuingAsync()){
+IAsyncAction MainWindow::newProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
 
-    ResetProjectState(true);
+    resetProjectState(true);
     StatusText().Text(L"New project created");
 }
 
-Windows::Foundation::IAsyncAction MainWindow::OpenProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    if(!co_await EnsureProjectSavedBeforeContinuingAsync()){
+IAsyncAction MainWindow::openProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
 
-    Windows::Storage::Pickers::FileOpenPicker picker{};
+    FileOpenPicker picker{};
     picker.FileTypeFilter().Append(L".llvc");
-    picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::DocumentsLibrary);
+    picker.SuggestedStartLocation(PickerLocationId::DocumentsLibrary);
 
     auto initWithWindow{picker.as<IInitializeWithWindow>()};
-    check_hresult(initWithWindow->Initialize(GetWindowHandle()));
+    check_hresult(initWithWindow->Initialize(getWindowHandle()));
 
     if(const auto file{co_await picker.PickSingleFileAsync()}){
-        co_await OpenProjectFileAsync(file);
+        co_await openProjectFileAsync(file);
     }
 }
 
-Windows::Foundation::IAsyncAction MainWindow::SaveProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    Windows::Storage::StorageFile target{nullptr};
+IAsyncAction MainWindow::saveProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    StorageFile target{nullptr};
 
     if(!m_projectPath.empty()){
         try{
-            target = co_await Windows::Storage::StorageFile::GetFileFromPathAsync(m_projectPath);
+            target = co_await StorageFile::GetFileFromPathAsync(m_projectPath);
         }catch(...){
             target = nullptr;
         }
     }
 
     if(!target){
-        Windows::Storage::Pickers::FileSavePicker picker{};
-        picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::DocumentsLibrary);
+        FileSavePicker picker{};
+        picker.SuggestedStartLocation(PickerLocationId::DocumentsLibrary);
         picker.FileTypeChoices().Insert(L"llvc project", single_threaded_vector<hstring>({L".llvc"}));
         picker.SuggestedFileName(L"project");
 
         auto initWithWindow{picker.as<IInitializeWithWindow>()};
-        check_hresult(initWithWindow->Initialize(GetWindowHandle()));
+        check_hresult(initWithWindow->Initialize(getWindowHandle()));
 
         target = co_await picker.PickSaveFileAsync();
         if(!target){
@@ -1397,23 +1405,23 @@ Windows::Foundation::IAsyncAction MainWindow::SaveProjectMenuItem_Click(IInspect
         }
     }
 
-    co_await SaveProjectFileAsync(target);
+    co_await saveProjectFileAsync(target);
 }
 
-Windows::Foundation::IAsyncAction MainWindow::CloseProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    if(!co_await EnsureProjectSavedBeforeContinuingAsync()){
+IAsyncAction MainWindow::closeProjectMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
 
-    ResetProjectState(true);
+    resetProjectState(true);
     StatusText().Text(L"Project closed");
 }
 
-Windows::Foundation::IAsyncAction MainWindow::LoadVideoMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    co_await PickAndLoadVideoAsync();
+IAsyncAction MainWindow::loadVideoMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    co_await pickAndLoadVideoAsync();
 }
 
-Windows::Foundation::IAsyncAction MainWindow::RecentVideoMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&){
+IAsyncAction MainWindow::recentVideoMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&){
     const auto item{sender.try_as<Controls::MenuFlyoutItem>()};
     if(!item || !item.Tag()){
         co_return;
@@ -1422,77 +1430,77 @@ Windows::Foundation::IAsyncAction MainWindow::RecentVideoMenuItem_Click(IInspect
     bool openFailed{false};
     const auto path{unbox_value<hstring>(item.Tag())};
     try{
-        const auto file{co_await Windows::Storage::StorageFile::GetFileFromPathAsync(path)};
-        co_await LoadVideoFileAsync(file);
+        const auto file{co_await StorageFile::GetFileFromPathAsync(path)};
+        co_await loadVideoFileAsync(file);
     }catch(winrt::hresult_error const&){
         openFailed = true;
     }
 
     if(openFailed){
-        co_await ShowInfoDialogAsync(L"Open failed", L"Could not open selected recent video.");
+        co_await showInfoDialogAsync(L"Open failed", L"Could not open selected recent video.");
     }
 }
 
-Windows::Foundation::IAsyncAction MainWindow::RecentProjectMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&){
+IAsyncAction MainWindow::recentProjectMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&){
     const auto item{sender.try_as<Controls::MenuFlyoutItem>()};
     if(!item || !item.Tag()){
         co_return;
     }
 
-    if(!co_await EnsureProjectSavedBeforeContinuingAsync()){
+    if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
 
     bool openFailed{false};
     const auto path{unbox_value<hstring>(item.Tag())};
     try{
-        const auto file{co_await Windows::Storage::StorageFile::GetFileFromPathAsync(path)};
-        co_await OpenProjectFileAsync(file);
+        const auto file{co_await StorageFile::GetFileFromPathAsync(path)};
+        co_await openProjectFileAsync(file);
     }catch(...){
         openFailed = true;
     }
 
     if(openFailed){
-        co_await ShowInfoDialogAsync(L"Open failed", L"Could not open selected recent project.");
+        co_await showInfoDialogAsync(L"Open failed", L"Could not open selected recent project.");
     }
 }
 
-Windows::Foundation::IAsyncAction MainWindow::PropertiesMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    co_await ShowPropertiesDialogAsync();
+IAsyncAction MainWindow::propertiesMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    co_await showPropertiesDialogAsync();
 }
 
-Windows::Foundation::IAsyncAction MainWindow::ExitMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    if(!co_await EnsureProjectSavedBeforeContinuingAsync()){
+IAsyncAction MainWindow::exitMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
     }
 
     Close();
 }
 
-Windows::Foundation::IAsyncAction MainWindow::AboutMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    co_await ShowInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut\nPreview and timeline exploration tool.");
+IAsyncAction MainWindow::aboutMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    co_await showInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut\nPreview and timeline exploration tool.");
 }
 
-Windows::Foundation::IAsyncAction MainWindow::OptionsMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
-    co_await ShowOptionsDialogAsync();
+IAsyncAction MainWindow::optionsMenuItem_Click(IInspectable const&, RoutedEventArgs const&){
+    co_await showOptionsDialogAsync();
 }
 
-Windows::Foundation::IAsyncAction MainWindow::PickAndLoadVideoAsync(){
-    Windows::Storage::Pickers::FileOpenPicker picker{};
-    picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::VideosLibrary);
+IAsyncAction MainWindow::pickAndLoadVideoAsync(){
+    FileOpenPicker picker{};
+    picker.SuggestedStartLocation(PickerLocationId::VideosLibrary);
     picker.FileTypeFilter().Append(L".mp4");
     picker.FileTypeFilter().Append(L".mov");
 
-    const auto hwnd{GetWindowHandle()};
+    const auto hwnd{getWindowHandle()};
     auto initWithWindow{picker.as<IInitializeWithWindow>()};
     check_hresult(initWithWindow->Initialize(hwnd));
 
     if(const auto file{co_await picker.PickSingleFileAsync()}){
-        co_await LoadVideoFileAsync(file);
+        co_await loadVideoFileAsync(file);
     }
 }
 
-void MainWindow::RefreshRecentVideosMenu(){
+void MainWindow::refreshRecentVideosMenu(){
     auto menu{RecentVideosMenu()};
     menu.Items().Clear();
 
@@ -1508,12 +1516,12 @@ void MainWindow::RefreshRecentVideosMenu(){
         Controls::MenuFlyoutItem item{};
         item.Text(path);
         item.Tag(box_value(path));
-        item.Click({this, &MainWindow::RecentVideoMenuItem_Click});
+        item.Click({this, &MainWindow::recentVideoMenuItem_Click});
         menu.Items().Append(item);
     }
 }
 
-void MainWindow::RefreshRecentProjectsMenu(){
+void MainWindow::refreshRecentProjectsMenu(){
     auto menu{RecentProjectsMenu()};
     menu.Items().Clear();
 
@@ -1529,12 +1537,12 @@ void MainWindow::RefreshRecentProjectsMenu(){
         Controls::MenuFlyoutItem item{};
         item.Text(path);
         item.Tag(box_value(path));
-        item.Click({this, &MainWindow::RecentProjectMenuItem_Click});
+        item.Click({this, &MainWindow::recentProjectMenuItem_Click});
         menu.Items().Append(item);
     }
 }
 
-void MainWindow::AddRecentVideo(hstring const& path){
+void MainWindow::addRecentVideo(hstring const& path){
     if(path.empty()){
         return;
     }
@@ -1544,11 +1552,11 @@ void MainWindow::AddRecentVideo(hstring const& path){
     if(m_recentVideos.size() > m_maxRecentVideos){
         m_recentVideos.resize(m_maxRecentVideos);
     }
-    RefreshRecentVideosMenu();
-    SaveAppSettings();
+    refreshRecentVideosMenu();
+    saveAppSettings();
 }
 
-void MainWindow::AddRecentProject(hstring const& path){
+void MainWindow::addRecentProject(hstring const& path){
     if(path.empty()){
         return;
     }
@@ -1558,11 +1566,11 @@ void MainWindow::AddRecentProject(hstring const& path){
     if(m_recentProjects.size() > m_maxRecentProjects){
         m_recentProjects.resize(m_maxRecentProjects);
     }
-    RefreshRecentProjectsMenu();
-    SaveAppSettings();
+    refreshRecentProjectsMenu();
+    saveAppSettings();
 }
 
-void MainWindow::ResetProjectState(const bool clearLoadedVideo){
+void MainWindow::resetProjectState(const bool clearLoadedVideo){
     ++m_timelineRenderVersion;
     m_projectPath.clear();
     m_projectUnknownLines.clear();
@@ -1583,7 +1591,7 @@ void MainWindow::ResetProjectState(const bool clearLoadedVideo){
     TimelineCanvas().Width(640.0);
     TimelineTickCanvas().Width(640.0);
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
-    SyncTimelineHorizontalScrollBar();
+    syncTimelineHorizontalScrollBar();
 
     if(clearLoadedVideo){
         if(m_player){
@@ -1594,28 +1602,28 @@ void MainWindow::ResetProjectState(const bool clearLoadedVideo){
     }
 
     StatusText().Text(L"Load or drag-and-drop a .mp4/.mov file to preview.");
-    m_lastSavedProjectSnapshot = BuildProjectSnapshot();
+    m_lastSavedProjectSnapshot = buildProjectSnapshot();
 }
 
-std::wstring MainWindow::BuildProjectSnapshot(){
+std::wstring MainWindow::buildProjectSnapshot(){
     std::wstringstream ss;
     ss << L"file_path=" << (m_loadedFile ? m_loadedFile.Path().c_str() : L"") << L"\n";
     ss << L"storyline_zoom=" << std::setprecision(15) << TimelineZoomSlider().Value() << L"\n";
     ss << L"keyframe_snap_mode=" << m_keyFrameSnapMode << L"\n";
-    ss << L"selected_keyframe_indices=" << SerializeIndexList(m_selectedKeyFrames) << L"\n";
-    ss << L"cut_interval_indices=" << SerializeIndexPairs(m_cutIntervals) << L"\n";
+    ss << L"selected_keyframe_indices=" << serializeIndexList(m_selectedKeyFrames) << L"\n";
+    ss << L"cut_interval_indices=" << serializeIndexPairs(m_cutIntervals) << L"\n";
     for(auto const& line : m_projectUnknownLines){
         ss << line << L"\n";
     }
     return ss.str();
 }
 
-bool MainWindow::IsProjectDirty(){
-    return BuildProjectSnapshot() != m_lastSavedProjectSnapshot;
+bool MainWindow::isProjectDirty(){
+    return buildProjectSnapshot() != m_lastSavedProjectSnapshot;
 }
 
-Windows::Foundation::IAsyncOperation<bool> MainWindow::EnsureProjectSavedBeforeContinuingAsync(){
-    if(!IsProjectDirty()){
+IAsyncOperation<bool> MainWindow::ensureProjectSavedBeforeContinuingAsync(){
+    if(!isProjectDirty()){
         co_return true;
     }
 
@@ -1629,8 +1637,8 @@ Windows::Foundation::IAsyncOperation<bool> MainWindow::EnsureProjectSavedBeforeC
 
     const auto choice{co_await dialog.ShowAsync()};
     if(choice == Controls::ContentDialogResult::Primary){
-        co_await SaveProjectMenuItem_Click(nullptr, RoutedEventArgs{});
-        co_return !IsProjectDirty();
+        co_await saveProjectMenuItem_Click(nullptr, RoutedEventArgs{});
+        co_return !isProjectDirty();
     }
     if(choice == Controls::ContentDialogResult::Secondary){
         co_return true;
@@ -1639,10 +1647,10 @@ Windows::Foundation::IAsyncOperation<bool> MainWindow::EnsureProjectSavedBeforeC
     co_return false;
 }
 
-Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Storage::StorageFile const& file){
-    ResetProjectState(true);
+IAsyncAction MainWindow::openProjectFileAsync(StorageFile const& file){
+    resetProjectState(true);
 
-    const auto lines{co_await Windows::Storage::FileIO::ReadLinesAsync(file)};
+    const auto lines{co_await FileIO::ReadLinesAsync(file)};
 
     std::vector<std::wstring> unknownLines;
     std::vector<std::uint32_t> selectedKeyframeIndices;
@@ -1654,7 +1662,7 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
 
     for(auto const& lineH : lines){
         const std::wstring line{lineH.c_str()};
-        const auto trimmed{Trim(line)};
+        const auto trimmed{trim(line)};
         if(trimmed.empty()){
             unknownLines.push_back(line);
             continue;
@@ -1673,8 +1681,8 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
             continue;
         }
 
-        const auto key{Trim(line.substr(0, eqPos))};
-        const auto value{Trim(line.substr(eqPos + 1))};
+        const auto key{trim(line.substr(0, eqPos))};
+        const auto value{trim(line.substr(eqPos + 1))};
 
         if(key == L"file_path"){
             loadedFilePath = value;
@@ -1687,11 +1695,11 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
                 unknownLines.push_back(line);
             }
         }else if(key == L"selected_keyframe_indices"){
-            selectedKeyframeIndices = ParseIndexList(value);
+            selectedKeyframeIndices = parseIndexList(value);
         }else if(key == L"cut_interval_indices"){
-            cutIntervalIndices = ParseIndexPairs(value);
+            cutIntervalIndices = parseIndexPairs(value);
         }else if(key == L"keyframe_index"){
-            loadedKeyframeIndex = ParseKeyframeVector(value);
+            loadedKeyframeIndex = parseKeyframeVector(value);
         }else{
             unknownLines.push_back(line);
         }
@@ -1699,11 +1707,11 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
 
     if(!loadedFilePath.empty()){
         try{
-            const auto videoFile{co_await Windows::Storage::StorageFile::GetFileFromPathAsync(loadedFilePath)};
+            const auto videoFile{co_await StorageFile::GetFileFromPathAsync(loadedFilePath)};
             if(!loadedKeyframeIndex.empty()){
-                co_await LoadVideoFileAsync(videoFile, &loadedKeyframeIndex);
+                co_await loadVideoFileAsync(videoFile, &loadedKeyframeIndex);
             }else{
-                co_await LoadVideoFileAsync(videoFile);
+                co_await loadVideoFileAsync(videoFile);
             }
         }catch(...){
             StatusText().Text(L"Project opened, but referenced video could not be loaded");
@@ -1714,7 +1722,7 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     TimelineZoomSlider().Value(zoomLevel);
     m_keyFrameSnapMode = snapMode;
 
-    const auto cleanKeyTimes = BuildCleanKeyframeTimes100ns(m_frameIndex);
+    const auto cleanKeyTimes = buildCleanKeyframeTimes100ns(m_frameIndex);
     m_selectedKeyFrames.clear();
     m_selectedKeyFrames.reserve(selectedKeyframeIndices.size());
     for(const auto ordinal : selectedKeyframeIndices){
@@ -1725,7 +1733,7 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     std::sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
     m_selectedKeyFrames.erase(std::unique(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end()), m_selectedKeyFrames.end());
 
-    m_cutIntervals = NormalizeAndMergeIndexIntervals(std::move(cutIntervalIndices), cleanKeyTimes.size());
+    m_cutIntervals = normalizeAndMergeIndexIntervals(std::move(cutIntervalIndices), cleanKeyTimes.size());
     m_projectUnknownLines = std::move(unknownLines);
     m_projectPath = file.Path();
 
@@ -1737,36 +1745,36 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
         NearestSnapRadio().IsChecked(true);
     }
 
-    AddRecentProject(file.Path());
-    m_lastSavedProjectSnapshot = BuildProjectSnapshot();
+    addRecentProject(file.Path());
+    m_lastSavedProjectSnapshot = buildProjectSnapshot();
     StatusText().Text(L"Project loaded");
 }
 
-Windows::Foundation::IAsyncAction MainWindow::SaveProjectFileAsync(Windows::Storage::StorageFile const& file){
+IAsyncAction MainWindow::saveProjectFileAsync(StorageFile const& file){
     std::vector<hstring> lines;
     lines.emplace_back(L"# llvc project file");
     lines.emplace_back(L"file_path=" + std::wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
     lines.emplace_back(L"storyline_zoom=" + std::to_wstring(TimelineZoomSlider().Value()));
     lines.emplace_back(L"keyframe_snap_mode=" + m_keyFrameSnapMode);
-    lines.emplace_back(L"selected_keyframe_indices=" + SerializeIndexList(m_selectedKeyFrames));
-    lines.emplace_back(L"cut_interval_indices=" + SerializeIndexPairs(m_cutIntervals));
-    lines.emplace_back(L"keyframe_index=" + SerializeKeyframeVector(m_frameIndex));
+    lines.emplace_back(L"selected_keyframe_indices=" + serializeIndexList(m_selectedKeyFrames));
+    lines.emplace_back(L"cut_interval_indices=" + serializeIndexPairs(m_cutIntervals));
+    lines.emplace_back(L"keyframe_index=" + serializeKeyframeVector(m_frameIndex));
 
     for(auto const& unknown : m_projectUnknownLines){
-        if(Trim(unknown) == L"# llvc project file"){
+        if(trim(unknown) == L"# llvc project file"){
             continue;
         }
         lines.emplace_back(unknown);
     }
 
-    co_await Windows::Storage::FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(std::move(lines)));
+    co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(std::move(lines)));
     m_projectPath = file.Path();
-    AddRecentProject(file.Path());
-    m_lastSavedProjectSnapshot = BuildProjectSnapshot();
+    addRecentProject(file.Path());
+    m_lastSavedProjectSnapshot = buildProjectSnapshot();
     StatusText().Text(L"Project saved");
 }
 
-Windows::Foundation::IAsyncAction MainWindow::ShowInfoDialogAsync(hstring const& title, hstring const& message){
+IAsyncAction MainWindow::showInfoDialogAsync(hstring const& title, hstring const& message){
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(Content().XamlRoot());
     dialog.Title(box_value(title));
@@ -1775,9 +1783,9 @@ Windows::Foundation::IAsyncAction MainWindow::ShowInfoDialogAsync(hstring const&
     co_await dialog.ShowAsync();
 }
 
-Windows::Foundation::IAsyncAction MainWindow::ShowPropertiesDialogAsync(){
+IAsyncAction MainWindow::showPropertiesDialogAsync(){
     if(!m_loadedFile || !m_mediaInfo.isValid){
-        co_await ShowInfoDialogAsync(L"Properties", L"No video is currently loaded.");
+        co_await showInfoDialogAsync(L"Properties", L"No video is currently loaded.");
         co_return;
     }
 
@@ -1797,10 +1805,10 @@ Windows::Foundation::IAsyncAction MainWindow::ShowPropertiesDialogAsync(){
     content += L"Audio codec: "; content += m_mediaInfo.audioCodec; content += L"\n";
     content += L"Audio bitrate: "; content += m_mediaInfo.audioBitrate;
 
-    co_await ShowInfoDialogAsync(L"Properties", hstring(content));
+    co_await showInfoDialogAsync(L"Properties", hstring(content));
 }
 
-Windows::Foundation::IAsyncAction MainWindow::ShowOptionsDialogAsync(){
+IAsyncAction MainWindow::showOptionsDialogAsync(){
     Controls::StackPanel panel{};
     panel.Spacing(10);
 
@@ -1847,16 +1855,16 @@ Windows::Foundation::IAsyncAction MainWindow::ShowOptionsDialogAsync(){
         m_recentProjects.resize(m_maxRecentProjects);
     }
 
-    RefreshRecentVideosMenu();
-    RefreshRecentProjectsMenu();
-    SaveAppSettings();
+    refreshRecentVideosMenu();
+    refreshRecentProjectsMenu();
+    saveAppSettings();
 }
 
-bool MainWindow::IsSupportedVideoSubtype(GUID const& subtype){
+bool MainWindow::isSupportedVideoSubtype(GUID const& subtype){
     return subtype == MFVideoFormat_H264 || subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265;
 }
 
-std::wstring MainWindow::GuidToCodecName(GUID const& subtype, bool isVideo){
+std::wstring MainWindow::guidToCodecName(GUID const& subtype, bool isVideo){
     if(isVideo){
         if(subtype == MFVideoFormat_H264){
             return L"H.264";
@@ -1876,10 +1884,10 @@ std::wstring MainWindow::GuidToCodecName(GUID const& subtype, bool isVideo){
         }
     }
 
-    return FormatGuid(subtype);
+    return formatGuid(subtype);
 }
 
-MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath){
+MediaInspectionResult MainWindow::inspectMediaFile(std::wstring const& filePath){
     MediaInspectionResult result{};
     result.keyFrameSummary = L"unknown";
     result.keyFrameInterval = L"unknown";
@@ -1953,7 +1961,7 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
         result.errorMessage = L"Subtitle/text streams are not supported.";
         return result;
     }
-    if(!IsSupportedVideoSubtype(videoSubtype)){
+    if(!isSupportedVideoSubtype(videoSubtype)){
         result.errorMessage = L"Video codec not supported. Only H.264 and HEVC are allowed.";
         return result;
     }
@@ -1970,11 +1978,11 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
     }
 
     if(videoSubtype == MFVideoFormat_HEVC || videoSubtype == MFVideoFormat_H265){
-        if(!HasDecoderForSubtype(videoSubtype)){
+        if(!hasDecoderForSubtype(videoSubtype)){
             result.errorMessage = L"HEVC support missing (install HEVC Video Extensions)";
             return result;
         }
-    }else if(!HasDecoderForSubtype(videoSubtype)){
+    }else if(!hasDecoderForSubtype(videoSubtype)){
         result.errorMessage = L"No decoder available";
         return result;
     }
@@ -1989,20 +1997,20 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
     }
     PropVariantClear(&duration);
 
-    result.videoCodec = GuidToCodecName(videoSubtype, true);
-    result.audioCodec = audioCount == 0 ? L"none" : GuidToCodecName(audioSubtype, false);
+    result.videoCodec = guidToCodecName(videoSubtype, true);
+    result.audioCodec = audioCount == 0 ? L"none" : guidToCodecName(audioSubtype, false);
     result.resolution = width > 0 ? (std::to_wstring(width) + L"x" + std::to_wstring(height)) : L"-";
-    result.frameRate = (fpsNum > 0 && fpsDen > 0) ? (FormatRatio(fpsNum, fpsDen) + L" fps") : L"-";
+    result.frameRate = (fpsNum > 0 && fpsDen > 0) ? (formatRatio(fpsNum, fpsDen) + L" fps") : L"-";
     result.videoBitrate = videoBitrate > 0 ? (std::to_wstring(videoBitrate / 1000) + L" kbps") : L"-";
     result.audioBitrate = audioBitrate > 0 ? (std::to_wstring((audioBitrate * 8) / 1000) + L" kbps") : L"none";
     if(videoStreamIndex != invalidStreamIndex){
-        AnalyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen, result);
+        analyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen, result);
     }
     result.isValid = true;
     return result;
 }
 
-std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstring const& filePath, std::function<void(double)> const& onProgress){
+std::vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(std::wstring const& filePath, std::function<void(double)> const& onProgress){
     std::vector<IndexedFrameSample> index;
     MFLifetime mf{};
 
@@ -2088,11 +2096,11 @@ std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstri
     return index;
 }
 
-void MainWindow::Window_DragOver(IInspectable const&, DragEventArgs const& e){
+void MainWindow::window_DragOver(IInspectable const&, DragEventArgs const& e){
     e.AcceptedOperation(Windows::ApplicationModel::DataTransfer::DataPackageOperation::Copy);
 }
 
-Windows::Foundation::IAsyncAction MainWindow::Window_Drop(IInspectable const&, DragEventArgs const& e){
+IAsyncAction MainWindow::window_Drop(IInspectable const&, DragEventArgs const& e){
     const auto view{e.DataView()};
     if(!view.Contains(Windows::ApplicationModel::DataTransfer::StandardDataFormats::StorageItems())){
         StatusText().Text(L"Dropped content is not a file");
@@ -2105,7 +2113,7 @@ Windows::Foundation::IAsyncAction MainWindow::Window_Drop(IInspectable const&, D
         co_return;
     }
 
-    const auto file{items.GetAt(0).try_as<Windows::Storage::StorageFile>()};
+    const auto file{items.GetAt(0).try_as<StorageFile>()};
     if(!file){
         StatusText().Text(L"Dropped content is not a file");
         __debugbreak(); // this should have been caught earlier in this function!
@@ -2122,13 +2130,13 @@ Windows::Foundation::IAsyncAction MainWindow::Window_Drop(IInspectable const&, D
         }
     }
 
-    co_await LoadVideoFileAsync(file);
+    co_await loadVideoFileAsync(file);
 }
 
-Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storage::StorageFile const& file, std::vector<IndexedFrameSample> const* preloadedKeyframeIndex){
+IAsyncAction MainWindow::loadVideoFileAsync(StorageFile const& file, std::vector<IndexedFrameSample> const* preloadedKeyframeIndex){
     MediaInspectionResult inspected{};
     try{
-        inspected = InspectMediaFile(file.Path().c_str());
+        inspected = inspectMediaFile(file.Path().c_str());
     }catch(winrt::hresult_error const& ex){
         inspected.errorMessage = L"No decoder available";
         if(ex.code() == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)){
@@ -2140,12 +2148,12 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
         std::wstring status{L"Open rejected: "};
         status += inspected.errorMessage;
         StatusText().Text(status);
-        co_await ShowInfoDialogAsync(L"Unsupported media", hstring(status));
+        co_await showInfoDialogAsync(L"Unsupported media", hstring(status));
         co_return;
     }
 
     const auto basicProperties{co_await file.GetBasicPropertiesAsync()};
-    inspected.fileSize = FormatFileSize(basicProperties.Size());
+    inspected.fileSize = formatFileSize(basicProperties.Size());
     m_mediaInfo = inspected;
 
     KeyframeProgressBar().Value(0);
@@ -2172,7 +2180,7 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
 
         winrt::apartment_context uiThread;
         co_await winrt::resume_background();
-        auto indexed = BuildKeyframeIndexForFile(file.Path().c_str(), progress);
+        auto indexed = buildKeyframeIndexForFile(file.Path().c_str(), progress);
         co_await uiThread;
         m_frameIndex = std::move(indexed);
     }
@@ -2184,7 +2192,7 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
         m_selectedKeyFrames.clear();
         m_cutIntervals.clear();
     }
-    AddRecentVideo(file.Path());
+    addRecentVideo(file.Path());
 
     ThumbnailLayer().Children().Clear();
     CutOverlayLayer().Children().Clear();
@@ -2193,7 +2201,7 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
     TimelineTickCanvas().Children().Clear();
     m_timelineDurationSeconds = 0;
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
-    SyncTimelineHorizontalScrollBar();
+    syncTimelineHorizontalScrollBar();
 
     KeyframeProgressBar().Visibility(Visibility::Collapsed);
 
@@ -2203,7 +2211,7 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
     StatusText().Text(status);
 }
 
-winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
+winrt::fire_and_forget MainWindow::renderTimelineAsync(){
     const auto lifetime{get_strong()};
 
     if(m_isClosing || !m_loadedFile || m_timelineDurationSeconds <= 0){
@@ -2214,7 +2222,7 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
         const auto weak{get_weak()};
         DispatcherQueue().TryEnqueue([weak](){
             if(const auto self{weak.get()}){
-                self->RenderTimelineAsync();
+                self->renderTimelineAsync();
             }
         });
         co_return;
@@ -2230,10 +2238,10 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
         TimelineCanvas().Width(totalWidth);
         ThumbnailLayer().Children().Clear();
         CutOverlayLayer().Width(totalWidth);
-        RenderTimelineTicks();
-        RenderKeyframeTicks();
-        RenderCutOverlays();
-        SyncTimelineHorizontalScrollBar();
+        renderTimelineTicks();
+        renderKeyframeTicks();
+        renderCutOverlays();
+        syncTimelineHorizontalScrollBar();
 
         const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_loadedFile)};
         Windows::Media::Editing::MediaComposition composition{};
@@ -2288,7 +2296,7 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
             }
 
             const auto t{(nextIndex + 0.5) / thumbnailCount};
-            const auto stream{co_await composition.GetThumbnailAsync(SecondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
+            const auto stream{co_await composition.GetThumbnailAsync(secondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
                 co_return;
             }
@@ -2305,12 +2313,12 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
             Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
             ThumbnailLayer().Children().Append(image);
             thumbnailBuilt[static_cast<size_t>(nextIndex)] = true;
-            RenderCutOverlays();
+            renderCutOverlays();
         }
 
-        UpdateTimelineCursorFromPlayback();
-        EnsureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
-        SyncTimelineHorizontalScrollBar();
+        updateTimelineCursorFromPlayback();
+        ensureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
+        syncTimelineHorizontalScrollBar();
 
         std::wstring status{L"Loaded: "};
         status += m_loadedFile.Name().c_str();
