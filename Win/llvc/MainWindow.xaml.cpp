@@ -74,21 +74,22 @@ struct MFLifetime{
 };
 
 wstring formatGuid(GUID const& guid){
-    OLECHAR raw[40]{};
-    StringFromGUID2(guid, raw, static_cast<int>(size(raw)));
+    constexpr int guidBufferLength{40};
+    OLECHAR raw[guidBufferLength]{};
+    StringFromGUID2(guid, raw, guidBufferLength);
     return wstring(raw);
 }
 
 wstring formatFileSize(uint64_t bytes){
-    constexpr double KB = 1024.0;
-    constexpr double MB = KB * 1024.0;
-    constexpr double GB = MB * 1024.0;
+    constexpr uint64_t kb{1024ULL};
+    constexpr uint64_t mb{kb * 1024ULL};
+    constexpr uint64_t gb{mb * 1024ULL};
 
     auto text {std::format(L"{} bytes", bytes)};
-    if(bytes >= static_cast<uint64_t>(GB)){
-        text += std::format(L" ({:.2f} GB)", bytes / GB);
-    }else if(bytes >= static_cast<uint64_t>(MB)){
-        text += std::format(L" ({:.2f} MB)", bytes / MB);
+    if(bytes >= gb){
+        text += std::format(L" ({:.2f} GB)", (1.0 * bytes) / gb);
+    }else if(bytes >= mb){
+        text += std::format(L" ({:.2f} MB)", (1.0 * bytes) / mb);
     }
     return text;
 }
@@ -97,7 +98,7 @@ wstring formatRatio(uint32_t num, uint32_t den){
     if(den == 0){
         return L"-";
     }
-    return std::format(L"{:.3f}", static_cast<double>(num) / den);
+    return std::format(L"{:.3f}", (1.0 * num) / den);
 }
 
 wstring joinRecentItems(vector<hstring> const& values){
@@ -390,7 +391,7 @@ void analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uin
         return;
     }
 
-    const auto ratio {static_cast<double>(keyFrames) / static_cast<double>(sampledFrames)};
+    const auto ratio {(1.0 * keyFrames) / sampledFrames};
     result.keyFrameSummary = std::format(L"{} key frames / {} sampled frames ({:.2f}%)", keyFrames, sampledFrames, ratio * 100.0);
 
     if(keyIntervalsSec.empty()){
@@ -399,14 +400,14 @@ void analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uin
     }
 
     const auto sum {accumulate(keyIntervalsSec.begin(), keyIntervalsSec.end(), 0.0)};
-    const auto avg {sum / static_cast<double>(keyIntervalsSec.size())};
+    const auto avg {sum / keyIntervalsSec.size()};
     const auto minIt {min_element(keyIntervalsSec.begin(), keyIntervalsSec.end())};
     const auto maxIt {max_element(keyIntervalsSec.begin(), keyIntervalsSec.end())};
 
     auto text {std::format(L"avg {:.3f} s, min {:.3f} s, max {:.3f} s", avg, *minIt, *maxIt)};
 
     if(fpsNum > 0 && fpsDen > 0){
-        const double fps = static_cast<double>(fpsNum) / fpsDen;
+        const double fps{(1.0 * fpsNum) / fpsDen};
         text += std::format(L" (~{:.1f} frames avg)", avg * fps);
     }
 
