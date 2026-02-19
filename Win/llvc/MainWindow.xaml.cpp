@@ -10,6 +10,7 @@
 #include <limits>
 #include <sstream>
 #include <string_view>
+#include <functional>
 #include <vector>
 
 #include <mfapi.h>
@@ -1557,6 +1558,8 @@ void MainWindow::ResetProjectState(const bool clearLoadedVideo){
     ThumbnailLayer().Children().Clear();
     CutOverlayLayer().Children().Clear();
     TimelineTickCanvas().Children().Clear();
+    KeyframeProgressBar().Value(0);
+    KeyframeProgressBar().Visibility(Visibility::Collapsed);
     TimelineCanvas().Width(640.0);
     TimelineTickCanvas().Width(640.0);
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
@@ -1677,7 +1680,11 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     if(!loadedFilePath.empty()){
         try{
             const auto videoFile{co_await Windows::Storage::StorageFile::GetFileFromPathAsync(loadedFilePath)};
-            co_await LoadVideoFileAsync(videoFile);
+            if(!loadedKeyframeIndex.empty()){
+                co_await LoadVideoFileAsync(videoFile, &loadedKeyframeIndex);
+            }else{
+                co_await LoadVideoFileAsync(videoFile);
+            }
         }catch(...){
             StatusText().Text(L"Project opened, but referenced video could not be loaded");
         }
@@ -1686,10 +1693,6 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     zoomLevel = std::clamp(zoomLevel, TimelineZoomSlider().Minimum(), TimelineZoomSlider().Maximum());
     TimelineZoomSlider().Value(zoomLevel);
     m_keyFrameSnapMode = snapMode;
-
-    if(!loadedKeyframeIndex.empty()){
-        m_frameIndex = std::move(loadedKeyframeIndex);
-    }
 
     const auto cleanKeyTimes = BuildCleanKeyframeTimes100ns(m_frameIndex);
     m_selectedKeyFrames.clear();
@@ -1979,7 +1982,7 @@ MediaInspectionResult MainWindow::InspectMediaFile(std::wstring const& filePath)
     return result;
 }
 
-std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstring const& filePath){
+std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstring const& filePath, std::function<void(double)> const& onProgress){
     std::vector<IndexedFrameSample> index;
     MFLifetime mf{};
 
@@ -2011,6 +2014,17 @@ std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstri
     check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
     check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
+    PROPVARIANT duration{};
+    PropVariantInit(&duration);
+    LONGLONG totalDuration100ns{};
+    if(SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION, &duration)) && duration.vt == VT_UI8){
+        totalDuration100ns = duration.uhVal.QuadPart;
+    }
+    PropVariantClear(&duration);
+    if(onProgress){
+        onProgress(0.0);
+    }
+
     for(std::uint32_t sampleIndex = 0;; ++sampleIndex){
         DWORD actualStream{};
         DWORD flags{};
@@ -2035,6 +2049,15 @@ std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstri
             .cleanPoint = cleanPoint,
             .sampleIndex = sampleIndex,
         });
+
+        if(onProgress && totalDuration100ns > 0){
+            const auto ratio = std::clamp(static_cast<double>(timestamp) / static_cast<double>(totalDuration100ns), 0.0, 1.0);
+            onProgress(ratio * 100.0);
+        }
+    }
+
+    if(onProgress){
+        onProgress(100.0);
     }
 
     return index;
@@ -2077,7 +2100,7 @@ Windows::Foundation::IAsyncAction MainWindow::Window_Drop(IInspectable const&, D
     co_await LoadVideoFileAsync(file);
 }
 
-Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storage::StorageFile const& file){
+Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storage::StorageFile const& file, std::vector<IndexedFrameSample> const* preloadedKeyframeIndex){
     MediaInspectionResult inspected{};
     try{
         inspected = InspectMediaFile(file.Path().c_str());
@@ -2099,7 +2122,35 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
     const auto basicProperties{co_await file.GetBasicPropertiesAsync()};
     inspected.fileSize = FormatFileSize(basicProperties.Size());
     m_mediaInfo = inspected;
-    m_frameIndex = BuildKeyframeIndexForFile(file.Path().c_str());
+
+    KeyframeProgressBar().Value(0);
+    KeyframeProgressBar().Visibility(Visibility::Visible);
+    std::wstring status{L"Loaded: "};
+    status += file.Name().c_str();
+    status += L" (building keyframe index...)";
+    StatusText().Text(status);
+
+    if(preloadedKeyframeIndex && !preloadedKeyframeIndex->empty()){
+        m_frameIndex = *preloadedKeyframeIndex;
+        KeyframeProgressBar().Value(100);
+    }else{
+        const auto weak{get_weak()};
+        auto progress = [weak](double percent){
+            if(const auto self = weak.get()){
+                self->DispatcherQueue().TryEnqueue([weak, percent](){
+                    if(const auto uiSelf = weak.get()){
+                        uiSelf->KeyframeProgressBar().Value(std::clamp(percent, 0.0, 100.0));
+                    }
+                });
+            }
+        };
+
+        winrt::apartment_context uiThread;
+        co_await winrt::resume_background();
+        auto indexed = BuildKeyframeIndexForFile(file.Path().c_str(), progress);
+        co_await uiThread;
+        m_frameIndex = std::move(indexed);
+    }
 
     const auto source{Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
     m_player.Source(source);
@@ -2119,7 +2170,9 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
     SyncTimelineHorizontalScrollBar();
 
-    std::wstring status{L"Loaded: "};
+    KeyframeProgressBar().Visibility(Visibility::Collapsed);
+
+    status = L"Loaded: ";
     status += file.Name().c_str();
     status += L" (loading story line...)";
     StatusText().Text(status);

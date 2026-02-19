@@ -102,7 +102,10 @@
             </Border>
         </Grid>
 
-        <TextBlock Grid.Row="3" x:Name="StatusText" Text="Load or drag-and-drop a .mp4/.mov file to preview."/>
+        <StackPanel Grid.Row="3" Spacing="4">
+            <TextBlock x:Name="StatusText" Text="Load or drag-and-drop a .mp4/.mov file to preview."/>
+            <ProgressBar x:Name="KeyframeProgressBar" Minimum="0" Maximum="100" Value="0" Visibility="Collapsed" Height="6"/>
+        </StackPanel>
 
         <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
             <Button x:Name="StartButton" Content="Start" IsTabStop="False" Click="StartButton_Click"/>
