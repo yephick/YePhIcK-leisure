@@ -86,6 +86,15 @@ constexpr std::array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 10, 50, 100, 250
 
 constexpr uint32_t TIMELINE_EDGE_SENTINEL = numeric_limits<uint32_t>::max();
 
+bool isControlModifierActive(const Windows::System::VirtualKeyModifiers modifiers){
+    if((modifiers & Windows::System::VirtualKeyModifiers::Control) == Windows::System::VirtualKeyModifiers::Control){
+        return true;
+    }
+
+    const auto ctrlState{Microsoft::UI::Input::InputKeyboardSource::GetKeyStateForCurrentThread(Windows::System::VirtualKey::Control)};
+    return (ctrlState & Windows::UI::Core::CoreVirtualKeyStates::Down) == Windows::UI::Core::CoreVirtualKeyStates::Down;
+}
+
 std::wstring formatDurationFileTag(const std::int64_t duration100ns){
     const auto totalMs{std::max<std::int64_t>(0, (duration100ns + 5'000) / 10'000)};
     const auto minutes{totalMs / 60'000};
@@ -601,7 +610,7 @@ void MainWindow::timelineCanvas_PointerReleased(const Control&, const PREArgs& e
 
     if(!dragged){
         const auto modifiers{e.KeyModifiers()};
-        const auto ctrlPressed{(modifiers & Windows::System::VirtualKeyModifiers::Control) == Windows::System::VirtualKeyModifiers::Control};
+        const auto ctrlPressed{isControlModifierActive(modifiers)};
         if(ctrlPressed){
             toggleCutBlockAtCanvasX(point.Position().X);
         }else{
@@ -635,6 +644,17 @@ void MainWindow::timelineTickCanvas_PointerReleased(const Control&, const PREArg
     if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased && toggleSelectedKeyframeAtCanvasX(point.Position().X)){
         tryFocusTimelineCanvas(FocusState::Programmatic);
         e.Handled(true);
+        return;
+    }
+
+    if(point.Properties().PointerUpdateKind() == PointerUpdateKind::LeftButtonReleased){
+        if(isControlModifierActive(e.KeyModifiers())){
+            if(toggleCutBlockAtCanvasX(point.Position().X)){
+                tryFocusTimelineCanvas(FocusState::Programmatic);
+                e.Handled(true);
+                return;
+            }
+        }
     }
 }
 
