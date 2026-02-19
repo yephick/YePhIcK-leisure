@@ -9,6 +9,7 @@
 
 #include <mfapi.h>
 #include <mfidl.h>
+#include <mfreadwrite.h>
 #include <mftransform.h>
 
 #pragma comment(lib, "mfplat.lib")
@@ -24,6 +25,7 @@ namespace winrt::llvc::implementation{
 namespace{
 constexpr wchar_t RECENT_DELIMITER{0x1F};
 constexpr uint32_t TIMELINE_EDGE_SENTINEL = numeric_limits<uint32_t>::max();
+}
 
 wstring trim(wstring value){
     const auto first {value.find_first_not_of(L" \t\r\n")};
@@ -32,7 +34,6 @@ wstring trim(wstring value){
     }
     const auto last {value.find_last_not_of(L" \t\r\n")};
     return value.substr(first, last - first + 1);
-}
 }
 
 MFLifetime::MFLifetime(){

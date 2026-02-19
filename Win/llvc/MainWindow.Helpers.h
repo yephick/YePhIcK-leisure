@@ -31,6 +31,8 @@ std::vector<std::pair<std::uint32_t, std::uint32_t>> parseIndexPairs(const std::
 std::wstring serializeIndexList(const std::vector<std::uint32_t>& values);
 std::wstring serializeIndexPairs(const std::vector<std::pair<std::uint32_t, std::uint32_t>>& values);
 
+std::wstring trim(std::wstring value);
+
 std::vector<std::int64_t> buildCleanKeyframeTimes100ns(const std::vector<IndexedFrameSample>& index);
 std::vector<std::pair<std::uint32_t, std::uint32_t>> normalizeAndMergeIndexIntervals(
     std::vector<std::pair<std::uint32_t, std::uint32_t>> intervals,
