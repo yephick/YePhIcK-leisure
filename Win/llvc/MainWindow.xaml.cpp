@@ -81,6 +81,14 @@ constexpr auto S_MAX_RECENT_VIDEOS{L"MaxRecentVideos"};
 constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
 constexpr auto S_DEFAULT_MAX_RECENT{5};
 
+constexpr auto P_FILE_PATH{L"file_path"};
+constexpr auto P_STORYLINE_ZOOM{L"storyline_zoom"};
+constexpr auto P_KEEP_AUDIO{L"keep_audio"};
+constexpr auto P_AUDIO_CROSSFADE_MS{L"audio_crossfade_ms"};
+constexpr auto P_MARKER_INDICES{L"marker_indices"};
+constexpr auto P_CUT_SCENES{L"cut_scenes"};
+constexpr auto P_MARKER_POINTS{L"marker_points"};
+
 constexpr std::array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 10, 50, 100, 250, 500, 750, 1000}};
 
 bool isControlModifierActive(const Windows::System::VirtualKeyModifiers modifiers){
@@ -1704,13 +1712,20 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
 
 wstring MainWindow::buildProjectSnapshot(){
     auto snapshot{std::format(
-        L"file_path={}\nstoryline_zoom={:.15g}\nkeep_audio={}\naudio_crossfade_ms={}\nmarker_indices={}\ncut_scenes={}\nmarker_points={}\n",
+        L"{}={}\n{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n",
+        P_FILE_PATH,
         (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
+        P_STORYLINE_ZOOM,
         TimelineZoomSlider().Value(),
+        P_KEEP_AUDIO,
         m_keepAudio ? 1 : 0,
+        P_AUDIO_CROSSFADE_MS,
         m_audioCrossfadeMs,
+        P_MARKER_INDICES,
         serializeIndexList(m_selectedKeyFrames),
+        P_CUT_SCENES,
         serializeIndexList(m_cutScenes),
+        P_MARKER_POINTS,
         serializeKeyframeVector(m_frameIndex))};
     return snapshot;
 }
@@ -1795,19 +1810,19 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
         const auto key{trim(line.substr(0, eqPos))};
         const auto value{trim(line.substr(eqPos + 1))};
 
-        if(key == L"file_path"){
+        if(key == P_FILE_PATH){
             loadedFilePath = value;
-        }else if(key == L"storyline_zoom"){
+        }else if(key == P_STORYLINE_ZOOM){
             try{ zoomLevel = stod(value); }catch(...){ }
-        }else if(key == L"marker_indices"){
+        }else if(key == P_MARKER_INDICES){
             selectedMarkerIndices = parseIndexList(value);
-        }else if(key == L"cut_scenes"){
+        }else if(key == P_CUT_SCENES){
             cutScenes = parseIndexList(value);
-        }else if(key == L"keep_audio"){
+        }else if(key == P_KEEP_AUDIO){
             keepAudioSetting = !(value == L"0" || value == L"false" || value == L"False");
-        }else if(key == L"audio_crossfade_ms"){
+        }else if(key == P_AUDIO_CROSSFADE_MS){
             try{ audioCrossfadeSetting = normalizeAudioCrossfadeMs(stoi(value)); }catch(...){ }
-        }else if(key == L"marker_points"){
+        }else if(key == P_MARKER_POINTS){
             loadedMarkers = parseKeyframeVector(value);
         }else{
             continue;
@@ -1866,13 +1881,13 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
 AAction MainWindow::saveProjectFileAsync(const SFile& file){
     vector<hstring> lines;
     lines.emplace_back(L"# llvc project file");
-    lines.emplace_back(L"file_path=" + wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
-    lines.emplace_back(L"storyline_zoom=" + to_wstring(TimelineZoomSlider().Value()));
-    lines.emplace_back(L"keep_audio=" + wstring(m_keepAudio ? L"1" : L"0"));
-    lines.emplace_back(L"audio_crossfade_ms=" + to_wstring(m_audioCrossfadeMs));
-    lines.emplace_back(L"marker_indices=" + serializeIndexList(m_selectedKeyFrames));
-    lines.emplace_back(L"cut_scenes=" + serializeIndexList(m_cutScenes));
-    lines.emplace_back(L"marker_points=" + serializeKeyframeVector(m_frameIndex));
+    lines.emplace_back(wstring(P_FILE_PATH) + L"=" + wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
+    lines.emplace_back(wstring(P_STORYLINE_ZOOM) + L"=" + to_wstring(TimelineZoomSlider().Value()));
+    lines.emplace_back(wstring(P_KEEP_AUDIO) + L"=" + wstring(m_keepAudio ? L"1" : L"0"));
+    lines.emplace_back(wstring(P_AUDIO_CROSSFADE_MS) + L"=" + to_wstring(m_audioCrossfadeMs));
+    lines.emplace_back(wstring(P_MARKER_INDICES) + L"=" + serializeIndexList(m_selectedKeyFrames));
+    lines.emplace_back(wstring(P_CUT_SCENES) + L"=" + serializeIndexList(m_cutScenes));
+    lines.emplace_back(wstring(P_MARKER_POINTS) + L"=" + serializeKeyframeVector(m_frameIndex));
 
     co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(move(lines)));
     m_projectPath = file.Path();
