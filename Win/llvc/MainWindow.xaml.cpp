@@ -61,6 +61,7 @@ constexpr auto S_RECENT_VIDEOS{L"RecentVideos"};
 constexpr auto S_RECENT_PROJECTS{L"RecentProjects"};
 constexpr auto S_MAX_RECENT_VIDEOS{L"MaxRecentVideos"};
 constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
+constexpr auto S_KEYFRAME_SNAP_MODE{L"KeyframeSnapMode"};
 constexpr auto S_DEFAULT_MAX_RECENT{5};
 constexpr wchar_t RECENT_DELIMITER{0x1F};
 
@@ -521,6 +522,12 @@ void MainWindow::loadAppSettings(){
     if(values.HasKey(S_RECENT_PROJECTS)){
         m_recentProjects = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
     }
+    if(values.HasKey(S_KEYFRAME_SNAP_MODE)){
+        const auto snapMode{unbox_value<hstring>(values.Lookup(S_KEYFRAME_SNAP_MODE)).c_str()};
+        if(snapMode == L"Left" || snapMode == L"Right" || snapMode == L"Nearest"){
+            m_keyFrameSnapMode = snapMode;
+        }
+    }
 
     if(m_recentVideos.size() > m_maxRecentVideos){
         m_recentVideos.resize(m_maxRecentVideos);
@@ -536,6 +543,7 @@ void MainWindow::saveAppSettings() const{
     values.Insert(S_MAX_RECENT_PROJECTS, box_value(static_cast<int32_t>(m_maxRecentProjects)));
     values.Insert(S_RECENT_VIDEOS, box_value(hstring(joinRecentItems(m_recentVideos))));
     values.Insert(S_RECENT_PROJECTS, box_value(hstring(joinRecentItems(m_recentProjects))));
+    values.Insert(S_KEYFRAME_SNAP_MODE, box_value(hstring(m_keyFrameSnapMode)));
 }
 
 void MainWindow::saveWindowPlacement() const{
@@ -1335,16 +1343,6 @@ TimeSpan MainWindow::secondsToTimeSpan(const double seconds){
     return chrono::duration_cast<TimeSpan>(chrono::duration<double>(seconds));
 }
 
-void MainWindow::keyFrameSnapMode_Checked(const IInspectable& sender, const RoutedEventArgs&){
-    const auto radio{sender.try_as<Controls::RadioButton>()};
-    if(!radio || !radio.Tag()){
-        return;
-    }
-
-    m_keyFrameSnapMode = unbox_value<hstring>(radio.Tag()).c_str();
-    tryFocusTimelineCanvas(FocusState::Programmatic);
-}
-
 IAsyncAction MainWindow::newProjectMenuItem_Click(const IInspectable&, const RoutedEventArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
@@ -1571,8 +1569,6 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
     m_frameIndex.clear();
     m_mediaInfo = MediaInspectionResult{};
     m_timelineDurationSeconds = 0;
-    m_keyFrameSnapMode = L"Nearest";
-    NearestSnapRadio().IsChecked(true);
     TimelineZoomSlider().Value(3);
 
     ThumbnailLayer().Children().Clear();
@@ -1599,10 +1595,9 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
 
 wstring MainWindow::buildProjectSnapshot(){
     auto snapshot{std::format(
-        L"file_path={}\nstoryline_zoom={:.15g}\nkeyframe_snap_mode={}\nselected_keyframe_indices={}\ncut_interval_indices={}\n",
+        L"file_path={}\nstoryline_zoom={:.15g}\nselected_keyframe_indices={}\ncut_interval_indices={}\n",
         (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
         TimelineZoomSlider().Value(),
-        m_keyFrameSnapMode,
         serializeIndexList(m_selectedKeyFrames),
         serializeIndexPairs(m_cutIntervals))};
 
@@ -1650,7 +1645,6 @@ IAsyncAction MainWindow::openProjectFileAsync(const StorageFile& file){
     vector<uint32_t> selectedKeyframeIndices;
     vector<pair<uint32_t, uint32_t>> cutIntervalIndices;
     wstring loadedFilePath;
-    wstring snapMode{L"Nearest"};
     double zoomLevel{TimelineZoomSlider().Value()};
     vector<IndexedFrameSample> loadedKeyframeIndex;
 
@@ -1683,11 +1677,7 @@ IAsyncAction MainWindow::openProjectFileAsync(const StorageFile& file){
         }else if(key == L"storyline_zoom"){
             try{ zoomLevel = stod(value); }catch(...){ unknownLines.push_back(line); }
         }else if(key == L"keyframe_snap_mode"){
-            if(value == L"Left" || value == L"Right" || value == L"Nearest"){
-                snapMode = value;
-            }else{
-                unknownLines.push_back(line);
-            }
+            // legacy project setting; snap mode is now app-wide
         }else if(key == L"selected_keyframe_indices"){
             selectedKeyframeIndices = parseIndexList(value);
         }else if(key == L"cut_interval_indices"){
@@ -1714,7 +1704,6 @@ IAsyncAction MainWindow::openProjectFileAsync(const StorageFile& file){
 
     zoomLevel = clamp(zoomLevel, TimelineZoomSlider().Minimum(), TimelineZoomSlider().Maximum());
     TimelineZoomSlider().Value(zoomLevel);
-    m_keyFrameSnapMode = snapMode;
 
     const auto cleanKeyTimes {buildCleanKeyframeTimes100ns(m_frameIndex)};
     m_selectedKeyFrames.clear();
@@ -1731,14 +1720,6 @@ IAsyncAction MainWindow::openProjectFileAsync(const StorageFile& file){
     m_projectUnknownLines = move(unknownLines);
     m_projectPath = file.Path();
 
-    if(snapMode == L"Left"){
-        LeftSnapRadio().IsChecked(true);
-    }else if(snapMode == L"Right"){
-        RightSnapRadio().IsChecked(true);
-    }else{
-        NearestSnapRadio().IsChecked(true);
-    }
-
     addRecentProject(file.Path());
     m_lastSavedProjectSnapshot = buildProjectSnapshot();
     StatusText().Text(L"Project loaded");
@@ -1749,7 +1730,6 @@ IAsyncAction MainWindow::saveProjectFileAsync(const StorageFile& file){
     lines.emplace_back(L"# llvc project file");
     lines.emplace_back(L"file_path=" + wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
     lines.emplace_back(L"storyline_zoom=" + to_wstring(TimelineZoomSlider().Value()));
-    lines.emplace_back(L"keyframe_snap_mode=" + m_keyFrameSnapMode);
     lines.emplace_back(L"selected_keyframe_indices=" + serializeIndexList(m_selectedKeyFrames));
     lines.emplace_back(L"cut_interval_indices=" + serializeIndexPairs(m_cutIntervals));
     lines.emplace_back(L"keyframe_index=" + serializeKeyframeVector(m_frameIndex));
@@ -1822,10 +1802,43 @@ IAsyncAction MainWindow::showOptionsDialogAsync(){
     projectsCount.SpinButtonPlacementMode(Controls::NumberBoxSpinButtonPlacementMode::Inline);
     projectsCount.Value(static_cast<double>(m_maxRecentProjects));
 
+    Controls::TextBlock snapLabel{};
+    snapLabel.Text(L"Key frame snap method");
+
+    Controls::StackPanel snapPanel{};
+    snapPanel.Orientation(Controls::Orientation::Horizontal);
+    snapPanel.Spacing(8);
+
+    Controls::RadioButton leftSnapRadio{};
+    leftSnapRadio.Content(box_value(L"Left"));
+    leftSnapRadio.GroupName(L"OptionsKeyFrameSnapMode");
+
+    Controls::RadioButton rightSnapRadio{};
+    rightSnapRadio.Content(box_value(L"Right"));
+    rightSnapRadio.GroupName(L"OptionsKeyFrameSnapMode");
+
+    Controls::RadioButton nearestSnapRadio{};
+    nearestSnapRadio.Content(box_value(L"Nearest"));
+    nearestSnapRadio.GroupName(L"OptionsKeyFrameSnapMode");
+
+    if(m_keyFrameSnapMode == L"Left"){
+        leftSnapRadio.IsChecked(true);
+    }else if(m_keyFrameSnapMode == L"Right"){
+        rightSnapRadio.IsChecked(true);
+    }else{
+        nearestSnapRadio.IsChecked(true);
+    }
+
+    snapPanel.Children().Append(leftSnapRadio);
+    snapPanel.Children().Append(rightSnapRadio);
+    snapPanel.Children().Append(nearestSnapRadio);
+
     panel.Children().Append(videosLabel);
     panel.Children().Append(videosCount);
     panel.Children().Append(projectsLabel);
     panel.Children().Append(projectsCount);
+    panel.Children().Append(snapLabel);
+    panel.Children().Append(snapPanel);
 
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(Content().XamlRoot());
@@ -1841,6 +1854,14 @@ IAsyncAction MainWindow::showOptionsDialogAsync(){
 
     m_maxRecentVideos = static_cast<uint32_t>(clamp(static_cast<int>(lround(videosCount.Value())), 1, 20));
     m_maxRecentProjects = static_cast<uint32_t>(clamp(static_cast<int>(lround(projectsCount.Value())), 1, 20));
+
+    if(leftSnapRadio.IsChecked().GetBoolean()){
+        m_keyFrameSnapMode = L"Left";
+    }else if(rightSnapRadio.IsChecked().GetBoolean()){
+        m_keyFrameSnapMode = L"Right";
+    }else{
+        m_keyFrameSnapMode = L"Nearest";
+    }
 
     if(m_recentVideos.size() > m_maxRecentVideos){
         m_recentVideos.resize(m_maxRecentVideos);

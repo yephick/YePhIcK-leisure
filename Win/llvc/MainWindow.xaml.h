@@ -62,7 +62,6 @@ struct MainWindow: MainWindowT<MainWindow>{
     void window_PreviewKeyDown(const Control& sender, const winrt::Microsoft::UI::Xaml::Input::KeyRoutedEventArgs& args);
     void window_KeyDown(const Control& sender, const winrt::Microsoft::UI::Xaml::Input::KeyRoutedEventArgs& args);
     void rootGrid_PointerReleased(const Control& sender, const PREArgs& args);
-    void keyFrameSnapMode_Checked(const Control& sender, const REArgs& args);
     AAction newProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction openProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction saveProjectMenuItem_Click(const Control& sender, const REArgs& args);

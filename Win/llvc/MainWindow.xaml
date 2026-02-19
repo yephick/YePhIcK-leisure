@@ -58,22 +58,10 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <Grid ColumnSpacing="10" VerticalAlignment="Center">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+            <Grid VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <TextBlock Text="Zoom" VerticalAlignment="Center" Margin="-4,0,0,0"/>
                     <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="12" Value="3" SmallChange="0.25" LargeChange="1" ValueChanged="timelineZoomSlider_ValueChanged"/>
-                </StackPanel>
-
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Center">
-                    <TextBlock Text="Key frame snap" VerticalAlignment="Center"/>
-                    <RadioButton x:Name="LeftSnapRadio" IsTabStop="False" Content="Left" GroupName="KeyFrameSnapMode" Tag="Left" Checked="keyFrameSnapMode_Checked"/>
-                    <RadioButton x:Name="RightSnapRadio" IsTabStop="False" Content="Right" GroupName="KeyFrameSnapMode" Tag="Right" Checked="keyFrameSnapMode_Checked"/>
-                    <RadioButton x:Name="NearestSnapRadio" IsTabStop="False" Content="Nearest" GroupName="KeyFrameSnapMode" Tag="Nearest" IsChecked="True" Checked="keyFrameSnapMode_Checked"/>
                 </StackPanel>
             </Grid>
 
