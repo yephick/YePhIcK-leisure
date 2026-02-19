@@ -83,6 +83,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction saveProjectAsMenuItem_Click(const Control& sender, const REArgs& args);
     AAction closeProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction loadVideoMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction exportVideoMenuItem_Click(const Control& sender, const REArgs& args);
     AAction recentVideoMenuItem_Click(const Control& sender, const REArgs& args);
     AAction recentProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction propertiesMenuItem_Click(const Control& sender, const REArgs& args);

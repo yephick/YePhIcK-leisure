@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cwctype>
+#include <cwchar>
 #include <filesystem>
 #include <format>
 #include <limits>
@@ -82,6 +83,52 @@ constexpr auto S_DEFAULT_MAX_RECENT{5};
 constexpr std::array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 10, 50, 100, 250, 500, 750, 1000}};
 
 constexpr uint32_t TIMELINE_EDGE_SENTINEL = numeric_limits<uint32_t>::max();
+
+std::wstring formatDurationFileTag(const std::int64_t duration100ns){
+    const auto totalMs{std::max<std::int64_t>(0, (duration100ns + 5'000) / 10'000)};
+    const auto minutes{totalMs / 60'000};
+    const auto seconds{(totalMs / 1'000) % 60};
+    const auto millis{totalMs % 1'000};
+    return std::format(L"{:02}{:02}{:03}", minutes, seconds, millis);
+}
+
+std::vector<std::pair<std::int64_t, std::int64_t>> buildCutRanges100ns(
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>>& cutIntervals,
+    const std::vector<std::int64_t>& cleanKeyTimes,
+    const std::int64_t totalDuration100ns){
+
+    std::vector<std::pair<std::int64_t, std::int64_t>> ranges;
+    ranges.reserve(cutIntervals.size());
+
+    for(const auto& interval : cutIntervals){
+        const auto start{interval.first == TIMELINE_EDGE_SENTINEL ? static_cast<std::int64_t>(0)
+            : (interval.first < cleanKeyTimes.size() ? cleanKeyTimes[interval.first] : static_cast<std::int64_t>(-1))};
+        const auto end{interval.second == TIMELINE_EDGE_SENTINEL ? totalDuration100ns
+            : (interval.second < cleanKeyTimes.size() ? cleanKeyTimes[interval.second] : static_cast<std::int64_t>(-1))};
+
+        if(start < 0 || end < 0 || end <= start){
+            continue;
+        }
+
+        ranges.emplace_back(start, end);
+    }
+
+    return ranges;
+}
+
+std::int64_t removedDurationBefore(const std::vector<std::pair<std::int64_t, std::int64_t>>& ranges, const std::int64_t time100ns){
+    std::int64_t removed{};
+    for(const auto& [start, end] : ranges){
+        if(time100ns <= start){
+            break;
+        }
+        removed += std::min(time100ns, end) - start;
+        if(time100ns < end){
+            break;
+        }
+    }
+    return removed;
+}
 
 MainWindow::MainWindow(){
     InitializeComponent();
@@ -1131,6 +1178,136 @@ AAction MainWindow::closeProjectMenuItem_Click(const Control&, const REArgs&){
 
 AAction MainWindow::loadVideoMenuItem_Click(const Control&, const REArgs&){
     co_await pickAndLoadVideoAsync();
+}
+
+AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
+    if(!m_loadedFile){
+        co_await showInfoDialogAsync(L"Export video", L"Load a video before exporting.");
+        co_return;
+    }
+
+    MFLifetime mf{};
+
+    const std::wstring sourcePath{m_loadedFile.Path().c_str()};
+    const auto sourceDuration100ns{std::max<std::int64_t>(0, static_cast<std::int64_t>(std::llround(std::max(0.0, m_timelineDurationSeconds) * 10'000'000.0)))};
+    const auto cleanKeyTimes{buildCleanKeyframeTimes100ns(m_frameIndex)};
+    const auto cutRanges100ns{buildCutRanges100ns(m_cutIntervals, cleanKeyTimes, sourceDuration100ns)};
+
+    std::int64_t removedTotal100ns{};
+    for(const auto& [start, end] : cutRanges100ns){
+        removedTotal100ns += (end - start);
+    }
+    const auto outputDuration100ns{std::max<std::int64_t>(0, sourceDuration100ns - removedTotal100ns)};
+
+    const filesystem::path sourceFsPath{sourcePath};
+    const auto sourceExt{sourceFsPath.extension().wstring()};
+    const auto defaultExt{_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4"};
+
+    FileSavePicker picker{};
+    picker.SuggestedStartLocation(PickerLocationId::VideosLibrary);
+    picker.FileTypeChoices().Insert(L"MP4 video", single_threaded_vector<hstring>({L".mp4"}));
+    picker.FileTypeChoices().Insert(L"MOV video", single_threaded_vector<hstring>({L".mov"}));
+    picker.DefaultFileExtension(defaultExt);
+    picker.SuggestedFileName(hstring(sourceFsPath.stem().wstring() + L" - " + formatDurationFileTag(outputDuration100ns)));
+
+    auto initWithWindow{picker.as<IInitializeWithWindow>()};
+    check_hresult(initWithWindow->Initialize(getWindowHandle()));
+
+    const auto outputFile{co_await picker.PickSaveFileAsync()};
+    if(!outputFile){
+        co_return;
+    }
+
+    try{
+        StatusText().Text(L"Exporting...");
+
+        com_ptr<IMFSourceReader> reader;
+        check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, reader.put()));
+
+        constexpr auto invalidStream{numeric_limits<DWORD>::max()};
+        auto videoStreamIndex{invalidStream};
+        for(DWORD streamIndex = 0;; ++streamIndex){
+            com_ptr<IMFMediaType> type;
+            const auto hr{reader->GetNativeMediaType(streamIndex, 0, type.put())};
+            if(hr == MF_E_INVALIDSTREAMNUMBER){
+                break;
+            }
+            check_hresult(hr);
+
+            GUID major{GUID_NULL};
+            check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+            if(major == MFMediaType_Video){
+                videoStreamIndex = streamIndex;
+                break;
+            }
+        }
+
+        if(videoStreamIndex == invalidStream){
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No video stream found");
+        }
+
+        check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+        check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
+
+        com_ptr<IMFMediaType> sourceVideoType;
+        check_hresult(reader->GetCurrentMediaType(videoStreamIndex, sourceVideoType.put()));
+
+        com_ptr<IMFSinkWriter> writer;
+        check_hresult(MFCreateSinkWriterFromURL(outputFile.Path().c_str(), nullptr, nullptr, writer.put()));
+
+        DWORD writerVideoStreamIndex{};
+        check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
+        check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
+        check_hresult(writer->BeginWriting());
+
+        for(;;){
+            DWORD actualStream{};
+            DWORD flags{};
+            LONGLONG timestamp{};
+            com_ptr<IMFSample> sample;
+            const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+            if(FAILED(hr)){
+                check_hresult(hr);
+            }
+            if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+                break;
+            }
+            if(!sample){
+                continue;
+            }
+
+            const auto inTime100ns{std::max<std::int64_t>(0, timestamp)};
+            auto dropped{false};
+            for(const auto& [start, end] : cutRanges100ns){
+                if(inTime100ns < start){
+                    break;
+                }
+                if(inTime100ns < end){
+                    dropped = true;
+                    break;
+                }
+            }
+            if(dropped){
+                continue;
+            }
+
+            const auto outTime100ns{inTime100ns - removedDurationBefore(cutRanges100ns, inTime100ns)};
+            check_hresult(sample->SetSampleTime(outTime100ns));
+
+            LONGLONG duration100ns{};
+            if(SUCCEEDED(sample->GetSampleDuration(&duration100ns)) && duration100ns > 0){
+                check_hresult(sample->SetSampleDuration(duration100ns));
+            }
+
+            check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
+        }
+
+        check_hresult(writer->Finalize());
+        StatusText().Text(L"Export completed");
+    }catch(const hresult_error& ex){
+        StatusText().Text(L"Export failed");
+        co_await showInfoDialogAsync(L"Export failed", ex.message());
+    }
 }
 
 AAction MainWindow::recentVideoMenuItem_Click(const Control& sender, const REArgs&){
