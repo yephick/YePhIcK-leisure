@@ -83,8 +83,6 @@ constexpr auto S_DEFAULT_MAX_RECENT{5};
 
 constexpr std::array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 10, 50, 100, 250, 500, 750, 1000}};
 
-constexpr uint32_t TIMELINE_EDGE_SENTINEL = numeric_limits<uint32_t>::max();
-
 bool isControlModifierActive(const Windows::System::VirtualKeyModifiers modifiers){
     if((modifiers & Windows::System::VirtualKeyModifiers::Control) == Windows::System::VirtualKeyModifiers::Control){
         return true;
@@ -113,28 +111,122 @@ std::wstring formatDurationFileTag(const std::int64_t duration100ns){
     return std::format(L"{:02}{:02}{:03}", minutes, seconds, millis);
 }
 
+std::vector<std::int64_t> buildSceneBoundaries100ns(const std::vector<IndexedFrameSample>& markers, const std::int64_t totalDuration100ns){
+    std::vector<std::int64_t> boundaries;
+    boundaries.reserve(markers.size() + 2);
+    boundaries.push_back(0);
+    for(const auto& marker : markers){
+        boundaries.push_back(std::clamp(marker.time100ns, static_cast<std::int64_t>(0), totalDuration100ns));
+    }
+    boundaries.push_back(totalDuration100ns);
+    std::sort(boundaries.begin(), boundaries.end());
+    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+    if(boundaries.empty() || boundaries.front() != 0){
+        boundaries.insert(boundaries.begin(), 0);
+    }
+    if(boundaries.back() != totalDuration100ns){
+        boundaries.push_back(totalDuration100ns);
+    }
+    return boundaries;
+}
+
 std::vector<std::pair<std::int64_t, std::int64_t>> buildCutRanges100ns(
-    const std::vector<std::pair<std::uint32_t, std::uint32_t>>& cutIntervals,
-    const std::vector<std::int64_t>& cleanKeyTimes,
+    const std::vector<std::uint32_t>& cutScenes,
+    const std::vector<IndexedFrameSample>& markers,
     const std::int64_t totalDuration100ns){
 
-    std::vector<std::pair<std::int64_t, std::int64_t>> ranges;
-    ranges.reserve(cutIntervals.size());
-
-    for(const auto& interval : cutIntervals){
-        const auto start{interval.first == TIMELINE_EDGE_SENTINEL ? static_cast<std::int64_t>(0)
-            : (interval.first < cleanKeyTimes.size() ? cleanKeyTimes[interval.first] : static_cast<std::int64_t>(-1))};
-        const auto end{interval.second == TIMELINE_EDGE_SENTINEL ? totalDuration100ns
-            : (interval.second < cleanKeyTimes.size() ? cleanKeyTimes[interval.second] : static_cast<std::int64_t>(-1))};
-
-        if(start < 0 || end < 0 || end <= start){
-            continue;
-        }
-
-        ranges.emplace_back(start, end);
+    const auto boundaries{buildSceneBoundaries100ns(markers, totalDuration100ns)};
+    if(boundaries.size() < 2){
+        return {};
     }
 
-    return ranges;
+    const auto sceneCount{boundaries.size() - 1};
+    std::vector<std::pair<std::int64_t, std::int64_t>> ranges;
+    for(const auto sceneIndex : cutScenes){
+        if(sceneIndex >= sceneCount){
+            continue;
+        }
+        const auto start{boundaries[sceneIndex]};
+        const auto end{boundaries[sceneIndex + 1]};
+        if(end > start){
+            ranges.emplace_back(start, end);
+        }
+    }
+
+    std::sort(ranges.begin(), ranges.end());
+    std::vector<std::pair<std::int64_t, std::int64_t>> merged;
+    for(const auto& range : ranges){
+        if(merged.empty() || range.first > merged.back().second){
+            merged.push_back(range);
+        }else{
+            merged.back().second = std::max(merged.back().second, range.second);
+        }
+    }
+    return merged;
+}
+
+std::vector<std::pair<std::int64_t, std::int64_t>> buildEffectiveCutRangesWithRapPreroll(
+    const std::vector<std::uint32_t>& cutScenes,
+    const std::vector<IndexedFrameSample>& markers,
+    const std::int64_t totalDuration100ns,
+    const std::vector<std::int64_t>& rapTimes100ns){
+
+    const auto boundaries{buildSceneBoundaries100ns(markers, totalDuration100ns)};
+    if(boundaries.size() < 2){
+        return {};
+    }
+
+    const auto sceneCount{boundaries.size() - 1};
+    std::vector<bool> isCut(sceneCount, false);
+    for(const auto scene : cutScenes){
+        if(scene < sceneCount){
+            isCut[scene] = true;
+        }
+    }
+
+    std::vector<std::pair<std::int64_t, std::int64_t>> keepRanges;
+    for(size_t i = 0; i < sceneCount; ++i){
+        if(isCut[i]){
+            continue;
+        }
+        auto start{boundaries[i]};
+        const auto end{boundaries[i + 1]};
+        const auto rapIt{std::upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), start)};
+        if(rapIt != rapTimes100ns.begin()){
+            start = *(rapIt - 1);
+        }
+        if(end > start){
+            keepRanges.emplace_back(start, end);
+        }
+    }
+
+    if(keepRanges.empty()){
+        return {{0, totalDuration100ns}};
+    }
+
+    std::sort(keepRanges.begin(), keepRanges.end());
+    std::vector<std::pair<std::int64_t, std::int64_t>> mergedKeep;
+    for(const auto& range : keepRanges){
+        if(mergedKeep.empty() || range.first > mergedKeep.back().second){
+            mergedKeep.push_back(range);
+        }else{
+            mergedKeep.back().second = std::max(mergedKeep.back().second, range.second);
+        }
+    }
+
+    std::vector<std::pair<std::int64_t, std::int64_t>> cutRanges;
+    std::int64_t cursor{};
+    for(const auto& [start, end] : mergedKeep){
+        if(start > cursor){
+            cutRanges.emplace_back(cursor, start);
+        }
+        cursor = std::max(cursor, end);
+    }
+    if(cursor < totalDuration100ns){
+        cutRanges.emplace_back(cursor, totalDuration100ns);
+    }
+
+    return cutRanges;
 }
 
 std::int64_t removedDurationBefore(const std::vector<std::pair<std::int64_t, std::int64_t>>& ranges, const std::int64_t time100ns){
@@ -585,6 +677,23 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
             }
         }
 
+        std::vector<uint32_t> updatedCuts;
+        updatedCuts.reserve(m_cutScenes.size() + 1);
+        const auto splitScene{insertPos};
+        for(const auto sceneIndex : m_cutScenes){
+            if(sceneIndex < splitScene){
+                updatedCuts.push_back(sceneIndex);
+            }else if(sceneIndex == splitScene){
+                updatedCuts.push_back(sceneIndex);
+                updatedCuts.push_back(sceneIndex + 1);
+            }else{
+                updatedCuts.push_back(sceneIndex + 1);
+            }
+        }
+        sort(updatedCuts.begin(), updatedCuts.end());
+        updatedCuts.erase(unique(updatedCuts.begin(), updatedCuts.end()), updatedCuts.end());
+        m_cutScenes = std::move(updatedCuts);
+
         const auto frameNumber{estimateFrameNumberFromTime100ns(m_mediaInfo.frameRate, clicked100ns)};
         m_frameIndex.insert(insertIt, IndexedFrameSample{.time100ns=clicked100ns, .duration100ns=0, .cleanPoint=true, .sampleIndex=frameNumber});
         m_selectedKeyFrames.push_back(insertPos);
@@ -593,13 +702,13 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
     sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
     m_selectedKeyFrames.erase(unique(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end()), m_selectedKeyFrames.end());
 
-    m_cutIntervals = normalizeAndMergeIndexIntervals(move(m_cutIntervals), m_frameIndex.size());
     renderTimelineTicks();
     renderKeyframeTicks();
     renderCutOverlays();
     updateWindowTitle();
     return true;
 }
+
 
 void MainWindow::timelineCanvas_PointerReleased(const Control&, const PREArgs& e){
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
@@ -857,21 +966,10 @@ void MainWindow::renderCutOverlays(){
         return;
     }
 
-    const auto cleanKeyTimes {buildCleanKeyframeTimes100ns(m_frameIndex)};
-    if(cleanKeyTimes.empty()){
-        return;
-    }
-
+    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
+    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, m_frameIndex, duration100ns)};
     const auto overlayColor {Windows::UI::ColorHelper::FromArgb(180, 0, 0, 0)};
-    for(const auto& interval: m_cutIntervals){
-        const auto startTime100ns {interval.first == TIMELINE_EDGE_SENTINEL ? static_cast<int64_t>(0)
-            : (interval.first < cleanKeyTimes.size() ? cleanKeyTimes[interval.first] : static_cast<int64_t>(-1))};
-        const auto endTime100ns {interval.second == TIMELINE_EDGE_SENTINEL ? static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)
-            : (interval.second < cleanKeyTimes.size() ? cleanKeyTimes[interval.second] : static_cast<int64_t>(-1))};
-        if(startTime100ns < 0 || endTime100ns < 0){
-            continue;
-        }
-
+    for(const auto& [startTime100ns, endTime100ns] : cutRanges100ns){
         const auto start{clamp((static_cast<double>(startTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
         const auto end{clamp((static_cast<double>(endTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
         if(end <= start){
@@ -890,98 +988,43 @@ void MainWindow::renderCutOverlays(){
     }
 }
 
+
 bool MainWindow::toggleCutBlockAtCanvasX(const double pointerX){
     if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return false;
     }
 
     const auto width{TimelineCanvas().Width()};
-    const auto clampedX{clamp(pointerX, 0.0, width)};
-    const auto clickedSeconds{(clampedX / width) * m_timelineDurationSeconds};
-
-    if(m_selectedKeyFrames.empty()){
+    const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (m_timelineDurationSeconds * 10'000'000.0))};
+    const auto boundaries{buildSceneBoundaries100ns(m_frameIndex, static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0))};
+    if(boundaries.size() < 2){
         return false;
     }
 
-    auto selectedMarkers{m_selectedKeyFrames};
-    sort(selectedMarkers.begin(), selectedMarkers.end());
-    selectedMarkers.erase(unique(selectedMarkers.begin(), selectedMarkers.end()), selectedMarkers.end());
-
-    const auto cleanKeyTimes {buildCleanKeyframeTimes100ns(m_frameIndex)};
-    if(cleanKeyTimes.size() < 2){
-        return false;
-    }
-
-    const auto clicked100ns {static_cast<int64_t>(clickedSeconds * 10'000'000.0)};
-    const auto rightIt{upper_bound(selectedMarkers.begin(), selectedMarkers.end(), clicked100ns, [&cleanKeyTimes](int64_t time100ns, uint32_t ordinal){
-        if(ordinal >= cleanKeyTimes.size()){
-            return true;
+    auto sceneIndex{static_cast<uint32_t>(boundaries.size() - 2)};
+    for(size_t i = 0; i + 1 < boundaries.size(); ++i){
+        if(clicked100ns < boundaries[i + 1]){
+            sceneIndex = static_cast<uint32_t>(i);
+            break;
         }
-        return time100ns < cleanKeyTimes[ordinal];
-    })};
-    auto blockStart{TIMELINE_EDGE_SENTINEL};
-    auto blockEnd{TIMELINE_EDGE_SENTINEL};
-    if(rightIt == selectedMarkers.begin()){
-        blockStart = TIMELINE_EDGE_SENTINEL;
-        blockEnd = *rightIt;
-    }else if(rightIt == selectedMarkers.end()){
-        blockStart = *(rightIt - 1);
-        blockEnd = TIMELINE_EDGE_SENTINEL;
+    }
+
+    const auto it{find(m_cutScenes.begin(), m_cutScenes.end(), sceneIndex)};
+    if(it == m_cutScenes.end()){
+        m_cutScenes.push_back(sceneIndex);
+        sort(m_cutScenes.begin(), m_cutScenes.end());
     }else{
-        blockStart = *(rightIt - 1);
-        blockEnd = *rightIt;
+        m_cutScenes.erase(it);
     }
 
-    const auto rankOfStart{[](uint32_t v){
-        return v == TIMELINE_EDGE_SENTINEL ? -1 : v;
-    }};
-    const auto rankOfEnd{[keyCount{cleanKeyTimes.size()}](uint32_t v){
-        return v == TIMELINE_EDGE_SENTINEL ? keyCount : v;
-    }};
-    const auto blockStartRank {rankOfStart(blockStart)};
-    const auto blockEndRank {rankOfEnd(blockEnd)};
-    if(blockStartRank >= blockEndRank){
-        return false;
-    }
-
-    const auto encodeInterval{[keyCount{cleanKeyTimes.size()}](auto startRank, auto endRank){
-        const auto start {startRank < 0 ? TIMELINE_EDGE_SENTINEL : static_cast<uint32_t>(startRank)};
-        const auto end {endRank >= keyCount ? TIMELINE_EDGE_SENTINEL : static_cast<uint32_t>(endRank)};
-        return make_pair(start, end);
-    }};
-
-    auto removed{false};
-    vector<pair<uint32_t, uint32_t>> updated;
-    updated.reserve(m_cutIntervals.size() + 1);
-    for(const auto& interval: m_cutIntervals){
-        const auto intervalStartRank {rankOfStart(interval.first)};
-        const auto intervalEndRank {rankOfEnd(interval.second)};
-        if(intervalEndRank <= blockStartRank || intervalStartRank >= blockEndRank){
-            updated.push_back(interval);
-            continue;
-        }
-
-        removed = true;
-        if(intervalStartRank < blockStartRank){
-            updated.push_back(encodeInterval(intervalStartRank, blockStartRank));
-        }
-        if(intervalEndRank > blockEndRank){
-            updated.push_back(encodeInterval(blockEndRank, intervalEndRank));
-        }
-    }
-
-    if(!removed){
-        updated.emplace_back(blockStart, blockEnd);
-    }
-
-    m_cutIntervals = normalizeAndMergeIndexIntervals(move(updated), cleanKeyTimes.size());
     renderCutOverlays();
     updateWindowTitle();
     return true;
 }
 
+
 bool MainWindow::trySkipCurrentCutDuringPlayback(){
-    if(!m_player || m_cutIntervals.empty() || m_timelineDurationSeconds <= 0){
+    if(!m_player || m_cutScenes.empty() || m_timelineDurationSeconds <= 0){
         return false;
     }
 
@@ -990,24 +1033,11 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
         return false;
     }
 
-    const auto cleanKeyTimes {buildCleanKeyframeTimes100ns(m_frameIndex)};
-    if(cleanKeyTimes.empty()){
-        return false;
-    }
-
+    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
+    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, m_frameIndex, duration100ns)};
     const auto now100ns{max<int64_t>(0, m_player.PlaybackSession().Position().count())};
-    for(const auto& interval: m_cutIntervals){
-        const auto start100ns {interval.first == TIMELINE_EDGE_SENTINEL ? static_cast<int64_t>(0)
-            : (interval.first < cleanKeyTimes.size() ? cleanKeyTimes[interval.first] : static_cast<int64_t>(-1))};
-        const auto end100ns {interval.second == TIMELINE_EDGE_SENTINEL ? static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)
-            : (interval.second < cleanKeyTimes.size() ? cleanKeyTimes[interval.second] : static_cast<int64_t>(-1))};
-        if(start100ns < 0 || end100ns < 0){
-            continue;
-        }
-
+    for(const auto& [start100ns, end100ns] : cutRanges100ns){
         if(now100ns >= start100ns && now100ns < end100ns){
-            // Intentionally jump directly to the next sample when preview playback skips
-            // a cut region. Cross-fade duration settings are ignored for this operation.
             m_player.PlaybackSession().Position(TimeSpan{end100ns});
             return true;
         }
@@ -1015,6 +1045,7 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
 
     return false;
 }
+
 
 void MainWindow::stepByFrame(const int delta){
     if(!m_player || m_frameIndex.empty() || delta == 0){
@@ -1249,8 +1280,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
     const std::wstring sourcePath{m_loadedFile.Path().c_str()};
     const auto sourceDuration100ns{std::max<std::int64_t>(0, static_cast<std::int64_t>(std::llround(std::max(0.0, m_timelineDurationSeconds) * 10'000'000.0)))};
-    const auto cleanKeyTimes{buildCleanKeyframeTimes100ns(m_frameIndex)};
-    const auto cutRanges100ns{buildCutRanges100ns(m_cutIntervals, cleanKeyTimes, sourceDuration100ns)};
+    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, m_frameIndex, sourceDuration100ns)};
 
     std::int64_t removedTotal100ns{};
     for(const auto& [start, end] : cutRanges100ns){
@@ -1355,6 +1385,44 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(sourceVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
         const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
 
+        std::vector<std::int64_t> rapTimes100ns;
+        rapTimes100ns.reserve(2048);
+        for(;;){
+            DWORD actualStream{};
+            DWORD flags{};
+            LONGLONG timestamp{};
+            com_ptr<IMFSample> sample;
+            const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+            if(FAILED(hr)){
+                check_hresult(hr);
+            }
+            if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+                break;
+            }
+            if(!sample){
+                continue;
+            }
+
+            LONGLONG sampleTime100ns{};
+            if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
+                sampleTime100ns = timestamp;
+            }
+
+            if(isContainerSyncSample(sample) && isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)){
+                rapTimes100ns.push_back(std::max<std::int64_t>(0, sampleTime100ns));
+            }
+        }
+        std::sort(rapTimes100ns.begin(), rapTimes100ns.end());
+        rapTimes100ns.erase(std::unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
+
+        const auto effectiveCutRanges100ns{buildEffectiveCutRangesWithRapPreroll(m_cutScenes, m_frameIndex, sourceDuration100ns, rapTimes100ns)};
+
+        PROPVARIANT startPos{};
+        startPos.vt = VT_I8;
+        startPos.hVal.QuadPart = 0;
+        check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
+        PropVariantClear(&startPos);
+
         com_ptr<IMFSinkWriter> writer;
         check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, nullptr, writer.put()));
 
@@ -1388,7 +1456,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
             const auto inTime100ns{std::max<std::int64_t>(0, sampleTime100ns)};
             auto dropped{false};
-            for(const auto& [start, end] : cutRanges100ns){
+            for(const auto& [start, end] : effectiveCutRanges100ns){
                 if(inTime100ns < start){
                     break;
                 }
@@ -1412,13 +1480,13 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 waitingForCleanPoint = false;
             }
 
-            const auto outTime100ns{inTime100ns - removedDurationBefore(cutRanges100ns, inTime100ns)};
+            const auto outTime100ns{inTime100ns - removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
             check_hresult(sample->SetSampleTime(outTime100ns));
 
             UINT64 decodeTimestamp100ns{};
             if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
                 const auto decodeTimeSigned{static_cast<std::int64_t>(decodeTimestamp100ns)};
-                const auto outDecodeTime100ns{decodeTimeSigned - removedDurationBefore(cutRanges100ns, decodeTimeSigned)};
+                const auto outDecodeTime100ns{decodeTimeSigned - removedDurationBefore(effectiveCutRanges100ns, decodeTimeSigned)};
                 check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(std::max<std::int64_t>(0, outDecodeTime100ns))));
             }
 
@@ -1601,7 +1669,7 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
     m_projectPath.clear();
     m_projectUnknownLines.clear();
     m_selectedKeyFrames.clear();
-    m_cutIntervals.clear();
+    m_cutScenes.clear();
     m_frameIndex.clear();
     m_mediaInfo = MediaInspectionResult{};
     m_timelineDurationSeconds = 0;
@@ -1636,13 +1704,13 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
 
 wstring MainWindow::buildProjectSnapshot(){
     auto snapshot{std::format(
-        L"file_path={}\nstoryline_zoom={:.15g}\nkeep_audio={}\naudio_crossfade_ms={}\nmarker_indices={}\ncut_marker_ranges={}\nmarker_points={}\n",
+        L"file_path={}\nstoryline_zoom={:.15g}\nkeep_audio={}\naudio_crossfade_ms={}\nmarker_indices={}\ncuts_scenes={}\nmarker_points={}\n",
         (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
         TimelineZoomSlider().Value(),
         m_keepAudio ? 1 : 0,
         m_audioCrossfadeMs,
         serializeIndexList(m_selectedKeyFrames),
-        serializeIndexPairs(m_cutIntervals),
+        serializeIndexList(m_cutScenes),
         serializeKeyframeVector(m_frameIndex))};
     return snapshot;
 }
@@ -1701,7 +1769,7 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     const auto lines{co_await FileIO::ReadLinesAsync(file)};
 
     vector<uint32_t> selectedMarkerIndices;
-    vector<pair<uint32_t, uint32_t>> cutMarkerRanges;
+    vector<uint32_t> cutScenes;
     wstring loadedFilePath;
     auto zoomLevel{TimelineZoomSlider().Value()};
     auto keepAudioSetting{m_keepAudio};
@@ -1733,8 +1801,8 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
             try{ zoomLevel = stod(value); }catch(...){ }
         }else if(key == L"marker_indices"){
             selectedMarkerIndices = parseIndexList(value);
-        }else if(key == L"cut_marker_ranges"){
-            cutMarkerRanges = parseIndexPairs(value);
+        }else if(key == L"cuts_scenes"){
+            cutScenes = parseIndexList(value);
         }else if(key == L"keep_audio"){
             keepAudioSetting = !(value == L"0" || value == L"false" || value == L"False");
         }else if(key == L"audio_crossfade_ms"){
@@ -1777,7 +1845,15 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
     m_selectedKeyFrames.erase(unique(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end()), m_selectedKeyFrames.end());
 
-    m_cutIntervals = normalizeAndMergeIndexIntervals(move(cutMarkerRanges), markerCount);
+    m_cutScenes.clear();
+    const auto sceneCount{static_cast<uint32_t>(markerCount + 1)};
+    for(const auto sceneIndex : cutScenes){
+        if(sceneIndex < sceneCount){
+            m_cutScenes.push_back(sceneIndex);
+        }
+    }
+    sort(m_cutScenes.begin(), m_cutScenes.end());
+    m_cutScenes.erase(unique(m_cutScenes.begin(), m_cutScenes.end()), m_cutScenes.end());
     m_projectUnknownLines.clear();
     m_projectPath = file.Path();
 
@@ -1795,7 +1871,7 @@ AAction MainWindow::saveProjectFileAsync(const SFile& file){
     lines.emplace_back(L"keep_audio=" + wstring(m_keepAudio ? L"1" : L"0"));
     lines.emplace_back(L"audio_crossfade_ms=" + to_wstring(m_audioCrossfadeMs));
     lines.emplace_back(L"marker_indices=" + serializeIndexList(m_selectedKeyFrames));
-    lines.emplace_back(L"cut_marker_ranges=" + serializeIndexPairs(m_cutIntervals));
+    lines.emplace_back(L"cuts_scenes=" + serializeIndexList(m_cutScenes));
     lines.emplace_back(L"marker_points=" + serializeKeyframeVector(m_frameIndex));
 
     co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(move(lines)));
@@ -2115,7 +2191,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_loadedFile = file;
     if(m_projectPath.empty()){
         m_selectedKeyFrames.clear();
-        m_cutIntervals.clear();
+        m_cutScenes.clear();
     }
     addRecentVideo(file.Path());
 

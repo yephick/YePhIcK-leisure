@@ -110,7 +110,7 @@ private:
     std::uint32_t m_maxRecentProjects{5};
     std::vector<std::uint32_t> m_selectedKeyFrames{};
     std::vector<IndexedFrameSample> m_frameIndex{};
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> m_cutIntervals{};
+    std::vector<std::uint32_t> m_cutScenes{};
     std::vector<std::wstring> m_projectUnknownLines{};
     winrt::hstring m_projectPath{};
     std::wstring m_lastSavedProjectSnapshot{};
