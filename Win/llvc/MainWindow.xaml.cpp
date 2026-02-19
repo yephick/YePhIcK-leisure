@@ -1203,19 +1203,52 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     const auto sourceExt{sourceFsPath.extension().wstring()};
     const auto defaultExt{_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4"};
 
-    FileSavePicker picker{};
-    picker.SuggestedStartLocation(PickerLocationId::VideosLibrary);
-    picker.FileTypeChoices().Insert(L"MP4 video", single_threaded_vector<hstring>({L".mp4"}));
-    picker.FileTypeChoices().Insert(L"MOV video", single_threaded_vector<hstring>({L".mov"}));
-    picker.DefaultFileExtension(defaultExt);
-    picker.SuggestedFileName(hstring(sourceFsPath.stem().wstring() + L" - " + formatDurationFileTag(outputDuration100ns)));
+    std::wstring outputPath{};
 
-    auto initWithWindow{picker.as<IInitializeWithWindow>()};
-    check_hresult(initWithWindow->Initialize(getWindowHandle()));
+    {
+        com_ptr<IFileSaveDialog> saveDialog;
+        check_hresult(::CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(saveDialog.put())));
 
-    const auto outputFile{co_await picker.PickSaveFileAsync()};
-    if(!outputFile){
-        co_return;
+        DWORD options{};
+        check_hresult(saveDialog->GetOptions(&options));
+        check_hresult(saveDialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT));
+
+        const COMDLG_FILTERSPEC fileTypes[]{
+            {L"MP4 video", L"*.mp4"},
+            {L"MOV video", L"*.mov"},
+        };
+        check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(std::size(fileTypes)), fileTypes));
+
+        const auto isMovDefault{_wcsicmp(defaultExt, L".mov") == 0};
+        check_hresult(saveDialog->SetFileTypeIndex(isMovDefault ? 2U : 1U));
+        check_hresult(saveDialog->SetDefaultExtension(isMovDefault ? L"mov" : L"mp4"));
+
+        const auto suggestedName{sourceFsPath.stem().wstring() + L" - " + formatDurationFileTag(outputDuration100ns)};
+        check_hresult(saveDialog->SetFileName(suggestedName.c_str()));
+
+        const auto sourceFolder{sourceFsPath.parent_path().wstring()};
+        if(!sourceFolder.empty()){
+            com_ptr<IShellItem> folderItem;
+            if(SUCCEEDED(SHCreateItemFromParsingName(sourceFolder.c_str(), nullptr, IID_PPV_ARGS(folderItem.put())))){
+                (void)saveDialog->SetDefaultFolder(folderItem.get());
+                (void)saveDialog->SetFolder(folderItem.get());
+            }
+        }
+
+        const auto showHr{saveDialog->Show(getWindowHandle())};
+        if(showHr == HRESULT_FROM_WIN32(ERROR_CANCELLED)){
+            co_return;
+        }
+        check_hresult(showHr);
+
+        com_ptr<IShellItem> resultItem;
+        check_hresult(saveDialog->GetResult(resultItem.put()));
+        PWSTR selectedPath{};
+        check_hresult(resultItem->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath));
+        outputPath = selectedPath ? selectedPath : L"";
+        if(selectedPath){
+            ::CoTaskMemFree(selectedPath);
+        }
     }
 
     winrt::hstring exportErrorMessage{};
@@ -1255,7 +1288,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(reader->GetCurrentMediaType(videoStreamIndex, sourceVideoType.put()));
 
         com_ptr<IMFSinkWriter> writer;
-        check_hresult(MFCreateSinkWriterFromURL(outputFile.Path().c_str(), nullptr, nullptr, writer.put()));
+        check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, nullptr, writer.put()));
 
         DWORD writerVideoStreamIndex{};
         check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
