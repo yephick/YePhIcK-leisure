@@ -1649,7 +1649,7 @@ void MainWindow::updateWindowTitle(){
     }
 
     const wstring loadedFile{m_loadedFile ? m_loadedFile.Path().c_str() : L"No file"};
-    Title(hstring(std::format(L"{} - {}", projectName, loadedFile)));
+    Title(hstring(std::format(L"llvc - Lossless Video Cut - {} - {}", projectName, loadedFile)));
 }
 
 IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){
