@@ -9,7 +9,7 @@
     mc:Ignorable="d"
     Title="llvc - Lossless Video Cut">
 
-    <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop" PreviewKeyDown="Window_PreviewKeyDown" KeyDown="Window_KeyDown" PointerReleased="RootGrid_PointerReleased" TabFocusNavigation="None">
+    <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop" PreviewKeyDown="Window_PreviewKeyDown" KeyDown="Window_KeyDown" PointerReleased="RootGrid_PointerReleased">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
