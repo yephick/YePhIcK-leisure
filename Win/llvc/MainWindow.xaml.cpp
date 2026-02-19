@@ -1704,7 +1704,7 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
 
 wstring MainWindow::buildProjectSnapshot(){
     auto snapshot{std::format(
-        L"file_path={}\nstoryline_zoom={:.15g}\nkeep_audio={}\naudio_crossfade_ms={}\nmarker_indices={}\ncuts_scenes={}\nmarker_points={}\n",
+        L"file_path={}\nstoryline_zoom={:.15g}\nkeep_audio={}\naudio_crossfade_ms={}\nmarker_indices={}\ncut_scenes={}\nmarker_points={}\n",
         (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
         TimelineZoomSlider().Value(),
         m_keepAudio ? 1 : 0,
@@ -1801,7 +1801,7 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
             try{ zoomLevel = stod(value); }catch(...){ }
         }else if(key == L"marker_indices"){
             selectedMarkerIndices = parseIndexList(value);
-        }else if(key == L"cuts_scenes"){
+        }else if(key == L"cut_scenes"){
             cutScenes = parseIndexList(value);
         }else if(key == L"keep_audio"){
             keepAudioSetting = !(value == L"0" || value == L"false" || value == L"False");
@@ -1871,7 +1871,7 @@ AAction MainWindow::saveProjectFileAsync(const SFile& file){
     lines.emplace_back(L"keep_audio=" + wstring(m_keepAudio ? L"1" : L"0"));
     lines.emplace_back(L"audio_crossfade_ms=" + to_wstring(m_audioCrossfadeMs));
     lines.emplace_back(L"marker_indices=" + serializeIndexList(m_selectedKeyFrames));
-    lines.emplace_back(L"cuts_scenes=" + serializeIndexList(m_cutScenes));
+    lines.emplace_back(L"cut_scenes=" + serializeIndexList(m_cutScenes));
     lines.emplace_back(L"marker_points=" + serializeKeyframeVector(m_frameIndex));
 
     co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(move(lines)));
