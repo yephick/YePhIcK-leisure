@@ -2038,14 +2038,14 @@ std::vector<IndexedFrameSample> MainWindow::BuildKeyframeIndexForFile(std::wstri
             continue;
         }
 
-        LONGLONG duration{};
-        (void)sample->GetSampleDuration(&duration);
+        LONGLONG sampleDuration{};
+        (void)sample->GetSampleDuration(&sampleDuration);
         UINT32 clean{};
         const bool cleanPoint = SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &clean)) && clean != 0;
 
         index.push_back(IndexedFrameSample{
             .time100ns = timestamp,
-            .duration100ns = duration,
+            .duration100ns = sampleDuration,
             .cleanPoint = cleanPoint,
             .sampleIndex = sampleIndex,
         });
