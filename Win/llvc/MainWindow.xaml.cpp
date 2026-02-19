@@ -5,10 +5,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cwctype>
-#include <iomanip>
+#include <format>
 #include <numeric>
 #include <limits>
-#include <sstream>
 #include <string_view>
 #include <functional>
 #include <vector>
@@ -81,26 +80,24 @@ wstring formatGuid(GUID const& guid){
 }
 
 wstring formatFileSize(uint64_t bytes){
-    wstringstream ss;
     constexpr double KB = 1024.0;
     constexpr double MB = KB * 1024.0;
     constexpr double GB = MB * 1024.0;
-    ss << bytes << L" bytes";
+
+    auto text = format(L"{} bytes", bytes);
     if(bytes >= static_cast<uint64_t>(GB)){
-        ss << L" (" << fixed << setprecision(2) << (bytes / GB) << L" GB)";
+        text += format(L" ({:.2f} GB)", bytes / GB);
     }else if(bytes >= static_cast<uint64_t>(MB)){
-        ss << L" (" << fixed << setprecision(2) << (bytes / MB) << L" MB)";
+        text += format(L" ({:.2f} MB)", bytes / MB);
     }
-    return ss.str();
+    return text;
 }
 
 wstring formatRatio(uint32_t num, uint32_t den){
     if(den == 0){
         return L"-";
     }
-    wstringstream ss;
-    ss << fixed << setprecision(3) << (static_cast<double>(num) / den);
-    return ss.str();
+    return format(L"{:.3f}", static_cast<double>(num) / den);
 }
 
 wstring joinRecentItems(vector<hstring> const& values){
@@ -200,21 +197,21 @@ vector<pair<uint32_t, uint32_t>> parseIndexPairs(wstring const& text){
 }
 
 wstring serializeIndexList(vector<uint32_t> const& values){
-    wstringstream ss;
+    wstring out;
     for(size_t i = 0; i < values.size(); ++i){
-        if(i > 0){ ss << L","; }
-        ss << values[i];
+        if(i > 0){ out += L","; }
+        out += to_wstring(values[i]);
     }
-    return ss.str();
+    return out;
 }
 
 wstring serializeIndexPairs(vector<pair<uint32_t, uint32_t>> const& values){
-    wstringstream ss;
+    wstring out;
     for(size_t i = 0; i < values.size(); ++i){
-        if(i > 0){ ss << L";"; }
-        ss << values[i].first << L"," << values[i].second;
+        if(i > 0){ out += L";"; }
+        out += format(L"{},{}", values[i].first, values[i].second);
     }
-    return ss.str();
+    return out;
 }
 
 constexpr uint32_t TIMELINE_EDGE_SENTINEL = numeric_limits<uint32_t>::max();
@@ -297,15 +294,15 @@ vector<IndexedFrameSample> parseKeyframeVector(wstring const& text){
 }
 
 wstring serializeKeyframeVector(vector<IndexedFrameSample> const& index){
-    wstringstream ss;
+    wstring out;
     bool first{true};
     for(auto const& k : index){
         if(!k.cleanPoint){ continue; }
-        if(!first){ ss << L";"; }
+        if(!first){ out += L";"; }
         first = false;
-        ss << k.time100ns << L"@" << k.sampleIndex;
+        out += format(L"{}@{}", k.time100ns, k.sampleIndex);
     }
-    return ss.str();
+    return out;
 }
 
 bool hasDecoderForSubtype(GUID const& subtype){
@@ -394,11 +391,7 @@ void analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uin
     }
 
     const auto ratio = static_cast<double>(keyFrames) / static_cast<double>(sampledFrames);
-    {
-        wstringstream ss;
-        ss << keyFrames << L" key frames / " << sampledFrames << L" sampled frames (" << fixed << setprecision(2) << (ratio * 100.0) << L"%)";
-        result.keyFrameSummary = ss.str();
-    }
+    result.keyFrameSummary = format(L"{} key frames / {} sampled frames ({:.2f}%)", keyFrames, sampledFrames, ratio * 100.0);
 
     if(keyIntervalsSec.empty()){
         result.keyFrameInterval = L"unknown (insufficient key frames sampled)";
@@ -410,16 +403,14 @@ void analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uin
     const auto minIt = min_element(keyIntervalsSec.begin(), keyIntervalsSec.end());
     const auto maxIt = max_element(keyIntervalsSec.begin(), keyIntervalsSec.end());
 
-    wstringstream ss;
-    ss << fixed << setprecision(3)
-       << L"avg " << avg << L" s, min " << *minIt << L" s, max " << *maxIt << L" s";
+    auto text = format(L"avg {:.3f} s, min {:.3f} s, max {:.3f} s", avg, *minIt, *maxIt);
 
     if(fpsNum > 0 && fpsDen > 0){
         const double fps = static_cast<double>(fpsNum) / fpsDen;
-        ss << L" (~" << setprecision(1) << (avg * fps) << L" frames avg)";
+        text += format(L" (~{:.1f} frames avg)", avg * fps);
     }
 
-    result.keyFrameInterval = ss.str();
+    result.keyFrameInterval = text;
 }
 
 MainWindow::MainWindow(){
@@ -1606,16 +1597,18 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
 }
 
 wstring MainWindow::buildProjectSnapshot(){
-    wstringstream ss;
-    ss << L"file_path=" << (m_loadedFile ? m_loadedFile.Path().c_str() : L"") << L"\n";
-    ss << L"storyline_zoom=" << setprecision(15) << TimelineZoomSlider().Value() << L"\n";
-    ss << L"keyframe_snap_mode=" << m_keyFrameSnapMode << L"\n";
-    ss << L"selected_keyframe_indices=" << serializeIndexList(m_selectedKeyFrames) << L"\n";
-    ss << L"cut_interval_indices=" << serializeIndexPairs(m_cutIntervals) << L"\n";
+    auto snapshot = format(
+        L"file_path={}\nstoryline_zoom={:.15g}\nkeyframe_snap_mode={}\nselected_keyframe_indices={}\ncut_interval_indices={}\n",
+        (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
+        TimelineZoomSlider().Value(),
+        m_keyFrameSnapMode,
+        serializeIndexList(m_selectedKeyFrames),
+        serializeIndexPairs(m_cutIntervals));
+
     for(auto const& line : m_projectUnknownLines){
-        ss << line << L"\n";
+        snapshot += line + L"\n";
     }
-    return ss.str();
+    return snapshot;
 }
 
 bool MainWindow::isProjectDirty(){
@@ -1991,9 +1984,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(wstring const& filePath){
     PropVariantInit(&duration);
     if(SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION, &duration)) && duration.vt == VT_UI8){
         const auto seconds = static_cast<double>(duration.uhVal.QuadPart) / 10'000'000.0;
-        wstringstream ss;
-        ss << fixed << setprecision(3) << seconds << L" s";
-        result.duration = ss.str();
+        result.duration = format(L"{:.3f} s", seconds);
     }
     PropVariantClear(&duration);
 
