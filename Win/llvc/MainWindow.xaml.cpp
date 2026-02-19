@@ -74,16 +74,16 @@ struct MFLifetime{
 };
 
 wstring formatGuid(GUID const& guid){
-    constexpr int guidBufferLength{40};
+    constexpr auto guidBufferLength{40};
     OLECHAR raw[guidBufferLength]{};
     StringFromGUID2(guid, raw, guidBufferLength);
     return wstring(raw);
 }
 
 wstring formatFileSize(uint64_t bytes){
-    constexpr uint64_t kb{1024ULL};
-    constexpr uint64_t mb{kb * 1024ULL};
-    constexpr uint64_t gb{mb * 1024ULL};
+    constexpr auto kb{1024ULL};
+    constexpr auto mb{kb * 1024ULL};
+    constexpr auto gb{mb * 1024ULL};
 
     auto text {std::format(L"{} bytes", bytes)};
     if(bytes >= gb){
@@ -407,7 +407,7 @@ void analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uin
     auto text {std::format(L"avg {:.3f} s, min {:.3f} s, max {:.3f} s", avg, *minIt, *maxIt)};
 
     if(fpsNum > 0 && fpsDen > 0){
-        const double fps{(1.0 * fpsNum) / fpsDen};
+        const auto fps{(1.0 * fpsNum) / fpsDen};
         text += std::format(L" (~{:.1f} frames avg)", avg * fps);
     }
 
@@ -482,7 +482,7 @@ void MainWindow::restoreWindowPlacement(){
     SetWindowPos(hwnd, nullptr, left, top, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
 
     const auto currentDpi{::GetDpiForWindow(hwnd)};
-    const bool hasDpiData{values.HasKey(W_POS_DPI)};
+    const auto hasDpiData{values.HasKey(W_POS_DPI)};
     const auto storedWidth{unbox_value<int32_t>(values.Lookup(W_POS_W))};
     const auto storedHeight{unbox_value<int32_t>(values.Lookup(W_POS_H))};
     const auto width{hasDpiData ? DipsToPixels(storedWidth, currentDpi) : storedWidth};
@@ -668,7 +668,7 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
         return false;
     }
 
-    constexpr double hitTolerancePx{4.0};
+    constexpr auto hitTolerancePx{4.0};
     const auto width{TimelineTickCanvas().Width()};
     const auto total100ns{m_timelineDurationSeconds * 10'000'000.0};
 
@@ -721,7 +721,7 @@ void MainWindow::timelineCanvas_PointerReleased(IInspectable const&, Input::Poin
     if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
         return;
     }
-    const bool dragged{m_timelineDragMoved};
+    const auto dragged{m_timelineDragMoved};
 
     m_isTimelineDragging = false;
     m_timelineDragMoved = false;
@@ -729,7 +729,7 @@ void MainWindow::timelineCanvas_PointerReleased(IInspectable const&, Input::Poin
 
     if(!dragged){
         const auto modifiers{e.KeyModifiers()};
-        const bool ctrlPressed{(modifiers & Windows::System::VirtualKeyModifiers::Control) == Windows::System::VirtualKeyModifiers::Control};
+        const auto ctrlPressed{(modifiers & Windows::System::VirtualKeyModifiers::Control) == Windows::System::VirtualKeyModifiers::Control};
         if(ctrlPressed){
             toggleCutBlockAtCanvasX(point.Position().X);
         }else{
@@ -919,13 +919,13 @@ void MainWindow::ensureTimelineCursorVisible(const double cursorLeft){
 void MainWindow::renderTimelineTicks(){
     TimelineTickCanvas().Children().Clear();
 
-    const double width{TimelineCanvas().Width()};
+    const auto width{TimelineCanvas().Width()};
     TimelineTickCanvas().Width(width);
     if(m_timelineDurationSeconds <= 0 || width <= 0){
         return;
     }
 
-    const int majorTickCount{clamp(static_cast<int>(ceil(width / 120.0)), 6, 36)};
+    const auto majorTickCount{clamp(static_cast<int>(ceil(width / 120.0)), 6, 36)};
 
     for(int i = 0; i <= majorTickCount; ++i){
         const auto ratio{static_cast<double>(i) / majorTickCount};
@@ -973,7 +973,7 @@ void MainWindow::renderKeyframeTicks(){
         }
 
         const auto x {clamp((frame.time100ns / total100ns) * width, 0.0, width)};
-        const bool isSelected = find(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), cleanOrdinal) != m_selectedKeyFrames.end();
+        const auto isSelected{find(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), cleanOrdinal) != m_selectedKeyFrames.end()};
 
         Shapes::Line tick{};
         tick.X1(x);
@@ -1091,7 +1091,7 @@ bool MainWindow::toggleCutBlockAtCanvasX(const double pointerX){
         return make_pair(start, end);
     }};
 
-    bool removed{false};
+    auto removed{false};
     vector<pair<uint32_t, uint32_t>> updated;
     updated.reserve(m_cutIntervals.size() + 1);
     for(auto const& interval : m_cutIntervals){
@@ -1160,7 +1160,7 @@ void MainWindow::stepByFrame(const int delta){
     }
 
     const auto current {m_player.PlaybackSession().Position().count()};
-    constexpr int64_t fallbackFrameDuration100ns{333'667}; // ~29.97 fps
+    constexpr auto fallbackFrameDuration100ns{333'667LL}; // ~29.97 fps
 
     vector<int64_t> frameDurations;
     frameDurations.reserve(m_frameIndex.size());
@@ -1237,8 +1237,8 @@ void MainWindow::tryFocusTimelineCanvas(FocusState const focusState){
 
 bool MainWindow::handleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
     const auto focused{Input::FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
-    const bool focusOnMenu = focused && isInMenuSubtree(focused);
-    const bool focusInDialog = focused && isInDialogSubtree(focused);
+    const auto focusOnMenu{focused && isInMenuSubtree(focused)};
+    const auto focusInDialog{focused && isInDialogSubtree(focused)};
 
     if(args.Key() == Windows::System::VirtualKey::Menu || args.Key() == Windows::System::VirtualKey::LeftMenu || args.Key() == Windows::System::VirtualKey::RightMenu){
         MainMenuBar().Focus(FocusState::Keyboard);
@@ -1259,7 +1259,7 @@ bool MainWindow::handleStorylineKeyDown(Input::KeyRoutedEventArgs const& args){
     tryFocusTimelineCanvas(FocusState::Programmatic);
 
     const auto ctrlState{Microsoft::UI::Input::InputKeyboardSource::GetKeyStateForCurrentThread(Windows::System::VirtualKey::Control)};
-    const bool ctrlDown{(ctrlState & Windows::UI::Core::CoreVirtualKeyStates::Down) == Windows::UI::Core::CoreVirtualKeyStates::Down};
+    const auto ctrlDown{(ctrlState & Windows::UI::Core::CoreVirtualKeyStates::Down) == Windows::UI::Core::CoreVirtualKeyStates::Down};
 
     if(ctrlDown){
         if(args.Key() == Windows::System::VirtualKey::O){
@@ -1903,7 +1903,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(wstring const& filePath){
     uint32_t fpsDen{};
     uint32_t videoBitrate{};
     uint32_t audioBitrate{};
-    constexpr DWORD invalidStreamIndex{numeric_limits<DWORD>::max()};
+    constexpr auto invalidStreamIndex{numeric_limits<DWORD>::max()};
     DWORD videoStreamIndex{invalidStreamIndex};
     uint32_t allSamplesIndependent{};
     uint32_t maxKeyFrameSpacing{};
@@ -2009,7 +2009,7 @@ vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(wstring const& 
     com_ptr<IMFSourceReader> reader;
     check_hresult(MFCreateSourceReaderFromURL(filePath.c_str(), nullptr, reader.put()));
 
-    constexpr DWORD invalidStream{numeric_limits<DWORD>::max()};
+    constexpr auto invalidStream{numeric_limits<DWORD>::max()};
     DWORD videoStreamIndex{invalidStream};
     for(DWORD streamIndex = 0;; ++streamIndex){
         com_ptr<IMFMediaType> type;
@@ -2062,7 +2062,7 @@ vector<IndexedFrameSample> MainWindow::buildKeyframeIndexForFile(wstring const& 
         LONGLONG sampleDuration{};
         (void)sample->GetSampleDuration(&sampleDuration);
         UINT32 clean{};
-        const bool cleanPoint = SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &clean)) && clean != 0;
+        const auto cleanPoint{SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &clean)) && clean != 0};
 
         index.push_back(IndexedFrameSample{
             .time100ns = timestamp,
