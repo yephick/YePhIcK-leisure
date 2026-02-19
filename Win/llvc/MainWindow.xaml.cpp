@@ -1218,6 +1218,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         co_return;
     }
 
+    winrt::hstring exportErrorMessage{};
+
     try{
         StatusText().Text(L"Exporting...");
 
@@ -1306,7 +1308,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         StatusText().Text(L"Export completed");
     }catch(const hresult_error& ex){
         StatusText().Text(L"Export failed");
-        co_await showInfoDialogAsync(L"Export failed", ex.message());
+        exportErrorMessage = ex.message();
+    }
+
+    if(!exportErrorMessage.empty()){
+        co_await showInfoDialogAsync(L"Export failed", exportErrorMessage);
     }
 }
 
