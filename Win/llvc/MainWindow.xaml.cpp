@@ -994,19 +994,27 @@ bool MainWindow::ToggleCutBlockAtCanvasX(const double pointerX){
     }
 
     const auto width{TimelineCanvas().Width()};
-    const auto zoom{TimelineZoomSlider().Value()};
-    const auto totalWidth{std::max(800.0, m_timelineDurationSeconds * 14.0 * zoom)};
-    const auto blockCount{std::clamp(static_cast<int>(std::lround(totalWidth / 150.0)), 8, 96)};
-    if(blockCount <= 0){
+    const auto clampedX{std::clamp(pointerX, 0.0, width)};
+    const auto clickedSeconds{(clampedX / width) * m_timelineDurationSeconds};
+
+    std::vector<double> keyTimes;
+    keyTimes.reserve(m_frameIndex.size());
+    for(auto const& frame : m_frameIndex){
+        if(frame.cleanPoint){
+            keyTimes.push_back(static_cast<double>(frame.time100ns) / 10'000'000.0);
+        }
+    }
+
+    if(keyTimes.empty()){
         return false;
     }
 
-    const auto clampedX{std::clamp(pointerX, 0.0, width)};
-    auto blockIndex{static_cast<int>(std::floor((clampedX / width) * blockCount))};
-    blockIndex = std::clamp(blockIndex, 0, blockCount - 1);
-
-    const auto blockStart{(static_cast<double>(blockIndex) / blockCount) * m_timelineDurationSeconds};
-    const auto blockEnd{(static_cast<double>(blockIndex + 1) / blockCount) * m_timelineDurationSeconds};
+    const auto rightIt = std::lower_bound(keyTimes.begin(), keyTimes.end(), clickedSeconds);
+    const auto blockStart = (rightIt == keyTimes.begin()) ? 0.0 : *(rightIt - 1);
+    const auto blockEnd = (rightIt == keyTimes.end()) ? m_timelineDurationSeconds : *rightIt;
+    if(blockEnd - blockStart <= 0.000001){
+        return false;
+    }
 
     bool removed{false};
     std::vector<std::pair<double, double>> updated;
