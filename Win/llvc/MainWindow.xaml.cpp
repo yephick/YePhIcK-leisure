@@ -208,6 +208,42 @@ std::wstring SerializeNumberPairs(std::vector<std::pair<double, double>> const& 
     return ss.str();
 }
 
+
+std::pair<double, double> NormalizeInterval(double a, double b){
+    if(a > b){
+        std::swap(a, b);
+    }
+    return {a, b};
+}
+
+std::vector<std::pair<double, double>> NormalizeAndMergeIntervals(std::vector<std::pair<double, double>> intervals, double maxSeconds){
+    std::vector<std::pair<double, double>> normalized;
+    normalized.reserve(intervals.size());
+    for(auto const& interval : intervals){
+        auto [start, end] = NormalizeInterval(interval.first, interval.second);
+        start = std::clamp(start, 0.0, maxSeconds);
+        end = std::clamp(end, 0.0, maxSeconds);
+        if(end - start > 0.000001){
+            normalized.emplace_back(start, end);
+        }
+    }
+
+    std::sort(normalized.begin(), normalized.end(), [](auto const& a, auto const& b){
+        return a.first < b.first;
+    });
+
+    std::vector<std::pair<double, double>> merged;
+    for(auto const& interval : normalized){
+        if(merged.empty() || interval.first > merged.back().second + 0.000001){
+            merged.push_back(interval);
+            continue;
+        }
+        merged.back().second = std::max(merged.back().second, interval.second);
+    }
+
+    return merged;
+}
+
 std::vector<IndexedFrameSample> ParseKeyframeVector(std::wstring const& text){
     std::vector<IndexedFrameSample> out;
     size_t start{};
@@ -664,8 +700,12 @@ void MainWindow::TimelineCanvas_PointerReleased(IInspectable const&, Input::Poin
     TimelineCanvas().ReleasePointerCapture(e.Pointer());
 
     if(!dragged){
-        if(!ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
-            SeekTimelineToCanvasX(point.Position().X, (e.KeyModifiers() & Windows::System::VirtualKeyModifiers::Shift) == Windows::System::VirtualKeyModifiers::Shift);
+        const auto modifiers{e.KeyModifiers()};
+        const bool ctrlPressed{(modifiers & Windows::System::VirtualKeyModifiers::Control) == Windows::System::VirtualKeyModifiers::Control};
+        if(ctrlPressed){
+            ToggleCutBlockAtCanvasX(point.Position().X);
+        }else if(!ToggleSelectedKeyframeAtCanvasX(point.Position().X)){
+            SeekTimelineToCanvasX(point.Position().X, (modifiers & Windows::System::VirtualKeyModifiers::Shift) == Windows::System::VirtualKeyModifiers::Shift);
         }
     }
 
@@ -723,6 +763,7 @@ void MainWindow::OnPositionTimerTick(IInspectable const&, IInspectable const&){
         return;
     }
 
+    (void)TrySkipCurrentCutDuringPlayback();
     UpdateTimelineCursorFromPlayback();
 }
 
@@ -916,6 +957,104 @@ void MainWindow::RenderKeyframeTicks(){
         tick.StrokeThickness(isSelected ? 2.0 : 1.0);
         TimelineTickCanvas().Children().Append(tick);
     }
+}
+
+void MainWindow::RenderCutOverlays(){
+    CutOverlayLayer().Children().Clear();
+
+    const auto width{TimelineCanvas().Width()};
+    CutOverlayLayer().Width(width);
+    if(m_timelineDurationSeconds <= 0 || width <= 0){
+        return;
+    }
+
+    constexpr auto overlayColor = Windows::UI::ColorHelper::FromArgb(90, 180, 180, 180);
+    for(auto const& interval : m_cutIntervals){
+        const auto start{std::clamp(interval.first / m_timelineDurationSeconds, 0.0, 1.0)};
+        const auto end{std::clamp(interval.second / m_timelineDurationSeconds, 0.0, 1.0)};
+        if(end <= start){
+            continue;
+        }
+
+        Shapes::Rectangle block{};
+        const auto left{start * width};
+        block.Width(std::max(1.0, (end - start) * width));
+        block.Height(86.0);
+        block.Fill(Media::SolidColorBrush(overlayColor));
+        block.IsHitTestVisible(false);
+        Controls::Canvas::SetLeft(block, left);
+        Controls::Canvas::SetTop(block, 0.0);
+        CutOverlayLayer().Children().Append(block);
+    }
+}
+
+bool MainWindow::ToggleCutBlockAtCanvasX(const double pointerX){
+    if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
+        return false;
+    }
+
+    const auto width{TimelineCanvas().Width()};
+    const auto zoom{TimelineZoomSlider().Value()};
+    const auto totalWidth{std::max(800.0, m_timelineDurationSeconds * 14.0 * zoom)};
+    const auto blockCount{std::clamp(static_cast<int>(std::lround(totalWidth / 150.0)), 8, 96)};
+    if(blockCount <= 0){
+        return false;
+    }
+
+    const auto clampedX{std::clamp(pointerX, 0.0, width)};
+    auto blockIndex{static_cast<int>(std::floor((clampedX / width) * blockCount))};
+    blockIndex = std::clamp(blockIndex, 0, blockCount - 1);
+
+    const auto blockStart{(static_cast<double>(blockIndex) / blockCount) * m_timelineDurationSeconds};
+    const auto blockEnd{(static_cast<double>(blockIndex + 1) / blockCount) * m_timelineDurationSeconds};
+
+    bool removed{false};
+    std::vector<std::pair<double, double>> updated;
+    updated.reserve(m_cutIntervals.size() + 1);
+    for(auto const& interval : m_cutIntervals){
+        if(interval.second <= blockStart || interval.first >= blockEnd){
+            updated.push_back(interval);
+            continue;
+        }
+
+        removed = true;
+        if(interval.first < blockStart){
+            updated.emplace_back(interval.first, blockStart);
+        }
+        if(interval.second > blockEnd){
+            updated.emplace_back(blockEnd, interval.second);
+        }
+    }
+
+    if(!removed){
+        updated.emplace_back(blockStart, blockEnd);
+    }
+
+    m_cutIntervals = NormalizeAndMergeIntervals(std::move(updated), m_timelineDurationSeconds);
+    RenderCutOverlays();
+    return true;
+}
+
+bool MainWindow::TrySkipCurrentCutDuringPlayback(){
+    if(!m_player || m_cutIntervals.empty() || m_timelineDurationSeconds <= 0){
+        return false;
+    }
+
+    const auto state{m_player.PlaybackSession().PlaybackState()};
+    if(state != Windows::Media::Playback::MediaPlaybackState::Playing){
+        return false;
+    }
+
+    const auto nowSeconds{std::max(0.0, m_player.PlaybackSession().Position().count() / 10'000'000.0)};
+    for(auto const& interval : m_cutIntervals){
+        if(nowSeconds >= interval.first && nowSeconds < interval.second){
+            const auto jumpTo{std::min(m_timelineDurationSeconds, interval.second + 0.0005)};
+            m_player.PlaybackSession().Position(SecondsToTimeSpan(jumpTo));
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void MainWindow::StepByFrame(const int delta){
@@ -1445,7 +1584,7 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     TimelineZoomSlider().Value(zoomLevel);
     m_keyFrameSnapMode = snapMode;
     m_selectedKeyFrames = std::move(selectedKeyFrames);
-    m_cutIntervals = std::move(cutIntervals);
+    m_cutIntervals = NormalizeAndMergeIntervals(std::move(cutIntervals), m_timelineDurationSeconds > 0 ? m_timelineDurationSeconds : std::numeric_limits<double>::max());
     m_projectUnknownLines = std::move(unknownLines);
     m_projectPath = file.Path();
     if(!loadedKeyframeIndex.empty()){
@@ -1857,6 +1996,7 @@ Windows::Foundation::IAsyncAction MainWindow::LoadVideoFileAsync(Windows::Storag
     AddRecentVideo(file.Path());
 
     ThumbnailLayer().Children().Clear();
+    CutOverlayLayer().Children().Clear();
     TimelineCanvas().Width(640.0);
     TimelineTickCanvas().Width(640.0);
     TimelineTickCanvas().Children().Clear();
@@ -1896,8 +2036,10 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
 
         TimelineCanvas().Width(totalWidth);
         ThumbnailLayer().Children().Clear();
+        CutOverlayLayer().Width(totalWidth);
         RenderTimelineTicks();
         RenderKeyframeTicks();
+        RenderCutOverlays();
         SyncTimelineHorizontalScrollBar();
 
         const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_loadedFile)};
@@ -1970,6 +2112,7 @@ winrt::fire_and_forget MainWindow::RenderTimelineAsync(){
             Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
             ThumbnailLayer().Children().Append(image);
             thumbnailBuilt[static_cast<size_t>(nextIndex)] = true;
+            RenderCutOverlays();
         }
 
         UpdateTimelineCursorFromPlayback();

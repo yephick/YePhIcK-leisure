@@ -131,7 +131,10 @@ private:
     void RenderTimelineTicks();
     void SeekTimelineToCanvasX(double pointerX, bool bypassSnap);
     void RenderKeyframeTicks();
+    void RenderCutOverlays();
     bool ToggleSelectedKeyframeAtCanvasX(double pointerX);
+    bool ToggleCutBlockAtCanvasX(double pointerX);
+    bool TrySkipCurrentCutDuringPlayback();
     void StepByFrame(int delta);
     void StepByKeyframe(int delta);
     void EnsureTimelineCursorVisible(double cursorLeft);
