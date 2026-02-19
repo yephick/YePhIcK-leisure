@@ -208,6 +208,8 @@ std::wstring SerializeIndexPairs(std::vector<std::pair<std::uint32_t, std::uint3
     return ss.str();
 }
 
+constexpr std::uint32_t TIMELINE_EDGE_SENTINEL = std::numeric_limits<std::uint32_t>::max();
+
 std::vector<std::int64_t> BuildCleanKeyframeTimes100ns(std::vector<IndexedFrameSample> const& index){
     std::vector<std::int64_t> times;
     times.reserve(index.size());
@@ -220,30 +222,43 @@ std::vector<std::int64_t> BuildCleanKeyframeTimes100ns(std::vector<IndexedFrameS
 }
 
 std::vector<std::pair<std::uint32_t, std::uint32_t>> NormalizeAndMergeIndexIntervals(std::vector<std::pair<std::uint32_t, std::uint32_t>> intervals, std::size_t keyframeCount){
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> normalized;
+    using RankedInterval = std::pair<std::int64_t, std::int64_t>;
+    std::vector<RankedInterval> normalized;
     normalized.reserve(intervals.size());
 
     for(auto const& interval : intervals){
-        auto a = interval.first;
-        auto b = interval.second;
-        if(a > b){
-            std::swap(a, b);
-        }
-        if(a == b || b >= keyframeCount){
+        if((interval.first == TIMELINE_EDGE_SENTINEL && interval.second == TIMELINE_EDGE_SENTINEL)
+            || (interval.first == TIMELINE_EDGE_SENTINEL && interval.second >= keyframeCount)
+            || (interval.second == TIMELINE_EDGE_SENTINEL && interval.first >= keyframeCount)
+            || (interval.first != TIMELINE_EDGE_SENTINEL && interval.second != TIMELINE_EDGE_SENTINEL && (interval.first >= keyframeCount || interval.second >= keyframeCount))){
             continue;
         }
-        normalized.emplace_back(a, b);
+
+        const auto startRank = interval.first == TIMELINE_EDGE_SENTINEL ? static_cast<std::int64_t>(-1) : static_cast<std::int64_t>(interval.first);
+        const auto endRank = interval.second == TIMELINE_EDGE_SENTINEL ? static_cast<std::int64_t>(keyframeCount) : static_cast<std::int64_t>(interval.second);
+        if(startRank >= endRank){
+            continue;
+        }
+        normalized.emplace_back(startRank, endRank);
     }
 
     std::sort(normalized.begin(), normalized.end());
 
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> merged;
+    std::vector<RankedInterval> mergedRanks;
     for(auto const& interval : normalized){
-        if(merged.empty() || interval.first > merged.back().second){
-            merged.push_back(interval);
+        if(mergedRanks.empty() || interval.first > mergedRanks.back().second){
+            mergedRanks.push_back(interval);
         }else{
-            merged.back().second = std::max(merged.back().second, interval.second);
+            mergedRanks.back().second = std::max(mergedRanks.back().second, interval.second);
         }
+    }
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> merged;
+    merged.reserve(mergedRanks.size());
+    for(auto const& interval : mergedRanks){
+        const auto start = interval.first < 0 ? TIMELINE_EDGE_SENTINEL : static_cast<std::uint32_t>(interval.first);
+        const auto end = interval.second >= static_cast<std::int64_t>(keyframeCount) ? TIMELINE_EDGE_SENTINEL : static_cast<std::uint32_t>(interval.second);
+        merged.emplace_back(start, end);
     }
 
     return merged;
@@ -979,11 +994,16 @@ void MainWindow::RenderCutOverlays(){
 
     const auto overlayColor = Windows::UI::ColorHelper::FromArgb(90, 180, 180, 180);
     for(auto const& interval : m_cutIntervals){
-        if(interval.first >= cleanKeyTimes.size() || interval.second >= cleanKeyTimes.size()){
+        const auto startTime100ns = interval.first == TIMELINE_EDGE_SENTINEL ? static_cast<std::int64_t>(0)
+            : (interval.first < cleanKeyTimes.size() ? cleanKeyTimes[interval.first] : static_cast<std::int64_t>(-1));
+        const auto endTime100ns = interval.second == TIMELINE_EDGE_SENTINEL ? static_cast<std::int64_t>(m_timelineDurationSeconds * 10'000'000.0)
+            : (interval.second < cleanKeyTimes.size() ? cleanKeyTimes[interval.second] : static_cast<std::int64_t>(-1));
+        if(startTime100ns < 0 || endTime100ns < 0){
             continue;
         }
-        const auto start{std::clamp((static_cast<double>(cleanKeyTimes[interval.first]) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
-        const auto end{std::clamp((static_cast<double>(cleanKeyTimes[interval.second]) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
+
+        const auto start{std::clamp((static_cast<double>(startTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
+        const auto end{std::clamp((static_cast<double>(endTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
         if(end <= start){
             continue;
         }
@@ -1009,17 +1029,13 @@ bool MainWindow::ToggleCutBlockAtCanvasX(const double pointerX){
     const auto clampedX{std::clamp(pointerX, 0.0, width)};
     const auto clickedSeconds{(clampedX / width) * m_timelineDurationSeconds};
 
-    if(m_selectedKeyFrames.size() < 2){
+    if(m_selectedKeyFrames.empty()){
         return false;
     }
 
     auto selectedMarkers{m_selectedKeyFrames};
     std::sort(selectedMarkers.begin(), selectedMarkers.end());
     selectedMarkers.erase(std::unique(selectedMarkers.begin(), selectedMarkers.end()), selectedMarkers.end());
-
-    if(selectedMarkers.size() < 2){
-        return false;
-    }
 
     const auto cleanKeyTimes = BuildCleanKeyframeTimes100ns(m_frameIndex);
     if(cleanKeyTimes.size() < 2){
@@ -1033,31 +1049,54 @@ bool MainWindow::ToggleCutBlockAtCanvasX(const double pointerX){
         }
         return time100ns < cleanKeyTimes[ordinal];
     });
-    if(rightIt == selectedMarkers.begin() || rightIt == selectedMarkers.end()){
+    std::uint32_t blockStart{TIMELINE_EDGE_SENTINEL};
+    std::uint32_t blockEnd{TIMELINE_EDGE_SENTINEL};
+    if(rightIt == selectedMarkers.begin()){
+        blockStart = TIMELINE_EDGE_SENTINEL;
+        blockEnd = *rightIt;
+    }else if(rightIt == selectedMarkers.end()){
+        blockStart = *(rightIt - 1);
+        blockEnd = TIMELINE_EDGE_SENTINEL;
+    }else{
+        blockStart = *(rightIt - 1);
+        blockEnd = *rightIt;
+    }
+
+    const auto rankOfStart = [](std::uint32_t v){
+        return v == TIMELINE_EDGE_SENTINEL ? static_cast<std::int64_t>(-1) : static_cast<std::int64_t>(v);
+    };
+    const auto rankOfEnd = [keyCount = cleanKeyTimes.size()](std::uint32_t v){
+        return v == TIMELINE_EDGE_SENTINEL ? static_cast<std::int64_t>(keyCount) : static_cast<std::int64_t>(v);
+    };
+    const auto blockStartRank = rankOfStart(blockStart);
+    const auto blockEndRank = rankOfEnd(blockEnd);
+    if(blockStartRank >= blockEndRank){
         return false;
     }
 
-    const auto blockStart = *(rightIt - 1);
-    const auto blockEnd = *rightIt;
-    if(blockStart >= cleanKeyTimes.size() || blockEnd >= cleanKeyTimes.size() || blockStart == blockEnd){
-        return false;
-    }
+    const auto encodeInterval = [keyCount = cleanKeyTimes.size()](std::int64_t startRank, std::int64_t endRank){
+        const auto start = startRank < 0 ? TIMELINE_EDGE_SENTINEL : static_cast<std::uint32_t>(startRank);
+        const auto end = endRank >= static_cast<std::int64_t>(keyCount) ? TIMELINE_EDGE_SENTINEL : static_cast<std::uint32_t>(endRank);
+        return std::make_pair(start, end);
+    };
 
     bool removed{false};
     std::vector<std::pair<std::uint32_t, std::uint32_t>> updated;
     updated.reserve(m_cutIntervals.size() + 1);
     for(auto const& interval : m_cutIntervals){
-        if(interval.second <= blockStart || interval.first >= blockEnd){
+        const auto intervalStartRank = rankOfStart(interval.first);
+        const auto intervalEndRank = rankOfEnd(interval.second);
+        if(intervalEndRank <= blockStartRank || intervalStartRank >= blockEndRank){
             updated.push_back(interval);
             continue;
         }
 
         removed = true;
-        if(interval.first < blockStart){
-            updated.emplace_back(interval.first, blockStart);
+        if(intervalStartRank < blockStartRank){
+            updated.push_back(encodeInterval(intervalStartRank, blockStartRank));
         }
-        if(interval.second > blockEnd){
-            updated.emplace_back(blockEnd, interval.second);
+        if(intervalEndRank > blockEndRank){
+            updated.push_back(encodeInterval(blockEndRank, intervalEndRank));
         }
     }
 
@@ -1087,12 +1126,14 @@ bool MainWindow::TrySkipCurrentCutDuringPlayback(){
 
     const auto now100ns{std::max<std::int64_t>(0, m_player.PlaybackSession().Position().count())};
     for(auto const& interval : m_cutIntervals){
-        if(interval.first >= cleanKeyTimes.size() || interval.second >= cleanKeyTimes.size()){
+        const auto start100ns = interval.first == TIMELINE_EDGE_SENTINEL ? static_cast<std::int64_t>(0)
+            : (interval.first < cleanKeyTimes.size() ? cleanKeyTimes[interval.first] : static_cast<std::int64_t>(-1));
+        const auto end100ns = interval.second == TIMELINE_EDGE_SENTINEL ? static_cast<std::int64_t>(m_timelineDurationSeconds * 10'000'000.0)
+            : (interval.second < cleanKeyTimes.size() ? cleanKeyTimes[interval.second] : static_cast<std::int64_t>(-1));
+        if(start100ns < 0 || end100ns < 0){
             continue;
         }
 
-        const auto start100ns = cleanKeyTimes[interval.first];
-        const auto end100ns = cleanKeyTimes[interval.second];
         if(now100ns >= start100ns && now100ns < end100ns){
             m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{end100ns});
             return true;
