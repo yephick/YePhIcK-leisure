@@ -153,61 +153,6 @@ std::wstring Trim(std::wstring value){
     return value.substr(first, last - first + 1);
 }
 
-std::vector<double> ParseNumberList(std::wstring const& text){
-    std::vector<double> values;
-    size_t start{};
-    while(start <= text.size()){
-        const auto pos = text.find(L',', start);
-        auto token = Trim(text.substr(start, pos == std::wstring::npos ? std::wstring::npos : pos - start));
-        if(!token.empty()){
-            try{ values.push_back(std::stod(token)); }catch(...){ }
-        }
-        if(pos == std::wstring::npos){ break; }
-        start = pos + 1;
-    }
-    return values;
-}
-
-std::vector<std::pair<double, double>> ParseNumberPairs(std::wstring const& text){
-    std::vector<std::pair<double, double>> pairs;
-    size_t start{};
-    while(start <= text.size()){
-        const auto sep = text.find(L';', start);
-        const auto chunk = Trim(text.substr(start, sep == std::wstring::npos ? std::wstring::npos : sep - start));
-        if(!chunk.empty()){
-            const auto comma = chunk.find(L',');
-            if(comma != std::wstring::npos){
-                try{
-                    const auto a = std::stod(Trim(chunk.substr(0, comma)));
-                    const auto b = std::stod(Trim(chunk.substr(comma + 1)));
-                    pairs.emplace_back(a, b);
-                }catch(...){ }
-            }
-        }
-        if(sep == std::wstring::npos){ break; }
-        start = sep + 1;
-    }
-    return pairs;
-}
-
-std::wstring SerializeNumberList(std::vector<double> const& values){
-    std::wstringstream ss;
-    for(size_t i = 0; i < values.size(); ++i){
-        if(i > 0){ ss << L","; }
-        ss << std::setprecision(15) << values[i];
-    }
-    return ss.str();
-}
-
-std::wstring SerializeNumberPairs(std::vector<std::pair<double, double>> const& values){
-    std::wstringstream ss;
-    for(size_t i = 0; i < values.size(); ++i){
-        if(i > 0){ ss << L";"; }
-        ss << std::setprecision(15) << values[i].first << L"," << values[i].second;
-    }
-    return ss.str();
-}
-
 std::vector<std::uint32_t> ParseIndexList(std::wstring const& text){
     std::vector<std::uint32_t> values;
     size_t start{};
@@ -263,107 +208,47 @@ std::wstring SerializeIndexPairs(std::vector<std::pair<std::uint32_t, std::uint3
     return ss.str();
 }
 
-std::vector<double> BuildCleanKeyframeTimes(std::vector<IndexedFrameSample> const& index){
-    std::vector<double> times;
+std::vector<std::int64_t> BuildCleanKeyframeTimes100ns(std::vector<IndexedFrameSample> const& index){
+    std::vector<std::int64_t> times;
     times.reserve(index.size());
     for(auto const& sample : index){
         if(sample.cleanPoint){
-            times.push_back(static_cast<double>(sample.time100ns) / 10'000'000.0);
+            times.push_back(sample.time100ns);
         }
     }
     return times;
 }
 
-std::uint32_t FindNearestKeyframeOrdinal(std::vector<double> const& keyTimes, double seconds){
-    const auto it = std::lower_bound(keyTimes.begin(), keyTimes.end(), seconds);
-    if(it == keyTimes.begin()){
-        return 0;
-    }
-    if(it == keyTimes.end()){
-        return static_cast<std::uint32_t>(keyTimes.size() - 1);
-    }
-
-    const auto rightIndex = static_cast<std::uint32_t>(std::distance(keyTimes.begin(), it));
-    const auto leftIndex = rightIndex - 1;
-    return (std::fabs(seconds - keyTimes[leftIndex]) <= std::fabs(keyTimes[rightIndex] - seconds)) ? leftIndex : rightIndex;
-}
-
-std::vector<std::uint32_t> ConvertSelectedKeyframeTimesToOrdinals(std::vector<double> const& selectedKeyframes, std::vector<IndexedFrameSample> const& index){
-    std::vector<std::uint32_t> out;
-    const auto keyTimes = BuildCleanKeyframeTimes(index);
-    if(keyTimes.empty()){
-        return out;
-    }
-
-    out.reserve(selectedKeyframes.size());
-    for(const auto selectedTime : selectedKeyframes){
-        out.push_back(FindNearestKeyframeOrdinal(keyTimes, selectedTime));
-    }
-
-    std::sort(out.begin(), out.end());
-    out.erase(std::unique(out.begin(), out.end()), out.end());
-    return out;
-}
-
-std::vector<std::pair<std::uint32_t, std::uint32_t>> ConvertCutIntervalsToOrdinalPairs(std::vector<std::pair<double, double>> const& cutIntervals, std::vector<IndexedFrameSample> const& index){
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
-    const auto keyTimes = BuildCleanKeyframeTimes(index);
-    if(keyTimes.empty()){
-        return out;
-    }
-
-    out.reserve(cutIntervals.size());
-    for(auto const& interval : cutIntervals){
-        auto first = FindNearestKeyframeOrdinal(keyTimes, interval.first);
-        auto second = FindNearestKeyframeOrdinal(keyTimes, interval.second);
-        if(first > second){
-            std::swap(first, second);
-        }
-        if(first != second){
-            out.emplace_back(first, second);
-        }
-    }
-
-    std::sort(out.begin(), out.end());
-    out.erase(std::unique(out.begin(), out.end()), out.end());
-    return out;
-}
-
-
-std::pair<double, double> NormalizeInterval(double a, double b){
-    if(a > b){
-        std::swap(a, b);
-    }
-    return {a, b};
-}
-
-std::vector<std::pair<double, double>> NormalizeAndMergeIntervals(std::vector<std::pair<double, double>> intervals, double maxSeconds){
-    std::vector<std::pair<double, double>> normalized;
+std::vector<std::pair<std::uint32_t, std::uint32_t>> NormalizeAndMergeIndexIntervals(std::vector<std::pair<std::uint32_t, std::uint32_t>> intervals, std::size_t keyframeCount){
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> normalized;
     normalized.reserve(intervals.size());
+
     for(auto const& interval : intervals){
-        auto [start, end] = NormalizeInterval(interval.first, interval.second);
-        start = std::clamp(start, 0.0, maxSeconds);
-        end = std::clamp(end, 0.0, maxSeconds);
-        if(end - start > 0.000001){
-            normalized.emplace_back(start, end);
+        auto a = interval.first;
+        auto b = interval.second;
+        if(a > b){
+            std::swap(a, b);
         }
-    }
-
-    std::sort(normalized.begin(), normalized.end(), [](auto const& a, auto const& b){
-        return a.first < b.first;
-    });
-
-    std::vector<std::pair<double, double>> merged;
-    for(auto const& interval : normalized){
-        if(merged.empty() || interval.first > merged.back().second + 0.000001){
-            merged.push_back(interval);
+        if(a == b || b >= keyframeCount){
             continue;
         }
-        merged.back().second = std::max(merged.back().second, interval.second);
+        normalized.emplace_back(a, b);
+    }
+
+    std::sort(normalized.begin(), normalized.end());
+
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> merged;
+    for(auto const& interval : normalized){
+        if(merged.empty() || interval.first > merged.back().second){
+            merged.push_back(interval);
+        }else{
+            merged.back().second = std::max(merged.back().second, interval.second);
+        }
     }
 
     return merged;
 }
+
 
 std::vector<IndexedFrameSample> ParseKeyframeVector(std::wstring const& text){
     std::vector<IndexedFrameSample> out;
@@ -771,7 +656,9 @@ bool MainWindow::ToggleSelectedKeyframeAtCanvasX(const double pointerX){
     const auto width{TimelineTickCanvas().Width()};
     const auto total100ns{m_timelineDurationSeconds * 10'000'000.0};
 
-    std::int64_t nearestKeyTime{-1};
+    std::uint32_t nearestOrdinal{};
+    bool foundNearest{false};
+    std::uint32_t cleanOrdinal{};
     double nearestDistance{hitTolerancePx + 1.0};
     for(auto const& frame : m_frameIndex){
         if(!frame.cleanPoint){
@@ -782,22 +669,20 @@ bool MainWindow::ToggleSelectedKeyframeAtCanvasX(const double pointerX){
         const auto distance{std::fabs(pointerX - x)};
         if(distance <= hitTolerancePx && distance < nearestDistance){
             nearestDistance = distance;
-            nearestKeyTime = frame.time100ns;
+            nearestOrdinal = cleanOrdinal;
+            foundNearest = true;
         }
+        ++cleanOrdinal;
     }
 
-    if(nearestKeyTime < 0){
+    if(!foundNearest){
         return false;
     }
 
-    const auto keySeconds{static_cast<double>(nearestKeyTime) / 10'000'000.0};
-    constexpr double duplicateToleranceSeconds{0.000001};
-    const auto it = std::find_if(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), [keySeconds](double t){
-        return std::fabs(t - keySeconds) <= duplicateToleranceSeconds;
-    });
+    const auto it = std::find(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), nearestOrdinal);
 
     if(it == m_selectedKeyFrames.end()){
-        m_selectedKeyFrames.push_back(keySeconds);
+        m_selectedKeyFrames.push_back(nearestOrdinal);
     }else{
         m_selectedKeyFrames.erase(it);
     }
@@ -1055,17 +940,14 @@ void MainWindow::RenderKeyframeTicks(){
 
     const auto width = TimelineTickCanvas().Width();
     const auto total100ns = static_cast<double>(m_timelineDurationSeconds * 10'000'000.0);
+    std::uint32_t cleanOrdinal{};
     for(auto const& frame : m_frameIndex){
         if(!frame.cleanPoint){
             continue;
         }
 
         const auto x = std::clamp((frame.time100ns / total100ns) * width, 0.0, width);
-        const auto keySeconds = static_cast<double>(frame.time100ns) / 10'000'000.0;
-        constexpr double selectedToleranceSeconds{0.000001};
-        const bool isSelected = std::any_of(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), [keySeconds](double t){
-            return std::fabs(t - keySeconds) <= selectedToleranceSeconds;
-        });
+        const bool isSelected = std::find(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), cleanOrdinal) != m_selectedKeyFrames.end();
 
         Shapes::Line tick{};
         tick.X1(x);
@@ -1077,6 +959,7 @@ void MainWindow::RenderKeyframeTicks(){
             : Windows::UI::ColorHelper::FromArgb(255, 80, 200, 255)));
         tick.StrokeThickness(isSelected ? 2.0 : 1.0);
         TimelineTickCanvas().Children().Append(tick);
+        ++cleanOrdinal;
     }
 }
 
@@ -1089,10 +972,18 @@ void MainWindow::RenderCutOverlays(){
         return;
     }
 
+    const auto cleanKeyTimes = BuildCleanKeyframeTimes100ns(m_frameIndex);
+    if(cleanKeyTimes.empty()){
+        return;
+    }
+
     const auto overlayColor = Windows::UI::ColorHelper::FromArgb(90, 180, 180, 180);
     for(auto const& interval : m_cutIntervals){
-        const auto start{std::clamp(interval.first / m_timelineDurationSeconds, 0.0, 1.0)};
-        const auto end{std::clamp(interval.second / m_timelineDurationSeconds, 0.0, 1.0)};
+        if(interval.first >= cleanKeyTimes.size() || interval.second >= cleanKeyTimes.size()){
+            continue;
+        }
+        const auto start{std::clamp((static_cast<double>(cleanKeyTimes[interval.first]) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
+        const auto end{std::clamp((static_cast<double>(cleanKeyTimes[interval.second]) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
         if(end <= start){
             continue;
         }
@@ -1118,40 +1009,42 @@ bool MainWindow::ToggleCutBlockAtCanvasX(const double pointerX){
     const auto clampedX{std::clamp(pointerX, 0.0, width)};
     const auto clickedSeconds{(clampedX / width) * m_timelineDurationSeconds};
 
-    std::vector<double> selectedMarkers;
-    selectedMarkers.reserve(m_selectedKeyFrames.size());
-    for(auto const marker : m_selectedKeyFrames){
-        if(marker >= 0.0 && marker <= m_timelineDurationSeconds){
-            selectedMarkers.push_back(marker);
-        }
-    }
-
-    if(selectedMarkers.size() < 2){
+    if(m_selectedKeyFrames.size() < 2){
         return false;
     }
 
+    auto selectedMarkers{m_selectedKeyFrames};
     std::sort(selectedMarkers.begin(), selectedMarkers.end());
-    selectedMarkers.erase(std::unique(selectedMarkers.begin(), selectedMarkers.end(), [](double a, double b){
-        return std::fabs(a - b) <= 0.000001;
-    }), selectedMarkers.end());
+    selectedMarkers.erase(std::unique(selectedMarkers.begin(), selectedMarkers.end()), selectedMarkers.end());
 
     if(selectedMarkers.size() < 2){
         return false;
     }
 
-    const auto rightIt = std::upper_bound(selectedMarkers.begin(), selectedMarkers.end(), clickedSeconds);
+    const auto cleanKeyTimes = BuildCleanKeyframeTimes100ns(m_frameIndex);
+    if(cleanKeyTimes.size() < 2){
+        return false;
+    }
+
+    const auto clicked100ns = static_cast<std::int64_t>(clickedSeconds * 10'000'000.0);
+    const auto rightIt = std::upper_bound(selectedMarkers.begin(), selectedMarkers.end(), clicked100ns, [&cleanKeyTimes](std::int64_t time100ns, std::uint32_t ordinal){
+        if(ordinal >= cleanKeyTimes.size()){
+            return true;
+        }
+        return time100ns < cleanKeyTimes[ordinal];
+    });
     if(rightIt == selectedMarkers.begin() || rightIt == selectedMarkers.end()){
         return false;
     }
 
     const auto blockStart = *(rightIt - 1);
     const auto blockEnd = *rightIt;
-    if(blockEnd - blockStart <= 0.000001){
+    if(blockStart >= cleanKeyTimes.size() || blockEnd >= cleanKeyTimes.size() || blockStart == blockEnd){
         return false;
     }
 
     bool removed{false};
-    std::vector<std::pair<double, double>> updated;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> updated;
     updated.reserve(m_cutIntervals.size() + 1);
     for(auto const& interval : m_cutIntervals){
         if(interval.second <= blockStart || interval.first >= blockEnd){
@@ -1172,7 +1065,7 @@ bool MainWindow::ToggleCutBlockAtCanvasX(const double pointerX){
         updated.emplace_back(blockStart, blockEnd);
     }
 
-    m_cutIntervals = NormalizeAndMergeIntervals(std::move(updated), m_timelineDurationSeconds);
+    m_cutIntervals = NormalizeAndMergeIndexIntervals(std::move(updated), cleanKeyTimes.size());
     RenderCutOverlays();
     return true;
 }
@@ -1187,11 +1080,21 @@ bool MainWindow::TrySkipCurrentCutDuringPlayback(){
         return false;
     }
 
-    const auto nowSeconds{std::max(0.0, m_player.PlaybackSession().Position().count() / 10'000'000.0)};
+    const auto cleanKeyTimes = BuildCleanKeyframeTimes100ns(m_frameIndex);
+    if(cleanKeyTimes.empty()){
+        return false;
+    }
+
+    const auto now100ns{std::max<std::int64_t>(0, m_player.PlaybackSession().Position().count())};
     for(auto const& interval : m_cutIntervals){
-        if(nowSeconds >= interval.first && nowSeconds < interval.second){
-            const auto jumpTo{std::min(m_timelineDurationSeconds, interval.second + 0.0005)};
-            m_player.PlaybackSession().Position(SecondsToTimeSpan(jumpTo));
+        if(interval.first >= cleanKeyTimes.size() || interval.second >= cleanKeyTimes.size()){
+            continue;
+        }
+
+        const auto start100ns = cleanKeyTimes[interval.first];
+        const auto end100ns = cleanKeyTimes[interval.second];
+        if(now100ns >= start100ns && now100ns < end100ns){
+            m_player.PlaybackSession().Position(Windows::Foundation::TimeSpan{end100ns});
             return true;
         }
     }
@@ -1620,8 +1523,8 @@ std::wstring MainWindow::BuildProjectSnapshot(){
     ss << L"file_path=" << (m_loadedFile ? m_loadedFile.Path().c_str() : L"") << L"\n";
     ss << L"storyline_zoom=" << std::setprecision(15) << TimelineZoomSlider().Value() << L"\n";
     ss << L"keyframe_snap_mode=" << m_keyFrameSnapMode << L"\n";
-    ss << L"selected_keyframe_indices=" << SerializeIndexList(ConvertSelectedKeyframeTimesToOrdinals(m_selectedKeyFrames, m_frameIndex)) << L"\n";
-    ss << L"cut_interval_indices=" << SerializeIndexPairs(ConvertCutIntervalsToOrdinalPairs(m_cutIntervals, m_frameIndex)) << L"\n";
+    ss << L"selected_keyframe_indices=" << SerializeIndexList(m_selectedKeyFrames) << L"\n";
+    ss << L"cut_interval_indices=" << SerializeIndexPairs(m_cutIntervals) << L"\n";
     for(auto const& line : m_projectUnknownLines){
         ss << line << L"\n";
     }
@@ -1661,8 +1564,6 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     const auto lines{co_await Windows::Storage::FileIO::ReadLinesAsync(file)};
 
     std::vector<std::wstring> unknownLines;
-    std::vector<double> selectedKeyFrames;
-    std::vector<std::pair<double, double>> cutIntervals;
     std::vector<std::uint32_t> selectedKeyframeIndices;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> cutIntervalIndices;
     std::wstring loadedFilePath;
@@ -1704,10 +1605,6 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
             }else{
                 unknownLines.push_back(line);
             }
-        }else if(key == L"selected_key_frames"){
-            selectedKeyFrames = ParseNumberList(value);
-        }else if(key == L"cut_intervals"){
-            cutIntervals = ParseNumberPairs(value);
         }else if(key == L"selected_keyframe_indices"){
             selectedKeyframeIndices = ParseIndexList(value);
         }else if(key == L"cut_interval_indices"){
@@ -1732,39 +1629,24 @@ Windows::Foundation::IAsyncAction MainWindow::OpenProjectFileAsync(Windows::Stor
     TimelineZoomSlider().Value(zoomLevel);
     m_keyFrameSnapMode = snapMode;
 
-    const auto& effectiveIndex = !loadedKeyframeIndex.empty() ? loadedKeyframeIndex : m_frameIndex;
-    const auto keyTimes = BuildCleanKeyframeTimes(effectiveIndex);
-
-    if(!selectedKeyframeIndices.empty() && !keyTimes.empty()){
-        selectedKeyFrames.clear();
-        for(const auto ordinal : selectedKeyframeIndices){
-            if(ordinal < keyTimes.size()){
-                selectedKeyFrames.push_back(keyTimes[ordinal]);
-            }
-        }
-    }
-
-    if(!cutIntervalIndices.empty() && !keyTimes.empty()){
-        cutIntervals.clear();
-        for(auto const& interval : cutIntervalIndices){
-            auto a = interval.first;
-            auto b = interval.second;
-            if(a > b){
-                std::swap(a, b);
-            }
-            if(a < keyTimes.size() && b < keyTimes.size() && a != b){
-                cutIntervals.emplace_back(keyTimes[a], keyTimes[b]);
-            }
-        }
-    }
-
-    m_selectedKeyFrames = std::move(selectedKeyFrames);
-    m_cutIntervals = NormalizeAndMergeIntervals(std::move(cutIntervals), m_timelineDurationSeconds > 0 ? m_timelineDurationSeconds : std::numeric_limits<double>::max());
-    m_projectUnknownLines = std::move(unknownLines);
-    m_projectPath = file.Path();
     if(!loadedKeyframeIndex.empty()){
         m_frameIndex = std::move(loadedKeyframeIndex);
     }
+
+    const auto cleanKeyTimes = BuildCleanKeyframeTimes100ns(m_frameIndex);
+    m_selectedKeyFrames.clear();
+    m_selectedKeyFrames.reserve(selectedKeyframeIndices.size());
+    for(const auto ordinal : selectedKeyframeIndices){
+        if(ordinal < cleanKeyTimes.size()){
+            m_selectedKeyFrames.push_back(ordinal);
+        }
+    }
+    std::sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
+    m_selectedKeyFrames.erase(std::unique(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end()), m_selectedKeyFrames.end());
+
+    m_cutIntervals = NormalizeAndMergeIndexIntervals(std::move(cutIntervalIndices), cleanKeyTimes.size());
+    m_projectUnknownLines = std::move(unknownLines);
+    m_projectPath = file.Path();
 
     if(snapMode == L"Left"){
         LeftSnapRadio().IsChecked(true);
@@ -1785,8 +1667,8 @@ Windows::Foundation::IAsyncAction MainWindow::SaveProjectFileAsync(Windows::Stor
     lines.emplace_back(L"file_path=" + std::wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
     lines.emplace_back(L"storyline_zoom=" + std::to_wstring(TimelineZoomSlider().Value()));
     lines.emplace_back(L"keyframe_snap_mode=" + m_keyFrameSnapMode);
-    lines.emplace_back(L"selected_keyframe_indices=" + SerializeIndexList(ConvertSelectedKeyframeTimesToOrdinals(m_selectedKeyFrames, m_frameIndex)));
-    lines.emplace_back(L"cut_interval_indices=" + SerializeIndexPairs(ConvertCutIntervalsToOrdinalPairs(m_cutIntervals, m_frameIndex)));
+    lines.emplace_back(L"selected_keyframe_indices=" + SerializeIndexList(m_selectedKeyFrames));
+    lines.emplace_back(L"cut_interval_indices=" + SerializeIndexPairs(m_cutIntervals));
     lines.emplace_back(L"keyframe_index=" + SerializeKeyframeVector(m_frameIndex));
 
     for(auto const& unknown : m_projectUnknownLines){

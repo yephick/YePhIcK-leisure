@@ -87,9 +87,9 @@ private:
     std::uint32_t m_maxRecentVideos{5};
     std::uint32_t m_maxRecentProjects{5};
     std::wstring m_keyFrameSnapMode{L"Nearest"};
-    std::vector<double> m_selectedKeyFrames{};
+    std::vector<std::uint32_t> m_selectedKeyFrames{};
     std::vector<IndexedFrameSample> m_frameIndex{};
-    std::vector<std::pair<double, double>> m_cutIntervals{};
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> m_cutIntervals{};
     std::vector<std::wstring> m_projectUnknownLines{};
     winrt::hstring m_projectPath{};
     std::wstring m_lastSavedProjectSnapshot{};
