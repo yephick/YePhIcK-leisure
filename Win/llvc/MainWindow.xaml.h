@@ -80,6 +80,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction newProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction openProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction saveProjectMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction saveProjectAsMenuItem_Click(const Control& sender, const REArgs& args);
     AAction closeProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction loadVideoMenuItem_Click(const Control& sender, const REArgs& args);
     AAction recentVideoMenuItem_Click(const Control& sender, const REArgs& args);

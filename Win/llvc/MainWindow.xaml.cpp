@@ -1455,6 +1455,23 @@ AAction MainWindow::saveProjectMenuItem_Click(const Control&, const REArgs&){
     co_await saveProjectFileAsync(target);
 }
 
+AAction MainWindow::saveProjectAsMenuItem_Click(const Control&, const REArgs&){
+    FileSavePicker picker{};
+    picker.SuggestedStartLocation(PickerLocationId::DocumentsLibrary);
+    picker.FileTypeChoices().Insert(L"llvc project", single_threaded_vector<hstring>({L".llvc"}));
+    picker.SuggestedFileName(L"project");
+
+    auto initWithWindow{picker.as<IInitializeWithWindow>()};
+    check_hresult(initWithWindow->Initialize(getWindowHandle()));
+
+    const auto target{co_await picker.PickSaveFileAsync()};
+    if(!target){
+        co_return;
+    }
+
+    co_await saveProjectFileAsync(target);
+}
+
 AAction MainWindow::closeProjectMenuItem_Click(const Control&, const REArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;
