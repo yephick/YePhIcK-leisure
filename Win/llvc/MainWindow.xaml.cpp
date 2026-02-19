@@ -1257,8 +1257,12 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     try{
         StatusText().Text(L"Exporting...");
 
+        com_ptr<IMFAttributes> readerAttributes;
+        check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
+        check_hresult(readerAttributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE));
+
         com_ptr<IMFSourceReader> reader;
-        check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, reader.put()));
+        check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), readerAttributes.get(), reader.put()));
 
         constexpr auto invalidStream{numeric_limits<DWORD>::max()};
         auto videoStreamIndex{invalidStream};
@@ -1286,7 +1290,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
         com_ptr<IMFMediaType> sourceVideoType;
-        check_hresult(reader->GetCurrentMediaType(videoStreamIndex, sourceVideoType.put()));
+        check_hresult(reader->GetNativeMediaType(videoStreamIndex, 0, sourceVideoType.put()));
+        check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, sourceVideoType.get()));
 
         com_ptr<IMFSinkWriter> writer;
         check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, nullptr, writer.put()));
@@ -1312,7 +1317,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 continue;
             }
 
-            const auto inTime100ns{std::max<std::int64_t>(0, timestamp)};
+            LONGLONG sampleTime100ns{};
+            if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
+                sampleTime100ns = timestamp;
+            }
+            const auto inTime100ns{std::max<std::int64_t>(0, sampleTime100ns)};
             auto dropped{false};
             for(const auto& [start, end] : cutRanges100ns){
                 if(inTime100ns < start){
@@ -1329,6 +1338,13 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
             const auto outTime100ns{inTime100ns - removedDurationBefore(cutRanges100ns, inTime100ns)};
             check_hresult(sample->SetSampleTime(outTime100ns));
+
+            UINT64 decodeTimestamp100ns{};
+            if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
+                const auto decodeTimeSigned{static_cast<std::int64_t>(decodeTimestamp100ns)};
+                const auto outDecodeTime100ns{decodeTimeSigned - removedDurationBefore(cutRanges100ns, decodeTimeSigned)};
+                check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(std::max<std::int64_t>(0, outDecodeTime100ns))));
+            }
 
             LONGLONG duration100ns{};
             if(SUCCEEDED(sample->GetSampleDuration(&duration100ns)) && duration100ns > 0){
