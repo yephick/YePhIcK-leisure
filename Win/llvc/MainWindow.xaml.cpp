@@ -997,21 +997,34 @@ bool MainWindow::ToggleCutBlockAtCanvasX(const double pointerX){
     const auto clampedX{std::clamp(pointerX, 0.0, width)};
     const auto clickedSeconds{(clampedX / width) * m_timelineDurationSeconds};
 
-    std::vector<double> keyTimes;
-    keyTimes.reserve(m_frameIndex.size());
-    for(auto const& frame : m_frameIndex){
-        if(frame.cleanPoint){
-            keyTimes.push_back(static_cast<double>(frame.time100ns) / 10'000'000.0);
+    std::vector<double> selectedMarkers;
+    selectedMarkers.reserve(m_selectedKeyFrames.size());
+    for(auto const marker : m_selectedKeyFrames){
+        if(marker >= 0.0 && marker <= m_timelineDurationSeconds){
+            selectedMarkers.push_back(marker);
         }
     }
 
-    if(keyTimes.empty()){
+    if(selectedMarkers.size() < 2){
         return false;
     }
 
-    const auto rightIt = std::lower_bound(keyTimes.begin(), keyTimes.end(), clickedSeconds);
-    const auto blockStart = (rightIt == keyTimes.begin()) ? 0.0 : *(rightIt - 1);
-    const auto blockEnd = (rightIt == keyTimes.end()) ? m_timelineDurationSeconds : *rightIt;
+    std::sort(selectedMarkers.begin(), selectedMarkers.end());
+    selectedMarkers.erase(std::unique(selectedMarkers.begin(), selectedMarkers.end(), [](double a, double b){
+        return std::fabs(a - b) <= 0.000001;
+    }), selectedMarkers.end());
+
+    if(selectedMarkers.size() < 2){
+        return false;
+    }
+
+    const auto rightIt = std::upper_bound(selectedMarkers.begin(), selectedMarkers.end(), clickedSeconds);
+    if(rightIt == selectedMarkers.begin() || rightIt == selectedMarkers.end()){
+        return false;
+    }
+
+    const auto blockStart = *(rightIt - 1);
+    const auto blockEnd = *rightIt;
     if(blockEnd - blockStart <= 0.000001){
         return false;
     }
