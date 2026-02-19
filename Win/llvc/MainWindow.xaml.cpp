@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cwctype>
+#include <filesystem>
 #include <format>
 #include <numeric>
 #include <limits>
@@ -450,6 +451,7 @@ MainWindow::MainWindow(){
     refreshRecentVideosMenu();
     refreshRecentProjectsMenu();
     m_lastSavedProjectSnapshot = buildProjectSnapshot();
+    updateWindowTitle();
 }
 
 HWND MainWindow::getWindowHandle() const{
@@ -621,6 +623,7 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
     if(m_loadedFile && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }
+    updateWindowTitle();
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
@@ -730,6 +733,7 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
     sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
     renderTimelineTicks();
     renderKeyframeTicks();
+    updateWindowTitle();
     return true;
 }
 
@@ -1141,6 +1145,7 @@ bool MainWindow::toggleCutBlockAtCanvasX(const double pointerX){
 
     m_cutIntervals = normalizeAndMergeIndexIntervals(move(updated), cleanKeyTimes.size());
     renderCutOverlays();
+    updateWindowTitle();
     return true;
 }
 
@@ -1607,6 +1612,7 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
 
     StatusText().Text(L"Load or drag-and-drop a .mp4/.mov file to preview.");
     m_lastSavedProjectSnapshot = buildProjectSnapshot();
+    updateWindowTitle();
 }
 
 wstring MainWindow::buildProjectSnapshot(){
@@ -1625,6 +1631,25 @@ wstring MainWindow::buildProjectSnapshot(){
 
 bool MainWindow::isProjectDirty(){
     return buildProjectSnapshot() != m_lastSavedProjectSnapshot;
+}
+
+void MainWindow::updateWindowTitle(){
+    wstring projectName{L"Untitled"};
+    if(!m_projectPath.empty()){
+        const auto projectPath{filesystem::path(m_projectPath.c_str())};
+        const auto stem{projectPath.stem().wstring()};
+        projectName = stem.empty() ? projectPath.filename().wstring() : stem;
+        if(projectName.empty()){
+            projectName = L"Untitled";
+        }
+    }
+
+    if(isProjectDirty()){
+        projectName += L"*";
+    }
+
+    const wstring loadedFile{m_loadedFile ? m_loadedFile.Path().c_str() : L"No file"};
+    Title(hstring(std::format(L"{} - {}", projectName, loadedFile)));
 }
 
 IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){
@@ -1739,6 +1764,7 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     addRecentProject(file.Path());
     m_lastSavedProjectSnapshot = buildProjectSnapshot();
     StatusText().Text(L"Project loaded");
+    updateWindowTitle();
 }
 
 AAction MainWindow::saveProjectFileAsync(const SFile& file){
@@ -1762,6 +1788,7 @@ AAction MainWindow::saveProjectFileAsync(const SFile& file){
     addRecentProject(file.Path());
     m_lastSavedProjectSnapshot = buildProjectSnapshot();
     StatusText().Text(L"Project saved");
+    updateWindowTitle();
 }
 
 AAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& message){
@@ -2238,6 +2265,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file, const vector<IndexedFr
     status += file.Name().c_str();
     status += L" (loading story line...)";
     StatusText().Text(status);
+    updateWindowTitle();
 }
 
 winrt::fire_and_forget MainWindow::renderTimelineAsync(){

@@ -137,6 +137,7 @@ private:
     void resetProjectState(bool clearLoadedVideo);
     std::wstring buildProjectSnapshot();
     bool isProjectDirty();
+    void updateWindowTitle();
     IOpBool ensureProjectSavedBeforeContinuingAsync();
     static MediaInspectionResult inspectMediaFile(const std::wstring& filePath);
     static bool isSupportedVideoSubtype(const _GUID& subtype);
