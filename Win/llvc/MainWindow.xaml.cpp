@@ -1301,6 +1301,9 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
         check_hresult(writer->BeginWriting());
 
+        auto waitingForCleanPoint{false};
+        auto markDiscontinuityOnNextWrittenSample{false};
+
         for(;;){
             DWORD actualStream{};
             DWORD flags{};
@@ -1333,7 +1336,18 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 }
             }
             if(dropped){
+                waitingForCleanPoint = true;
+                markDiscontinuityOnNextWrittenSample = true;
                 continue;
+            }
+
+            if(waitingForCleanPoint){
+                UINT32 cleanPoint{};
+                const auto isCleanPoint{SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) && cleanPoint != 0};
+                if(!isCleanPoint){
+                    continue;
+                }
+                waitingForCleanPoint = false;
             }
 
             const auto outTime100ns{inTime100ns - removedDurationBefore(cutRanges100ns, inTime100ns)};
@@ -1349,6 +1363,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             LONGLONG duration100ns{};
             if(SUCCEEDED(sample->GetSampleDuration(&duration100ns)) && duration100ns > 0){
                 check_hresult(sample->SetSampleDuration(duration100ns));
+            }
+
+            if(markDiscontinuityOnNextWrittenSample){
+                check_hresult(sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE));
+                markDiscontinuityOnNextWrittenSample = false;
             }
 
             check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
