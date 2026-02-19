@@ -815,8 +815,11 @@ void MainWindow::UpdateTimelineCursorFromPlayback(){
 
 void MainWindow::SyncTimelineHorizontalScrollBar(){
     const auto scrollViewer{TimelineScrollViewer()};
-    const auto scrollableWidth{std::max(0.0, scrollViewer.ScrollableWidth())};
+    scrollViewer.UpdateLayout();
+
     const auto viewportWidth{std::max(1.0, scrollViewer.ViewportWidth())};
+    const auto extentWidth{std::max(viewportWidth, scrollViewer.ExtentWidth())};
+    const auto scrollableWidth{std::max(0.0, extentWidth - viewportWidth)};
 
     auto bar{TimelineHorizontalScrollBar()};
     bar.Minimum(0.0);
