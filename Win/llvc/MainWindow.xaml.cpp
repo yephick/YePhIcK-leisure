@@ -814,7 +814,7 @@ struct LoadedProjectData{
 };
 
 LoadedProjectData parseProjectLines(
-    const Windows::Foundation::Collections::IVectorView<winrt::hstring>& lines,
+    const Windows::Foundation::Collections::IVector<winrt::hstring>& lines,
     const double defaultZoomLevel,
     const bool defaultKeepAudio,
     const int32_t defaultAudioCrossfadeMs){
