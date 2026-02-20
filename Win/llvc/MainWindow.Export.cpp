@@ -4,6 +4,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <limits>
+
+#include <algorithm>
 
 #include <mfapi.h>
 #include <mferror.h>
@@ -12,8 +15,12 @@
 #include <mfreadwrite.h>
 
 #include <shobjidl_core.h>
+#include <winrt/Windows.Storage.h>
 
 namespace winrt::llvc::implementation{
+
+using namespace std;
+using namespace winrt;
 
 using Control = MainWindow::Control;
 using REArgs = MainWindow::REArgs;
