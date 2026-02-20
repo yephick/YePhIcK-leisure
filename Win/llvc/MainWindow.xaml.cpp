@@ -1478,6 +1478,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
         auto waitingForCleanPoint{false};
         auto markDiscontinuityOnNextWrittenSample{false};
+        auto dtsPtsShift100ns{static_cast<std::int64_t>(0)};
+        auto dtsPtsShiftInitialized{false};
         std::uint64_t readSampleCount{};
         std::uint64_t droppedByCutCount{};
         std::uint64_t droppedWaitingRapCount{};
@@ -1542,16 +1544,27 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 waitingForCleanPoint = false;
             }
 
-            const auto outTime100ns{inTime100ns - removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
-            check_hresult(sample->SetSampleTime(outTime100ns));
+            const auto outTimeRaw100ns{inTime100ns - removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
+            auto outTime100ns{outTimeRaw100ns};
 
             UINT64 decodeTimestamp100ns{};
+            auto hasDecodeTimestamp{false};
             if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
+                hasDecodeTimestamp = true;
                 const auto decodeTimeSigned{static_cast<std::int64_t>(decodeTimestamp100ns)};
                 // Keep DTS/PTS skew stable across splice points by applying the same
                 // presentation-domain removed-duration offset used for sample time.
                 const auto removedAtPresentationTime{removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
-                const auto outDecodeTime100ns{decodeTimeSigned - removedAtPresentationTime};
+                auto outDecodeTime100ns{decodeTimeSigned - removedAtPresentationTime};
+                if(!dtsPtsShiftInitialized){
+                    dtsPtsShift100ns = std::max<std::int64_t>(0, -outDecodeTime100ns);
+                    dtsPtsShiftInitialized = true;
+                    if(exportLog){
+                        exportLog << "dts_pts_shift=" << dtsPtsShift100ns << "\n";
+                    }
+                }
+                outTime100ns += dtsPtsShift100ns;
+                outDecodeTime100ns += dtsPtsShift100ns;
                 check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(std::max<std::int64_t>(0, outDecodeTime100ns))));
                 if(exportLog){
                     exportLog << "retime_dts in_pts=" << inTime100ns
@@ -1560,6 +1573,16 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                         << " removed=" << removedAtPresentationTime << "\n";
                 }
             }
+
+            if(!dtsPtsShiftInitialized && !hasDecodeTimestamp){
+                dtsPtsShiftInitialized = true;
+            }
+
+            if(!hasDecodeTimestamp && dtsPtsShiftInitialized && dtsPtsShift100ns > 0){
+                outTime100ns += dtsPtsShift100ns;
+            }
+
+            check_hresult(sample->SetSampleTime(outTime100ns));
 
             LONGLONG duration100ns{};
             if(SUCCEEDED(sample->GetSampleDuration(&duration100ns)) && duration100ns > 0){
