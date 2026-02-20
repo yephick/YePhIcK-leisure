@@ -1773,7 +1773,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             writerVideoStreamIndex = 0;
             writerAudioStreamIndex = 0;
 
-            check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, nullptr, writer.put()));
+            com_ptr<IMFAttributes> writerAttributes;
+            check_hresult(MFCreateAttributes(writerAttributes.put(), 1));
+            check_hresult(writerAttributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
+            check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, writerAttributes.get(), writer.put()));
             check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
             check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
 
@@ -1932,8 +1935,14 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 markDiscontinuityOnNextWrittenSample = false;
             }
 
+            if(exportLog && writtenSampleCount == 0){
+                exportLog << "phase=first_video_write_attempt in=" << inTime100ns << " out=" << outTime100ns << "\n";
+            }
             check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
             ++writtenSampleCount;
+            if(exportLog && writtenSampleCount == 1){
+                exportLog << "phase=first_video_write_done\n";
+            }
             if(exportLog && verboseSampleLog){
                 exportLog << "write in=" << inTime100ns << " out=" << outTime100ns << "\n";
             }
