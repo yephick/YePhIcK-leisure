@@ -579,6 +579,441 @@ std::vector<float> decodeAudioRangeToFloat(
     return out;
 }
 
+std::wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wchar_t* defaultExt, const std::int64_t outputDuration100ns, const HWND ownerWindow){
+    com_ptr<IFileSaveDialog> saveDialog;
+    check_hresult(::CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(saveDialog.put())));
+
+    DWORD options{};
+    check_hresult(saveDialog->GetOptions(&options));
+    check_hresult(saveDialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT));
+
+    const COMDLG_FILTERSPEC fileTypes[]{
+        {L"MP4 video", L"*.mp4"},
+        {L"MOV video", L"*.mov"},
+    };
+    check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(std::size(fileTypes)), fileTypes));
+
+    const auto isMovDefault{_wcsicmp(defaultExt, L".mov") == 0};
+    check_hresult(saveDialog->SetFileTypeIndex(isMovDefault ? 2U : 1U));
+    check_hresult(saveDialog->SetDefaultExtension(isMovDefault ? L"mov" : L"mp4"));
+
+    const auto suggestedName{sourceFsPath.stem().wstring() + L" - " + formatDurationFileTag(outputDuration100ns)};
+    check_hresult(saveDialog->SetFileName(suggestedName.c_str()));
+
+    const auto sourceFolder{sourceFsPath.parent_path().wstring()};
+    if(!sourceFolder.empty()){
+        com_ptr<IShellItem> folderItem;
+        if(SUCCEEDED(SHCreateItemFromParsingName(sourceFolder.c_str(), nullptr, IID_PPV_ARGS(folderItem.put())))){
+            (void)saveDialog->SetDefaultFolder(folderItem.get());
+            (void)saveDialog->SetFolder(folderItem.get());
+        }
+    }
+
+    const auto showHr{saveDialog->Show(ownerWindow)};
+    if(showHr == HRESULT_FROM_WIN32(ERROR_CANCELLED)){
+        return {};
+    }
+    check_hresult(showHr);
+
+    com_ptr<IShellItem> resultItem;
+    check_hresult(saveDialog->GetResult(resultItem.put()));
+    PWSTR selectedPath{};
+    check_hresult(resultItem->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath));
+    std::wstring outputPath{selectedPath ? selectedPath : L""};
+    if(selectedPath){
+        ::CoTaskMemFree(selectedPath);
+    }
+    return outputPath;
+}
+
+template<typename TLog>
+void writeExportHeaderLog(
+    TLog& exportLog,
+    const std::int64_t sourceDuration100ns,
+    const std::vector<std::uint32_t>& cutScenes,
+    const std::vector<IndexedFrameSample>& frameIndex){
+
+    if(!exportLog){
+        return;
+    }
+
+    exportLog << "llvc export debug log\n";
+    exportLog << "source_duration_100ns=" << sourceDuration100ns << "\n";
+    exportLog << "cut_scenes=";
+    for(size_t i = 0; i < cutScenes.size(); ++i){
+        if(i > 0){
+            exportLog << ",";
+        }
+        exportLog << cutScenes[i];
+    }
+    exportLog << "\n";
+    exportLog << "marker_points=";
+    for(size_t i = 0; i < frameIndex.size(); ++i){
+        if(i > 0){
+            exportLog << ";";
+        }
+        exportLog << frameIndex[i].time100ns << "@" << frameIndex[i].sampleIndex;
+    }
+    exportLog << "\n";
+}
+
+std::vector<std::uint32_t> remapCutScenesAfterMarkerRemoval(const std::vector<std::uint32_t>& cutScenes, const std::uint32_t removePos, const std::uint32_t newSceneCount){
+    std::vector<std::uint32_t> updatedCuts;
+    updatedCuts.reserve(cutScenes.size());
+    for(const auto sceneIndex : cutScenes){
+        if(sceneIndex < removePos){
+            updatedCuts.push_back(sceneIndex);
+        }else if(sceneIndex == removePos || sceneIndex == (removePos + 1)){
+            updatedCuts.push_back(removePos);
+        }else{
+            updatedCuts.push_back(sceneIndex - 1);
+        }
+    }
+
+    std::vector<std::uint32_t> result;
+    result.reserve(updatedCuts.size());
+    for(const auto sceneIndex : updatedCuts){
+        if(sceneIndex < newSceneCount){
+            result.push_back(sceneIndex);
+        }
+    }
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
+
+std::vector<std::uint32_t> remapCutScenesAfterMarkerInsertion(const std::vector<std::uint32_t>& cutScenes, const std::uint32_t insertPos){
+    std::vector<std::uint32_t> updatedCuts;
+    updatedCuts.reserve(cutScenes.size() + 1);
+    for(const auto sceneIndex : cutScenes){
+        if(sceneIndex < insertPos){
+            updatedCuts.push_back(sceneIndex);
+        }else if(sceneIndex == insertPos){
+            updatedCuts.push_back(sceneIndex);
+            updatedCuts.push_back(sceneIndex + 1);
+        }else{
+            updatedCuts.push_back(sceneIndex + 1);
+        }
+    }
+    std::sort(updatedCuts.begin(), updatedCuts.end());
+    updatedCuts.erase(std::unique(updatedCuts.begin(), updatedCuts.end()), updatedCuts.end());
+    return updatedCuts;
+}
+
+void refreshSelectedMarkers(std::vector<std::uint32_t>& selectedKeyFrames, const std::size_t markerCount){
+    selectedKeyFrames.clear();
+    selectedKeyFrames.reserve(markerCount);
+    for(std::uint32_t i = 0; i < static_cast<std::uint32_t>(markerCount); ++i){
+        selectedKeyFrames.push_back(i);
+    }
+}
+
+void appendCrossfadedAudioSegment(std::vector<float>& mixedAudio, const std::vector<float>& segmentAudio, const std::uint32_t audioChannels, const std::size_t fadeFrames){
+    if(segmentAudio.empty()){
+        return;
+    }
+
+    if(mixedAudio.empty() || fadeFrames == 0){
+        mixedAudio.insert(mixedAudio.end(), segmentAudio.begin(), segmentAudio.end());
+        return;
+    }
+
+    const auto mixedFrames{mixedAudio.size() / audioChannels};
+    const auto segmentFrames{segmentAudio.size() / audioChannels};
+    const auto overlapFrames{std::min<std::size_t>(fadeFrames, std::min(mixedFrames, segmentFrames))};
+    if(overlapFrames == 0){
+        mixedAudio.insert(mixedAudio.end(), segmentAudio.begin(), segmentAudio.end());
+        return;
+    }
+
+    for(std::size_t frame = 0; frame < overlapFrames; ++frame){
+        const auto fadeOut{static_cast<float>(overlapFrames - frame) / static_cast<float>(overlapFrames)};
+        const auto fadeIn{static_cast<float>(frame + 1) / static_cast<float>(overlapFrames)};
+        for(std::uint32_t ch = 0; ch < audioChannels; ++ch){
+            const auto dstIndex{(mixedFrames - overlapFrames + frame) * audioChannels + ch};
+            const auto srcIndex{frame * audioChannels + ch};
+            mixedAudio[dstIndex] = (mixedAudio[dstIndex] * fadeOut) + (segmentAudio[srcIndex] * fadeIn);
+        }
+    }
+
+    mixedAudio.insert(mixedAudio.end(), segmentAudio.begin() + static_cast<std::ptrdiff_t>(overlapFrames * audioChannels), segmentAudio.end());
+}
+
+std::vector<float> buildMixedAudioForKeepRanges(
+    IMFSourceReader* audioReader,
+    const DWORD audioStreamIndex,
+    const std::vector<std::pair<std::int64_t, std::int64_t>>& keepRanges100ns,
+    const std::uint32_t audioChannels,
+    const std::uint32_t audioSampleRate,
+    const int crossfadeMs){
+
+    std::vector<float> mixedAudio;
+    const auto fadeMs{crossfadeMs > 0 ? crossfadeMs : 100};
+    const auto fadeFrames{static_cast<std::size_t>((static_cast<std::int64_t>(audioSampleRate) * fadeMs) / 1000)};
+
+    for(const auto& [keepStart, keepEnd] : keepRanges100ns){
+        auto segmentAudio{decodeAudioRangeToFloat(audioReader, audioStreamIndex, keepStart, keepEnd, audioChannels, audioSampleRate)};
+        appendCrossfadedAudioSegment(mixedAudio, segmentAudio, audioChannels, fadeFrames);
+    }
+
+    return mixedAudio;
+}
+
+void writePcmAudioToWriter(
+    IMFSinkWriter* writer,
+    const DWORD writerAudioStreamIndex,
+    const std::vector<float>& mixedAudio,
+    const std::uint32_t audioChannels,
+    const std::uint32_t audioSampleRate){
+
+    const std::size_t chunkFrames{1024};
+    std::size_t frameOffset{};
+    const auto totalFrames{mixedAudio.size() / audioChannels};
+    while(frameOffset < totalFrames){
+        const auto framesToWrite{std::min(chunkFrames, totalFrames - frameOffset)};
+        const auto bytesToWrite{static_cast<DWORD>(framesToWrite * audioChannels * sizeof(float))};
+
+        com_ptr<IMFSample> audioSample;
+        check_hresult(MFCreateSample(audioSample.put()));
+        com_ptr<IMFMediaBuffer> audioBuffer;
+        check_hresult(MFCreateMemoryBuffer(bytesToWrite, audioBuffer.put()));
+
+        BYTE* audioBytes{};
+        DWORD audioMaxLen{};
+        DWORD audioCurLen{};
+        check_hresult(audioBuffer->Lock(&audioBytes, &audioMaxLen, &audioCurLen));
+        memcpy(audioBytes, mixedAudio.data() + (frameOffset * audioChannels), bytesToWrite);
+        check_hresult(audioBuffer->Unlock());
+        check_hresult(audioBuffer->SetCurrentLength(bytesToWrite));
+        check_hresult(audioSample->AddBuffer(audioBuffer.get()));
+
+        const auto sampleTime100ns{static_cast<LONGLONG>((frameOffset * 10'000'000LL) / audioSampleRate)};
+        const auto sampleDuration100ns{static_cast<LONGLONG>((framesToWrite * 10'000'000LL) / audioSampleRate)};
+        check_hresult(audioSample->SetSampleTime(sampleTime100ns));
+        check_hresult(audioSample->SetSampleDuration(sampleDuration100ns));
+        check_hresult(writer->WriteSample(writerAudioStreamIndex, audioSample.get()));
+
+        frameOffset += framesToWrite;
+    }
+}
+
+struct VideoWriteStats{
+    std::uint64_t readSampleCount{};
+    std::uint64_t droppedByCutCount{};
+    std::uint64_t droppedWaitingRapCount{};
+    std::uint64_t writtenSampleCount{};
+};
+
+struct LoadedProjectData{
+    std::wstring loadedFilePath;
+    double zoomLevel{};
+    bool keepAudio{};
+    int32_t audioCrossfadeMs{};
+    std::vector<IndexedFrameSample> markers;
+    std::vector<std::uint32_t> cutScenes;
+};
+
+LoadedProjectData parseProjectLines(
+    const Windows::Foundation::Collections::IVectorView<winrt::hstring>& lines,
+    const double defaultZoomLevel,
+    const bool defaultKeepAudio,
+    const int32_t defaultAudioCrossfadeMs){
+
+    LoadedProjectData data{};
+    data.zoomLevel = defaultZoomLevel;
+    data.keepAudio = defaultKeepAudio;
+    data.audioCrossfadeMs = defaultAudioCrossfadeMs;
+
+    for(const auto& lineH : lines){
+        const std::wstring line{lineH.c_str()};
+        const auto trimmed{trim(line)};
+        if(trimmed.empty() || trimmed[0] == L'#'){
+            continue;
+        }
+
+        const auto eqPos{line.find(L'=')};
+        if(eqPos == std::wstring::npos){
+            continue;
+        }
+
+        const auto key{trim(line.substr(0, eqPos))};
+        const auto value{trim(line.substr(eqPos + 1))};
+
+        if(key == P_FILE_PATH){
+            data.loadedFilePath = value;
+        }else if(key == P_STORYLINE_ZOOM){
+            try{ data.zoomLevel = std::stod(value); }catch(...){ }
+        }else if(key == P_RAP_MARKERS){
+            data.markers = parseKeyframeVector(value);
+        }else if(key == P_CUT_SCENES){
+            data.cutScenes = parseIndexList(value);
+        }else if(key == P_KEEP_AUDIO){
+            data.keepAudio = !(value == L"0" || value == L"false" || value == L"False");
+        }else if(key == P_AUDIO_CROSSFADE_MS){
+            try{ data.audioCrossfadeMs = std::stoi(value); }catch(...){ }
+        }
+    }
+
+    return data;
+}
+
+template<typename TLog>
+VideoWriteStats writeVideoSamplesForExport(
+    IMFSourceReader* reader,
+    const DWORD videoStreamIndex,
+    IMFSinkWriter* writer,
+    const DWORD writerVideoStreamIndex,
+    const std::vector<std::pair<std::int64_t, std::int64_t>>& effectiveCutRanges100ns,
+    const GUID videoSubtype,
+    const std::uint32_t nalLengthFieldSize,
+    const bool verboseSampleLog,
+    TLog& exportLog){
+
+    auto waitingForCleanPoint{false};
+    auto markDiscontinuityOnNextWrittenSample{false};
+    auto dtsPtsShift100ns{static_cast<std::int64_t>(0)};
+    auto dtsPtsShiftInitialized{false};
+    std::int64_t lastInTime100ns{-1};
+    std::uint32_t videoNoProgressCount{};
+    VideoWriteStats stats{};
+
+    for(;;){
+        DWORD actualStream{};
+        DWORD flags{};
+        LONGLONG timestamp{};
+        com_ptr<IMFSample> sample;
+        const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+        if(FAILED(hr)){
+            check_hresult(hr);
+        }
+        if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+            break;
+        }
+        if(!sample){
+            continue;
+        }
+
+        ++stats.readSampleCount;
+
+        LONGLONG sampleTime100ns{};
+        if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
+            sampleTime100ns = timestamp;
+        }
+        const auto inTime100ns{std::max<std::int64_t>(0, sampleTime100ns)};
+        if(inTime100ns <= lastInTime100ns){
+            ++videoNoProgressCount;
+            if(videoNoProgressCount > 4096){
+                if(exportLog){ exportLog << "video_loop_break=no_progress\n"; }
+                break;
+            }
+        }else{
+            videoNoProgressCount = 0;
+            lastInTime100ns = inTime100ns;
+        }
+
+        auto dropped{false};
+        for(const auto& [start, end] : effectiveCutRanges100ns){
+            if(inTime100ns < start){
+                break;
+            }
+            if(inTime100ns < end){
+                dropped = true;
+                break;
+            }
+        }
+        if(dropped){
+            ++stats.droppedByCutCount;
+            if(exportLog && verboseSampleLog){
+                exportLog << "drop_cut in=" << inTime100ns << "\n";
+            }
+            waitingForCleanPoint = true;
+            markDiscontinuityOnNextWrittenSample = true;
+            continue;
+        }
+
+        if(waitingForCleanPoint){
+            const auto isContainerSync{isContainerSyncSample(sample)};
+            const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
+            if(!(isContainerSync && isBitstreamRap)){
+                ++stats.droppedWaitingRapCount;
+                if(exportLog && verboseSampleLog){
+                    exportLog << "drop_waiting_rap in=" << inTime100ns << " clean=" << (isContainerSync ? 1 : 0) << " rap=" << (isBitstreamRap ? 1 : 0) << "\n";
+                }
+                continue;
+            }
+            if(exportLog){
+                exportLog << "resume_at in=" << inTime100ns << "\n";
+            }
+            waitingForCleanPoint = false;
+        }
+
+        const auto outTimeRaw100ns{inTime100ns - removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
+        auto outTime100ns{outTimeRaw100ns};
+
+        UINT64 decodeTimestamp100ns{};
+        auto hasDecodeTimestamp{false};
+        if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
+            hasDecodeTimestamp = true;
+            const auto decodeTimeSigned{static_cast<std::int64_t>(decodeTimestamp100ns)};
+            const auto removedAtPresentationTime{removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
+            auto outDecodeTime100ns{decodeTimeSigned - removedAtPresentationTime};
+            if(!dtsPtsShiftInitialized){
+                dtsPtsShift100ns = std::max<std::int64_t>(0, -outDecodeTime100ns);
+                dtsPtsShiftInitialized = true;
+                if(exportLog){
+                    exportLog << "dts_pts_shift=" << dtsPtsShift100ns << "\n";
+                }
+            }
+            outTime100ns += dtsPtsShift100ns;
+            outDecodeTime100ns += dtsPtsShift100ns;
+            check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(std::max<std::int64_t>(0, outDecodeTime100ns))));
+            if(exportLog && verboseSampleLog){
+                exportLog << "retime_dts in_pts=" << inTime100ns
+                    << " in_dts=" << decodeTimeSigned
+                    << " out_dts=" << outDecodeTime100ns
+                    << " removed=" << removedAtPresentationTime << "\n";
+            }
+        }
+
+        if(!dtsPtsShiftInitialized && !hasDecodeTimestamp){
+            dtsPtsShiftInitialized = true;
+        }
+
+        if(!hasDecodeTimestamp && dtsPtsShiftInitialized && dtsPtsShift100ns > 0){
+            outTime100ns += dtsPtsShift100ns;
+        }
+
+        check_hresult(sample->SetSampleTime(outTime100ns));
+
+        LONGLONG duration100ns{};
+        if(SUCCEEDED(sample->GetSampleDuration(&duration100ns)) && duration100ns > 0){
+            check_hresult(sample->SetSampleDuration(duration100ns));
+        }
+
+        if(markDiscontinuityOnNextWrittenSample){
+            check_hresult(sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE));
+            if(exportLog && verboseSampleLog){
+                exportLog << "set_discontinuity in=" << inTime100ns << " out=" << outTime100ns << "\n";
+            }
+            markDiscontinuityOnNextWrittenSample = false;
+        }
+
+        if(exportLog && stats.writtenSampleCount == 0){
+            exportLog << "phase=first_video_write_attempt in=" << inTime100ns << " out=" << outTime100ns << "\n";
+        }
+        check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
+        ++stats.writtenSampleCount;
+        if(exportLog && stats.writtenSampleCount == 1){
+            exportLog << "phase=first_video_write_done\n";
+        }
+        if(exportLog && verboseSampleLog){
+            exportLog << "write in=" << inTime100ns << " out=" << outTime100ns << "\n";
+        }
+    }
+
+    return stats;
+}
+
 MainWindow::MainWindow(){
     InitializeComponent();
 
@@ -882,29 +1317,7 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
 
     if(nearestIndex != m_frameIndex.size()){
         const auto removePos{static_cast<uint32_t>(nearestIndex)};
-
-        std::vector<uint32_t> updatedCuts;
-        updatedCuts.reserve(m_cutScenes.size());
-        for(const auto sceneIndex : m_cutScenes){
-            if(sceneIndex < removePos){
-                updatedCuts.push_back(sceneIndex);
-            }else if(sceneIndex == removePos || sceneIndex == (removePos + 1)){
-                updatedCuts.push_back(removePos);
-            }else{
-                updatedCuts.push_back(sceneIndex - 1);
-            }
-        }
-
-        const auto newSceneCount{static_cast<uint32_t>(m_frameIndex.size())};
-        m_cutScenes.clear();
-        for(const auto sceneIndex : updatedCuts){
-            if(sceneIndex < newSceneCount){
-                m_cutScenes.push_back(sceneIndex);
-            }
-        }
-        sort(m_cutScenes.begin(), m_cutScenes.end());
-        m_cutScenes.erase(unique(m_cutScenes.begin(), m_cutScenes.end()), m_cutScenes.end());
-
+        m_cutScenes = remapCutScenesAfterMarkerRemoval(m_cutScenes, removePos, static_cast<uint32_t>(m_frameIndex.size()));
         m_frameIndex.erase(m_frameIndex.begin() + static_cast<std::ptrdiff_t>(removePos));
     }else{
         const auto insertIt{lower_bound(m_frameIndex.begin(), m_frameIndex.end(), clicked100ns, [](const IndexedFrameSample& a, int64_t t){
@@ -912,32 +1325,13 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
         })};
         const auto insertPos{static_cast<uint32_t>(distance(m_frameIndex.begin(), insertIt))};
 
-        std::vector<uint32_t> updatedCuts;
-        updatedCuts.reserve(m_cutScenes.size() + 1);
-        const auto splitScene{insertPos};
-        for(const auto sceneIndex : m_cutScenes){
-            if(sceneIndex < splitScene){
-                updatedCuts.push_back(sceneIndex);
-            }else if(sceneIndex == splitScene){
-                updatedCuts.push_back(sceneIndex);
-                updatedCuts.push_back(sceneIndex + 1);
-            }else{
-                updatedCuts.push_back(sceneIndex + 1);
-            }
-        }
-        sort(updatedCuts.begin(), updatedCuts.end());
-        updatedCuts.erase(unique(updatedCuts.begin(), updatedCuts.end()), updatedCuts.end());
-        m_cutScenes = std::move(updatedCuts);
+        m_cutScenes = remapCutScenesAfterMarkerInsertion(m_cutScenes, insertPos);
 
         const auto frameNumber{estimateFrameNumberFromTime100ns(m_mediaInfo.frameRate, clicked100ns)};
         m_frameIndex.insert(insertIt, IndexedFrameSample{.time100ns=clicked100ns, .duration100ns=0, .cleanPoint=true, .sampleIndex=frameNumber});
     }
 
-    m_selectedKeyFrames.clear();
-    m_selectedKeyFrames.reserve(m_frameIndex.size());
-    for(uint32_t i = 0; i < static_cast<uint32_t>(m_frameIndex.size()); ++i){
-        m_selectedKeyFrames.push_back(i);
-    }
+    refreshSelectedMarkers(m_selectedKeyFrames, m_frameIndex.size());
 
     renderTimelineTicks();
     renderKeyframeTicks();
@@ -1533,52 +1927,9 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     const auto sourceExt{sourceFsPath.extension().wstring()};
     const auto defaultExt{_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4"};
 
-    std::wstring outputPath{};
-
-    {
-        com_ptr<IFileSaveDialog> saveDialog;
-        check_hresult(::CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(saveDialog.put())));
-
-        DWORD options{};
-        check_hresult(saveDialog->GetOptions(&options));
-        check_hresult(saveDialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT));
-
-        const COMDLG_FILTERSPEC fileTypes[]{
-            {L"MP4 video", L"*.mp4"},
-            {L"MOV video", L"*.mov"},
-        };
-        check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(std::size(fileTypes)), fileTypes));
-
-        const auto isMovDefault{_wcsicmp(defaultExt, L".mov") == 0};
-        check_hresult(saveDialog->SetFileTypeIndex(isMovDefault ? 2U : 1U));
-        check_hresult(saveDialog->SetDefaultExtension(isMovDefault ? L"mov" : L"mp4"));
-
-        const auto suggestedName{sourceFsPath.stem().wstring() + L" - " + formatDurationFileTag(outputDuration100ns)};
-        check_hresult(saveDialog->SetFileName(suggestedName.c_str()));
-
-        const auto sourceFolder{sourceFsPath.parent_path().wstring()};
-        if(!sourceFolder.empty()){
-            com_ptr<IShellItem> folderItem;
-            if(SUCCEEDED(SHCreateItemFromParsingName(sourceFolder.c_str(), nullptr, IID_PPV_ARGS(folderItem.put())))){
-                (void)saveDialog->SetDefaultFolder(folderItem.get());
-                (void)saveDialog->SetFolder(folderItem.get());
-            }
-        }
-
-        const auto showHr{saveDialog->Show(getWindowHandle())};
-        if(showHr == HRESULT_FROM_WIN32(ERROR_CANCELLED)){
-            co_return;
-        }
-        check_hresult(showHr);
-
-        com_ptr<IShellItem> resultItem;
-        check_hresult(saveDialog->GetResult(resultItem.put()));
-        PWSTR selectedPath{};
-        check_hresult(resultItem->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath));
-        outputPath = selectedPath ? selectedPath : L"";
-        if(selectedPath){
-            ::CoTaskMemFree(selectedPath);
-        }
+    const auto outputPath{pickExportOutputPath(sourceFsPath, defaultExt, outputDuration100ns, getWindowHandle())};
+    if(outputPath.empty()){
+        co_return;
     }
 
     winrt::hstring exportErrorMessage{};
@@ -1603,26 +1954,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         exportLog.open(logPath, std::ios::out | std::ios::trunc);
         exportLog.setf(std::ios::unitbuf);
 #endif
-        if(exportLog){
-            exportLog << "llvc export debug log\n";
-            exportLog << "source_duration_100ns=" << sourceDuration100ns << "\n";
-            exportLog << "cut_scenes=";
-            for(size_t i = 0; i < m_cutScenes.size(); ++i){
-                if(i > 0){
-                    exportLog << ",";
-                }
-                exportLog << m_cutScenes[i];
-            }
-            exportLog << "\n";
-            exportLog << "marker_points=";
-            for(size_t i = 0; i < m_frameIndex.size(); ++i){
-                if(i > 0){
-                    exportLog << ";";
-                }
-                exportLog << m_frameIndex[i].time100ns << "@" << m_frameIndex[i].sampleIndex;
-            }
-            exportLog << "\n";
-        }
+        writeExportHeaderLog(exportLog, sourceDuration100ns, m_cutScenes, m_frameIndex);
 
         com_ptr<IMFAttributes> readerAttributes;
         if(exportLog){ exportLog << "phase=reader_create\n"; }
@@ -1802,151 +2134,16 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(writer->BeginWriting());
         if(exportLog){ exportLog << "begin_writing=ok\n"; }
 
-        auto waitingForCleanPoint{false};
-        auto markDiscontinuityOnNextWrittenSample{false};
-        auto dtsPtsShift100ns{static_cast<std::int64_t>(0)};
-        auto dtsPtsShiftInitialized{false};
-        std::uint64_t readSampleCount{};
-        std::uint64_t droppedByCutCount{};
-        std::uint64_t droppedWaitingRapCount{};
-        std::uint64_t writtenSampleCount{};
-        std::int64_t lastInTime100ns{-1};
-        std::uint32_t videoNoProgressCount{};
-
-        for(;;){
-            DWORD actualStream{};
-            DWORD flags{};
-            LONGLONG timestamp{};
-            com_ptr<IMFSample> sample;
-            const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
-            if(FAILED(hr)){
-                check_hresult(hr);
-            }
-            if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
-                break;
-            }
-            if(!sample){
-                continue;
-            }
-
-            ++readSampleCount;
-
-            LONGLONG sampleTime100ns{};
-            if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
-                sampleTime100ns = timestamp;
-            }
-            const auto inTime100ns{std::max<std::int64_t>(0, sampleTime100ns)};
-            if(inTime100ns <= lastInTime100ns){
-                ++videoNoProgressCount;
-                if(videoNoProgressCount > 4096){
-                    if(exportLog){ exportLog << "video_loop_break=no_progress\n"; }
-                    break;
-                }
-            }else{
-                videoNoProgressCount = 0;
-                lastInTime100ns = inTime100ns;
-            }
-            auto dropped{false};
-            for(const auto& [start, end] : effectiveCutRanges100ns){
-                if(inTime100ns < start){
-                    break;
-                }
-                if(inTime100ns < end){
-                    dropped = true;
-                    break;
-                }
-            }
-            if(dropped){
-                ++droppedByCutCount;
-                if(exportLog && verboseSampleLog){
-                    exportLog << "drop_cut in=" << inTime100ns << "\n";
-                }
-                waitingForCleanPoint = true;
-                markDiscontinuityOnNextWrittenSample = true;
-                continue;
-            }
-
-            if(waitingForCleanPoint){
-                const auto isContainerSync{isContainerSyncSample(sample)};
-                const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
-                if(!(isContainerSync && isBitstreamRap)){
-                    ++droppedWaitingRapCount;
-                    if(exportLog && verboseSampleLog){
-                        exportLog << "drop_waiting_rap in=" << inTime100ns << " clean=" << (isContainerSync ? 1 : 0) << " rap=" << (isBitstreamRap ? 1 : 0) << "\n";
-                    }
-                    continue;
-                }
-                if(exportLog){
-                    exportLog << "resume_at in=" << inTime100ns << "\n";
-                }
-                waitingForCleanPoint = false;
-            }
-
-            const auto outTimeRaw100ns{inTime100ns - removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
-            auto outTime100ns{outTimeRaw100ns};
-
-            UINT64 decodeTimestamp100ns{};
-            auto hasDecodeTimestamp{false};
-            if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
-                hasDecodeTimestamp = true;
-                const auto decodeTimeSigned{static_cast<std::int64_t>(decodeTimestamp100ns)};
-                // Keep DTS/PTS skew stable across splice points by applying the same
-                // presentation-domain removed-duration offset used for sample time.
-                const auto removedAtPresentationTime{removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
-                auto outDecodeTime100ns{decodeTimeSigned - removedAtPresentationTime};
-                if(!dtsPtsShiftInitialized){
-                    dtsPtsShift100ns = std::max<std::int64_t>(0, -outDecodeTime100ns);
-                    dtsPtsShiftInitialized = true;
-                    if(exportLog){
-                        exportLog << "dts_pts_shift=" << dtsPtsShift100ns << "\n";
-                    }
-                }
-                outTime100ns += dtsPtsShift100ns;
-                outDecodeTime100ns += dtsPtsShift100ns;
-                check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(std::max<std::int64_t>(0, outDecodeTime100ns))));
-                if(exportLog && verboseSampleLog){
-                    exportLog << "retime_dts in_pts=" << inTime100ns
-                        << " in_dts=" << decodeTimeSigned
-                        << " out_dts=" << outDecodeTime100ns
-                        << " removed=" << removedAtPresentationTime << "\n";
-                }
-            }
-
-            if(!dtsPtsShiftInitialized && !hasDecodeTimestamp){
-                dtsPtsShiftInitialized = true;
-            }
-
-            if(!hasDecodeTimestamp && dtsPtsShiftInitialized && dtsPtsShift100ns > 0){
-                outTime100ns += dtsPtsShift100ns;
-            }
-
-            check_hresult(sample->SetSampleTime(outTime100ns));
-
-            LONGLONG duration100ns{};
-            if(SUCCEEDED(sample->GetSampleDuration(&duration100ns)) && duration100ns > 0){
-                check_hresult(sample->SetSampleDuration(duration100ns));
-            }
-
-            if(markDiscontinuityOnNextWrittenSample){
-                check_hresult(sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE));
-                if(exportLog && verboseSampleLog){
-                    exportLog << "set_discontinuity in=" << inTime100ns << " out=" << outTime100ns << "\n";
-                }
-                markDiscontinuityOnNextWrittenSample = false;
-            }
-
-            if(exportLog && writtenSampleCount == 0){
-                exportLog << "phase=first_video_write_attempt in=" << inTime100ns << " out=" << outTime100ns << "\n";
-            }
-            check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
-            ++writtenSampleCount;
-            if(exportLog && writtenSampleCount == 1){
-                exportLog << "phase=first_video_write_done\n";
-            }
-            if(exportLog && verboseSampleLog){
-                exportLog << "write in=" << inTime100ns << " out=" << outTime100ns << "\n";
-            }
-        }
+        const auto videoStats{writeVideoSamplesForExport(
+            reader.get(),
+            videoStreamIndex,
+            writer.get(),
+            writerVideoStreamIndex,
+            effectiveCutRanges100ns,
+            videoSubtype,
+            nalLengthFieldSize,
+            verboseSampleLog,
+            exportLog)};
 
         if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
             if(exportLog){ exportLog << "audio_mix_start\n"; }
@@ -1957,83 +2154,19 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
 
             const auto keepRanges100ns{invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
-            std::vector<float> mixedAudio;
-            const auto fadeMs{m_audioCrossfadeMs > 0 ? m_audioCrossfadeMs : 100};
-            const auto fadeFrames{static_cast<std::size_t>((static_cast<std::int64_t>(audioSampleRate) * fadeMs) / 1000)};
-
-            for(size_t segmentIndex = 0; segmentIndex < keepRanges100ns.size(); ++segmentIndex){
-                const auto& [keepStart, keepEnd] = keepRanges100ns[segmentIndex];
-                auto segmentAudio{decodeAudioRangeToFloat(audioReader.get(), audioStreamIndex, keepStart, keepEnd, audioChannels, audioSampleRate)};
-                if(segmentAudio.empty()){
-                    continue;
-                }
-
-                if(mixedAudio.empty() || fadeFrames == 0){
-                    mixedAudio.insert(mixedAudio.end(), segmentAudio.begin(), segmentAudio.end());
-                    continue;
-                }
-
-                const auto mixedFrames{mixedAudio.size() / audioChannels};
-                const auto segmentFrames{segmentAudio.size() / audioChannels};
-                const auto overlapFrames{std::min<std::size_t>(fadeFrames, std::min(mixedFrames, segmentFrames))};
-                if(overlapFrames == 0){
-                    mixedAudio.insert(mixedAudio.end(), segmentAudio.begin(), segmentAudio.end());
-                    continue;
-                }
-
-                for(std::size_t frame = 0; frame < overlapFrames; ++frame){
-                    const auto fadeOut{static_cast<float>(overlapFrames - frame) / static_cast<float>(overlapFrames)};
-                    const auto fadeIn{static_cast<float>(frame + 1) / static_cast<float>(overlapFrames)};
-                    for(std::uint32_t ch = 0; ch < audioChannels; ++ch){
-                        const auto dstIndex{(mixedFrames - overlapFrames + frame) * audioChannels + ch};
-                        const auto srcIndex{frame * audioChannels + ch};
-                        mixedAudio[dstIndex] = (mixedAudio[dstIndex] * fadeOut) + (segmentAudio[srcIndex] * fadeIn);
-                    }
-                }
-
-                mixedAudio.insert(mixedAudio.end(), segmentAudio.begin() + static_cast<std::ptrdiff_t>(overlapFrames * audioChannels), segmentAudio.end());
-            }
-
-            const std::size_t chunkFrames{1024};
-            std::size_t frameOffset{};
-            const auto totalFrames{mixedAudio.size() / audioChannels};
-            while(frameOffset < totalFrames){
-                const auto framesToWrite{std::min(chunkFrames, totalFrames - frameOffset)};
-                const auto bytesToWrite{static_cast<DWORD>(framesToWrite * audioChannels * sizeof(float))};
-
-                com_ptr<IMFSample> audioSample;
-                check_hresult(MFCreateSample(audioSample.put()));
-                com_ptr<IMFMediaBuffer> audioBuffer;
-                check_hresult(MFCreateMemoryBuffer(bytesToWrite, audioBuffer.put()));
-
-                BYTE* audioBytes{};
-                DWORD audioMaxLen{};
-                DWORD audioCurLen{};
-                check_hresult(audioBuffer->Lock(&audioBytes, &audioMaxLen, &audioCurLen));
-                memcpy(audioBytes, mixedAudio.data() + (frameOffset * audioChannels), bytesToWrite);
-                check_hresult(audioBuffer->Unlock());
-                check_hresult(audioBuffer->SetCurrentLength(bytesToWrite));
-                check_hresult(audioSample->AddBuffer(audioBuffer.get()));
-
-                const auto sampleTime100ns{static_cast<LONGLONG>((frameOffset * 10'000'000LL) / audioSampleRate)};
-                const auto sampleDuration100ns{static_cast<LONGLONG>((framesToWrite * 10'000'000LL) / audioSampleRate)};
-                check_hresult(audioSample->SetSampleTime(sampleTime100ns));
-                check_hresult(audioSample->SetSampleDuration(sampleDuration100ns));
-                check_hresult(writer->WriteSample(writerAudioStreamIndex, audioSample.get()));
-
-                frameOffset += framesToWrite;
-            }
-            if(exportLog){ exportLog << "audio_mix_done frames=" << totalFrames << "\n"; }
+            const auto mixedAudio{buildMixedAudioForKeepRanges(audioReader.get(), audioStreamIndex, keepRanges100ns, audioChannels, audioSampleRate, m_audioCrossfadeMs)};
+            writePcmAudioToWriter(writer.get(), writerAudioStreamIndex, mixedAudio, audioChannels, audioSampleRate);
+            if(exportLog){ exportLog << "audio_mix_done frames=" << (mixedAudio.size() / audioChannels) << "\n"; }
         }
 
         if(exportLog){ exportLog << "phase=finalize_start\n"; }
         check_hresult(writer->Finalize());
         if(exportLog){ exportLog << "phase=finalize_done\n"; }
         if(exportLog){
-            exportLog << "summary read=" << readSampleCount
-                << " dropped_cut=" << droppedByCutCount
-                << " dropped_waiting_rap=" << droppedWaitingRapCount
-                << " written=" << writtenSampleCount << "\n";
+            exportLog << "summary read=" << videoStats.readSampleCount
+                << " dropped_cut=" << videoStats.droppedByCutCount
+                << " dropped_waiting_rap=" << videoStats.droppedWaitingRapCount
+                << " written=" << videoStats.writtenSampleCount << "\n";
             exportLog << "finalize=ok\n";
             exportLog.flush();
         }
@@ -2310,82 +2443,34 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     resetProjectState(true);
 
     const auto lines{co_await FileIO::ReadLinesAsync(file)};
+    auto projectData{parseProjectLines(lines, TimelineZoomSlider().Value(), m_keepAudio, m_audioCrossfadeMs)};
 
-    vector<uint32_t> cutScenes;
-    wstring loadedFilePath;
-    auto zoomLevel{TimelineZoomSlider().Value()};
-    auto keepAudioSetting{m_keepAudio};
-    auto audioCrossfadeSetting{m_audioCrossfadeMs};
-    vector<IndexedFrameSample> loadedMarkers;
-
-    for(const auto& lineH: lines){
-        const wstring line{lineH.c_str()};
-        const auto trimmed{trim(line)};
-        if(trimmed.empty()){
-            continue;
-        }
-
-        if(trimmed[0] == L'#'){
-            continue;
-        }
-
-        const auto eqPos{line.find(L'=')};
-        if(eqPos == wstring::npos){
-            continue;
-        }
-
-        const auto key{trim(line.substr(0, eqPos))};
-        const auto value{trim(line.substr(eqPos + 1))};
-
-        if(key == P_FILE_PATH){
-            loadedFilePath = value;
-        }else if(key == P_STORYLINE_ZOOM){
-            try{ zoomLevel = stod(value); }catch(...){ }
-        }else if(key == P_RAP_MARKERS){
-            loadedMarkers = parseKeyframeVector(value);
-        }else if(key == P_CUT_SCENES){
-            cutScenes = parseIndexList(value);
-        }else if(key == P_KEEP_AUDIO){
-            keepAudioSetting = !(value == L"0" || value == L"false" || value == L"False");
-        }else if(key == P_AUDIO_CROSSFADE_MS){
-            try{ audioCrossfadeSetting = normalizeAudioCrossfadeMs(stoi(value)); }catch(...){ }
-        }else{
-            continue;
-        }
-    }
-
-    if(!loadedFilePath.empty()){
+    if(!projectData.loadedFilePath.empty()){
         try{
-            const auto videoFile{co_await StorageFile::GetFileFromPathAsync(loadedFilePath)};
+            const auto videoFile{co_await StorageFile::GetFileFromPathAsync(projectData.loadedFilePath)};
             co_await loadVideoFileAsync(videoFile);
         }catch(...){
             StatusText().Text(L"Project opened, but referenced video could not be loaded");
         }
     }
 
-    zoomLevel = clamp(zoomLevel, TimelineZoomSlider().Minimum(), TimelineZoomSlider().Maximum());
-    TimelineZoomSlider().Value(zoomLevel);
-    m_keepAudio = keepAudioSetting;
-    m_audioCrossfadeMs = normalizeAudioCrossfadeMs(audioCrossfadeSetting);
+    projectData.zoomLevel = clamp(projectData.zoomLevel, TimelineZoomSlider().Minimum(), TimelineZoomSlider().Maximum());
+    TimelineZoomSlider().Value(projectData.zoomLevel);
+    m_keepAudio = projectData.keepAudio;
+    m_audioCrossfadeMs = normalizeAudioCrossfadeMs(projectData.audioCrossfadeMs);
     syncAudioCrossfadeComboSelection();
     updateAudioUiAndPlaybackState();
 
-    m_frameIndex = loadedMarkers;
+    m_frameIndex = std::move(projectData.markers);
     sort(m_frameIndex.begin(), m_frameIndex.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
         return a.time100ns < b.time100ns;
     });
     const auto markerCount{m_frameIndex.size()};
-    m_selectedKeyFrames.clear();
-    m_selectedKeyFrames.reserve(markerCount);
-    for(uint32_t i = 0; i < markerCount; ++i){
-        m_selectedKeyFrames.push_back(i);
-    }
-    sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
-    m_selectedKeyFrames.erase(unique(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end()), m_selectedKeyFrames.end());
+    refreshSelectedMarkers(m_selectedKeyFrames, markerCount);
 
     m_cutScenes.clear();
     const auto sceneCount{static_cast<uint32_t>(markerCount + 1)};
-    for(const auto sceneIndex : cutScenes){
+    for(const auto sceneIndex : projectData.cutScenes){
         if(sceneIndex < sceneCount){
             m_cutScenes.push_back(sceneIndex);
         }
