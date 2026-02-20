@@ -1739,7 +1739,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
         com_ptr<IMFSinkWriter> writer;
         DWORD writerVideoStreamIndex{};
-        auto configureWriter = [&](const bool preferSourceCodecForAudio) -> HRESULT {
+        auto configureWriter = [&]() -> HRESULT {
             writer = nullptr;
             writerVideoStreamIndex = 0;
             writerAudioStreamIndex = 0;
@@ -1752,42 +1752,21 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 return S_OK;
             }
 
-            HRESULT hr{E_FAIL};
-            if(preferSourceCodecForAudio && sourceAudioNativeType){
-                hr = writer->AddStream(sourceAudioNativeType.get(), &writerAudioStreamIndex);
-                if(SUCCEEDED(hr)){
-                    hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
-                    if(exportLog){
-                        exportLog << "audio_path=source_codec hr=" << std::hex << hr << std::dec << "\n";
-                    }
-                    if(SUCCEEDED(hr)){
-                        return S_OK;
-                    }
-                }
-            }
-
             const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
-            hr = writer->AddStream(aacType.get(), &writerAudioStreamIndex);
+            auto hr = writer->AddStream(aacType.get(), &writerAudioStreamIndex);
             if(SUCCEEDED(hr)){
                 hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
             }
             if(exportLog){
-                exportLog << "audio_path=aac hr=" << std::hex << hr << std::dec << "\n";
+                exportLog << "audio_path=aac_only hr=" << std::hex << hr << std::dec << "\n";
             }
             return hr;
         };
 
-        if(hasAudioForExport){
-            auto hr = configureWriter(true);
-            if(FAILED(hr)){
-                hr = configureWriter(false);
-            }
-            check_hresult(hr);
-        }else{
-            check_hresult(configureWriter(false));
-        }
+        check_hresult(configureWriter());
 
         check_hresult(writer->BeginWriting());
+        if(exportLog){ exportLog << "begin_writing=ok\n"; }
 
         auto waitingForCleanPoint{false};
         auto markDiscontinuityOnNextWrittenSample{false};
@@ -1918,6 +1897,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         }
 
         if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
+            if(exportLog){ exportLog << "audio_mix_start\n"; }
             com_ptr<IMFSourceReader> audioReader;
             check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioReader.put()));
             check_hresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
@@ -1991,6 +1971,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
                 frameOffset += framesToWrite;
             }
+            if(exportLog){ exportLog << "audio_mix_done frames=" << totalFrames << "\n"; }
         }
 
         check_hresult(writer->Finalize());
