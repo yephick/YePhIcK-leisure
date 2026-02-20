@@ -506,12 +506,18 @@ std::vector<float> decodeAudioRangeToFloat(
     check_hresult(reader->SetCurrentPosition(GUID_NULL, pos));
     PropVariantClear(&pos);
 
+    std::int64_t lastSampleStart100ns{-1};
+    std::int64_t lastSampleEnd100ns{-1};
+    std::uint32_t noProgressCount{};
     for(;;){
         DWORD actualStream{};
         DWORD flags{};
         LONGLONG timestamp{};
         com_ptr<IMFSample> sample;
         check_hresult(reader->ReadSample(audioStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put()));
+        if((flags & MF_SOURCE_READERF_STREAMTICK) && timestamp >= rangeEnd100ns){
+            break;
+        }
         if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
             break;
         }
@@ -529,6 +535,17 @@ std::vector<float> decodeAudioRangeToFloat(
         }
 
         const auto sampleEnd100ns{sampleStart100ns + sampleDuration100ns};
+        if(sampleStart100ns <= lastSampleStart100ns && sampleEnd100ns <= lastSampleEnd100ns){
+            ++noProgressCount;
+            if(noProgressCount > 4096){
+                break;
+            }
+        }else{
+            noProgressCount = 0;
+            lastSampleStart100ns = sampleStart100ns;
+            lastSampleEnd100ns = sampleEnd100ns;
+        }
+
         if(sampleEnd100ns <= rangeStart100ns){
             continue;
         }
@@ -1570,6 +1587,13 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 #else
     NullExportLog exportLog{};
 #endif
+    constexpr auto verboseSampleLog{
+#ifdef _DEBUG
+        false
+#else
+        false
+#endif
+    };
 
     try{
         StatusText().Text(L"Exporting...");
@@ -1812,7 +1836,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
             if(dropped){
                 ++droppedByCutCount;
-                if(exportLog){
+                if(exportLog && verboseSampleLog){
                     exportLog << "drop_cut in=" << inTime100ns << "\n";
                 }
                 waitingForCleanPoint = true;
@@ -1825,7 +1849,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
                 if(!(isContainerSync && isBitstreamRap)){
                     ++droppedWaitingRapCount;
-                    if(exportLog){
+                    if(exportLog && verboseSampleLog){
                         exportLog << "drop_waiting_rap in=" << inTime100ns << " clean=" << (isContainerSync ? 1 : 0) << " rap=" << (isBitstreamRap ? 1 : 0) << "\n";
                     }
                     continue;
@@ -1858,7 +1882,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 outTime100ns += dtsPtsShift100ns;
                 outDecodeTime100ns += dtsPtsShift100ns;
                 check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(std::max<std::int64_t>(0, outDecodeTime100ns))));
-                if(exportLog){
+                if(exportLog && verboseSampleLog){
                     exportLog << "retime_dts in_pts=" << inTime100ns
                         << " in_dts=" << decodeTimeSigned
                         << " out_dts=" << outDecodeTime100ns
@@ -1883,7 +1907,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
             if(markDiscontinuityOnNextWrittenSample){
                 check_hresult(sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE));
-                if(exportLog){
+                if(exportLog && verboseSampleLog){
                     exportLog << "set_discontinuity in=" << inTime100ns << " out=" << outTime100ns << "\n";
                 }
                 markDiscontinuityOnNextWrittenSample = false;
@@ -1891,7 +1915,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
             check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
             ++writtenSampleCount;
-            if(exportLog){
+            if(exportLog && verboseSampleLog){
                 exportLog << "write in=" << inTime100ns << " out=" << outTime100ns << "\n";
             }
         }
