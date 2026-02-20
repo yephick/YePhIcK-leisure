@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <cwctype>
 #include <cwchar>
 #include <filesystem>
@@ -86,9 +87,8 @@ constexpr auto P_FILE_PATH{L"file_path"};
 constexpr auto P_STORYLINE_ZOOM{L"storyline_zoom"};
 constexpr auto P_KEEP_AUDIO{L"keep_audio"};
 constexpr auto P_AUDIO_CROSSFADE_MS{L"audio_crossfade_ms"};
-constexpr auto P_MARKER_INDICES{L"marker_indices"};
+constexpr auto P_RAP_MARKERS{L"rap_markers"};
 constexpr auto P_CUT_SCENES{L"cut_scenes"};
-constexpr auto P_MARKER_POINTS{L"marker_points"};
 
 constexpr std::array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 10, 50, 100, 250, 500, 750, 1000}};
 
@@ -139,12 +139,32 @@ std::vector<std::int64_t> buildSceneBoundaries100ns(const std::vector<IndexedFra
     return boundaries;
 }
 
+std::vector<IndexedFrameSample> buildRapMarkersFromSelection(
+    const std::vector<IndexedFrameSample>& markers,
+    const std::vector<std::uint32_t>& selectedMarkerIndices){
+
+    std::vector<IndexedFrameSample> rapMarkers;
+    rapMarkers.reserve(selectedMarkerIndices.size());
+    for(const auto index : selectedMarkerIndices){
+        if(index < markers.size()){
+            rapMarkers.push_back(markers[index]);
+        }
+    }
+    std::sort(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
+        return a.time100ns < b.time100ns;
+    });
+    rapMarkers.erase(std::unique(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
+        return a.time100ns == b.time100ns;
+    }), rapMarkers.end());
+    return rapMarkers;
+}
+
 std::vector<std::pair<std::int64_t, std::int64_t>> buildCutRanges100ns(
     const std::vector<std::uint32_t>& cutScenes,
-    const std::vector<IndexedFrameSample>& markers,
+    const std::vector<IndexedFrameSample>& rapMarkers,
     const std::int64_t totalDuration100ns){
 
-    const auto boundaries{buildSceneBoundaries100ns(markers, totalDuration100ns)};
+    const auto boundaries{buildSceneBoundaries100ns(rapMarkers, totalDuration100ns)};
     if(boundaries.size() < 2){
         return {};
     }
@@ -174,13 +194,31 @@ std::vector<std::pair<std::int64_t, std::int64_t>> buildCutRanges100ns(
     return merged;
 }
 
+std::vector<std::pair<std::int64_t, std::int64_t>> invertCutRanges100ns(
+    const std::vector<std::pair<std::int64_t, std::int64_t>>& cutRanges,
+    const std::int64_t totalDuration100ns){
+
+    std::vector<std::pair<std::int64_t, std::int64_t>> keepRanges;
+    std::int64_t cursor{};
+    for(const auto& [start, end] : cutRanges){
+        if(start > cursor){
+            keepRanges.emplace_back(cursor, start);
+        }
+        cursor = std::max(cursor, end);
+    }
+    if(cursor < totalDuration100ns){
+        keepRanges.emplace_back(cursor, totalDuration100ns);
+    }
+    return keepRanges;
+}
+
 std::vector<std::pair<std::int64_t, std::int64_t>> buildEffectiveCutRangesWithRapPreroll(
     const std::vector<std::uint32_t>& cutScenes,
-    const std::vector<IndexedFrameSample>& markers,
+    const std::vector<IndexedFrameSample>& rapMarkers,
     const std::int64_t totalDuration100ns,
     const std::vector<std::int64_t>& rapTimes100ns){
 
-    const auto boundaries{buildSceneBoundaries100ns(markers, totalDuration100ns)};
+    const auto boundaries{buildSceneBoundaries100ns(rapMarkers, totalDuration100ns)};
     if(boundaries.size() < 2){
         return {};
     }
@@ -419,6 +457,109 @@ com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(IMFSourceReader* reader, co
     }
 
     return bestType;
+}
+
+com_ptr<IMFMediaType> createPcmFloatAudioType(const std::uint32_t sampleRate, const std::uint32_t channels){
+    com_ptr<IMFMediaType> type;
+    check_hresult(MFCreateMediaType(type.put()));
+    check_hresult(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio));
+    check_hresult(type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_Float));
+    check_hresult(type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, channels));
+    check_hresult(type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, sampleRate));
+    check_hresult(type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 32));
+    check_hresult(type->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, channels * 4));
+    check_hresult(type->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, sampleRate * channels * 4));
+    check_hresult(type->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE));
+    return type;
+}
+
+com_ptr<IMFMediaType> createAacOutputType(const std::uint32_t sampleRate, const std::uint32_t channels){
+    com_ptr<IMFMediaType> type;
+    check_hresult(MFCreateMediaType(type.put()));
+    check_hresult(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio));
+    check_hresult(type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC));
+    check_hresult(type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, channels));
+    check_hresult(type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, sampleRate));
+    check_hresult(type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16));
+    check_hresult(type->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 192000 / 8));
+    check_hresult(type->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, 0));
+    check_hresult(type->SetUINT32(MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0x29));
+    return type;
+}
+
+std::vector<float> decodeAudioRangeToFloat(
+    IMFSourceReader* reader,
+    const DWORD audioStreamIndex,
+    const std::int64_t rangeStart100ns,
+    const std::int64_t rangeEnd100ns,
+    const std::uint32_t channels,
+    const std::uint32_t sampleRate){
+
+    std::vector<float> out;
+    if(rangeEnd100ns <= rangeStart100ns || channels == 0 || sampleRate == 0){
+        return out;
+    }
+
+    PROPVARIANT pos{};
+    pos.vt = VT_I8;
+    pos.hVal.QuadPart = rangeStart100ns;
+    check_hresult(reader->SetCurrentPosition(GUID_NULL, pos));
+    PropVariantClear(&pos);
+
+    for(;;){
+        DWORD actualStream{};
+        DWORD flags{};
+        LONGLONG timestamp{};
+        com_ptr<IMFSample> sample;
+        check_hresult(reader->ReadSample(audioStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put()));
+        if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+            break;
+        }
+        if(!sample){
+            continue;
+        }
+
+        LONGLONG sampleStart100ns{};
+        if(FAILED(sample->GetSampleTime(&sampleStart100ns))){
+            sampleStart100ns = timestamp;
+        }
+        LONGLONG sampleDuration100ns{};
+        if(FAILED(sample->GetSampleDuration(&sampleDuration100ns)) || sampleDuration100ns <= 0){
+            continue;
+        }
+
+        const auto sampleEnd100ns{sampleStart100ns + sampleDuration100ns};
+        if(sampleEnd100ns <= rangeStart100ns){
+            continue;
+        }
+        if(sampleStart100ns >= rangeEnd100ns){
+            break;
+        }
+
+        com_ptr<IMFMediaBuffer> contiguous;
+        check_hresult(sample->ConvertToContiguousBuffer(contiguous.put()));
+        BYTE* bytes{};
+        DWORD maxLen{};
+        DWORD curLen{};
+        check_hresult(contiguous->Lock(&bytes, &maxLen, &curLen));
+
+        const auto totalFrames{static_cast<std::int64_t>(curLen / (channels * sizeof(float)))};
+        const auto trimStart100ns{std::max<std::int64_t>(0, rangeStart100ns - sampleStart100ns)};
+        const auto trimEnd100ns{std::max<std::int64_t>(0, sampleEnd100ns - rangeEnd100ns)};
+        const auto trimStartFrames{std::min<std::int64_t>(totalFrames, (trimStart100ns * sampleRate) / 10'000'000)};
+        const auto trimEndFrames{std::min<std::int64_t>(totalFrames - trimStartFrames, (trimEnd100ns * sampleRate) / 10'000'000)};
+        const auto keepFrames{std::max<std::int64_t>(0, totalFrames - trimStartFrames - trimEndFrames)};
+
+        if(keepFrames > 0){
+            const auto* src{reinterpret_cast<const float*>(bytes)};
+            const auto begin{src + (trimStartFrames * channels)};
+            out.insert(out.end(), begin, begin + (keepFrames * channels));
+        }
+
+        contiguous->Unlock();
+    }
+
+    return out;
 }
 
 MainWindow::MainWindow(){
@@ -1032,7 +1173,8 @@ void MainWindow::renderCutOverlays(){
     }
 
     const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
-    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, m_frameIndex, duration100ns)};
+    const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
+    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, rapMarkers, duration100ns)};
     const auto overlayColor {Windows::UI::ColorHelper::FromArgb(180, 0, 0, 0)};
     for(const auto& [startTime100ns, endTime100ns] : cutRanges100ns){
         const auto start{clamp((static_cast<double>(startTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
@@ -1061,7 +1203,8 @@ bool MainWindow::toggleCutBlockAtCanvasX(const double pointerX){
 
     const auto width{TimelineCanvas().Width()};
     const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (m_timelineDurationSeconds * 10'000'000.0))};
-    const auto boundaries{buildSceneBoundaries100ns(m_frameIndex, static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0))};
+    const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
+    const auto boundaries{buildSceneBoundaries100ns(rapMarkers, static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0))};
     if(boundaries.size() < 2){
         return false;
     }
@@ -1099,7 +1242,8 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
     }
 
     const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
-    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, m_frameIndex, duration100ns)};
+    const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
+    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, rapMarkers, duration100ns)};
     const auto now100ns{max<int64_t>(0, m_player.PlaybackSession().Position().count())};
     for(const auto& [start100ns, end100ns] : cutRanges100ns){
         if(now100ns >= start100ns && now100ns < end100ns){
@@ -1345,7 +1489,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
     const std::wstring sourcePath{m_loadedFile.Path().c_str()};
     const auto sourceDuration100ns{std::max<std::int64_t>(0, static_cast<std::int64_t>(std::llround(std::max(0.0, m_timelineDurationSeconds) * 10'000'000.0)))};
-    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, m_frameIndex, sourceDuration100ns)};
+    const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
+    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, rapMarkers, sourceDuration100ns)};
 
     std::int64_t removedTotal100ns{};
     for(const auto& [start, end] : cutRanges100ns){
@@ -1518,7 +1663,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
         }
 
-        const auto effectiveCutRanges100ns{buildEffectiveCutRangesWithRapPreroll(m_cutScenes, m_frameIndex, sourceDuration100ns, rapTimes100ns)};
+        const auto effectiveCutRanges100ns{buildEffectiveCutRangesWithRapPreroll(m_cutScenes, rapMarkers, sourceDuration100ns, rapTimes100ns)};
         if(exportLog){
             exportLog << "effective_cut_ranges_count=" << effectiveCutRanges100ns.size() << "\n";
             for(size_t i = 0; i < effectiveCutRanges100ns.size(); ++i){
@@ -1538,6 +1683,63 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         DWORD writerVideoStreamIndex{};
         check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
         check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
+
+        auto hasAudioForExport{false};
+        DWORD writerAudioStreamIndex{};
+        std::uint32_t audioChannels{};
+        std::uint32_t audioSampleRate{};
+        com_ptr<IMFMediaType> audioPcmType;
+        com_ptr<IMFMediaType> sourceAudioNativeType;
+        DWORD audioStreamIndex{};
+
+        if(m_keepAudio && sourceHasAudio()){
+            com_ptr<IMFSourceReader> audioProbeReader;
+            check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioProbeReader.put()));
+
+            constexpr auto invalidStream{numeric_limits<DWORD>::max()};
+            audioStreamIndex = invalidStream;
+            for(DWORD streamIndex = 0;; ++streamIndex){
+                com_ptr<IMFMediaType> type;
+                const auto hr{audioProbeReader->GetNativeMediaType(streamIndex, 0, type.put())};
+                if(hr == MF_E_INVALIDSTREAMNUMBER){
+                    break;
+                }
+                check_hresult(hr);
+
+                GUID major{GUID_NULL};
+                check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+                if(major == MFMediaType_Audio){
+                    audioStreamIndex = streamIndex;
+                    sourceAudioNativeType = type;
+                    break;
+                }
+            }
+
+            if(audioStreamIndex != invalidStream){
+                (void)sourceAudioNativeType->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &audioChannels);
+                (void)sourceAudioNativeType->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &audioSampleRate);
+                if(audioChannels == 0){
+                    audioChannels = 2;
+                }
+                if(audioSampleRate == 0){
+                    audioSampleRate = 48000;
+                }
+
+                audioPcmType = createPcmFloatAudioType(audioSampleRate, audioChannels);
+
+                HRESULT addAudioHr{E_FAIL};
+                if(sourceAudioNativeType){
+                    addAudioHr = writer->AddStream(sourceAudioNativeType.get(), &writerAudioStreamIndex);
+                }
+                if(FAILED(addAudioHr)){
+                    const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
+                    check_hresult(writer->AddStream(aacType.get(), &writerAudioStreamIndex));
+                }
+                check_hresult(writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr));
+                hasAudioForExport = true;
+            }
+        }
+
         check_hresult(writer->BeginWriting());
 
         auto waitingForCleanPoint{false};
@@ -1665,6 +1867,82 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             ++writtenSampleCount;
             if(exportLog){
                 exportLog << "write in=" << inTime100ns << " out=" << outTime100ns << "\n";
+            }
+        }
+
+        if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
+            com_ptr<IMFSourceReader> audioReader;
+            check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioReader.put()));
+            check_hresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+            check_hresult(audioReader->SetStreamSelection(audioStreamIndex, TRUE));
+            check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
+
+            const auto keepRanges100ns{invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
+            std::vector<float> mixedAudio;
+            const auto fadeMs{m_audioCrossfadeMs > 0 ? m_audioCrossfadeMs : 100};
+            const auto fadeFrames{static_cast<std::size_t>((static_cast<std::int64_t>(audioSampleRate) * fadeMs) / 1000)};
+
+            for(size_t segmentIndex = 0; segmentIndex < keepRanges100ns.size(); ++segmentIndex){
+                const auto& [keepStart, keepEnd] = keepRanges100ns[segmentIndex];
+                auto segmentAudio{decodeAudioRangeToFloat(audioReader.get(), audioStreamIndex, keepStart, keepEnd, audioChannels, audioSampleRate)};
+                if(segmentAudio.empty()){
+                    continue;
+                }
+
+                if(mixedAudio.empty() || fadeFrames == 0){
+                    mixedAudio.insert(mixedAudio.end(), segmentAudio.begin(), segmentAudio.end());
+                    continue;
+                }
+
+                const auto mixedFrames{mixedAudio.size() / audioChannels};
+                const auto segmentFrames{segmentAudio.size() / audioChannels};
+                const auto overlapFrames{std::min<std::size_t>(fadeFrames, std::min(mixedFrames, segmentFrames))};
+                if(overlapFrames == 0){
+                    mixedAudio.insert(mixedAudio.end(), segmentAudio.begin(), segmentAudio.end());
+                    continue;
+                }
+
+                for(std::size_t frame = 0; frame < overlapFrames; ++frame){
+                    const auto fadeOut{static_cast<float>(overlapFrames - frame) / static_cast<float>(overlapFrames)};
+                    const auto fadeIn{static_cast<float>(frame + 1) / static_cast<float>(overlapFrames)};
+                    for(std::uint32_t ch = 0; ch < audioChannels; ++ch){
+                        const auto dstIndex{(mixedFrames - overlapFrames + frame) * audioChannels + ch};
+                        const auto srcIndex{frame * audioChannels + ch};
+                        mixedAudio[dstIndex] = (mixedAudio[dstIndex] * fadeOut) + (segmentAudio[srcIndex] * fadeIn);
+                    }
+                }
+
+                mixedAudio.insert(mixedAudio.end(), segmentAudio.begin() + static_cast<std::ptrdiff_t>(overlapFrames * audioChannels), segmentAudio.end());
+            }
+
+            const std::size_t chunkFrames{1024};
+            std::size_t frameOffset{};
+            const auto totalFrames{mixedAudio.size() / audioChannels};
+            while(frameOffset < totalFrames){
+                const auto framesToWrite{std::min(chunkFrames, totalFrames - frameOffset)};
+                const auto bytesToWrite{static_cast<DWORD>(framesToWrite * audioChannels * sizeof(float))};
+
+                com_ptr<IMFSample> audioSample;
+                check_hresult(MFCreateSample(audioSample.put()));
+                com_ptr<IMFMediaBuffer> audioBuffer;
+                check_hresult(MFCreateMemoryBuffer(bytesToWrite, audioBuffer.put()));
+
+                BYTE* audioBytes{};
+                DWORD audioMaxLen{};
+                DWORD audioCurLen{};
+                check_hresult(audioBuffer->Lock(&audioBytes, &audioMaxLen, &audioCurLen));
+                memcpy(audioBytes, mixedAudio.data() + (frameOffset * audioChannels), bytesToWrite);
+                check_hresult(audioBuffer->Unlock());
+                check_hresult(audioBuffer->SetCurrentLength(bytesToWrite));
+                check_hresult(audioSample->AddBuffer(audioBuffer.get()));
+
+                const auto sampleTime100ns{static_cast<LONGLONG>((frameOffset * 10'000'000LL) / audioSampleRate)};
+                const auto sampleDuration100ns{static_cast<LONGLONG>((framesToWrite * 10'000'000LL) / audioSampleRate)};
+                check_hresult(audioSample->SetSampleTime(sampleTime100ns));
+                check_hresult(audioSample->SetSampleDuration(sampleDuration100ns));
+                check_hresult(writer->WriteSample(writerAudioStreamIndex, audioSample.get()));
+
+                frameOffset += framesToWrite;
             }
         }
 
@@ -1880,8 +2158,9 @@ void MainWindow::resetProjectState(const bool clearLoadedVideo){
 }
 
 wstring MainWindow::buildProjectSnapshot(){
+    const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
     auto snapshot{std::format(
-        L"{}={}\n{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n",
+        L"{}={}\n{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n",
         P_FILE_PATH,
         (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
         P_STORYLINE_ZOOM,
@@ -1890,12 +2169,10 @@ wstring MainWindow::buildProjectSnapshot(){
         m_keepAudio ? 1 : 0,
         P_AUDIO_CROSSFADE_MS,
         m_audioCrossfadeMs,
-        P_MARKER_INDICES,
-        serializeIndexList(m_selectedKeyFrames),
+        P_RAP_MARKERS,
+        serializeKeyframeVector(rapMarkers),
         P_CUT_SCENES,
-        serializeIndexList(m_cutScenes),
-        P_MARKER_POINTS,
-        serializeKeyframeVector(m_frameIndex))};
+        serializeIndexList(m_cutScenes))};
     return snapshot;
 }
 
@@ -1952,7 +2229,6 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
 
     const auto lines{co_await FileIO::ReadLinesAsync(file)};
 
-    vector<uint32_t> selectedMarkerIndices;
     vector<uint32_t> cutScenes;
     wstring loadedFilePath;
     auto zoomLevel{TimelineZoomSlider().Value()};
@@ -1983,16 +2259,14 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
             loadedFilePath = value;
         }else if(key == P_STORYLINE_ZOOM){
             try{ zoomLevel = stod(value); }catch(...){ }
-        }else if(key == P_MARKER_INDICES){
-            selectedMarkerIndices = parseIndexList(value);
+        }else if(key == P_RAP_MARKERS){
+            loadedMarkers = parseKeyframeVector(value);
         }else if(key == P_CUT_SCENES){
             cutScenes = parseIndexList(value);
         }else if(key == P_KEEP_AUDIO){
             keepAudioSetting = !(value == L"0" || value == L"false" || value == L"False");
         }else if(key == P_AUDIO_CROSSFADE_MS){
             try{ audioCrossfadeSetting = normalizeAudioCrossfadeMs(stoi(value)); }catch(...){ }
-        }else if(key == P_MARKER_POINTS){
-            loadedMarkers = parseKeyframeVector(value);
         }else{
             continue;
         }
@@ -2020,11 +2294,9 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     });
     const auto markerCount{m_frameIndex.size()};
     m_selectedKeyFrames.clear();
-    m_selectedKeyFrames.reserve(selectedMarkerIndices.size());
-    for(const auto ordinal : selectedMarkerIndices){
-        if(ordinal < markerCount){
-            m_selectedKeyFrames.push_back(ordinal);
-        }
+    m_selectedKeyFrames.reserve(markerCount);
+    for(uint32_t i = 0; i < markerCount; ++i){
+        m_selectedKeyFrames.push_back(i);
     }
     sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
     m_selectedKeyFrames.erase(unique(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end()), m_selectedKeyFrames.end());
@@ -2054,9 +2326,8 @@ AAction MainWindow::saveProjectFileAsync(const SFile& file){
     lines.emplace_back(wstring(P_STORYLINE_ZOOM) + L"=" + to_wstring(TimelineZoomSlider().Value()));
     lines.emplace_back(wstring(P_KEEP_AUDIO) + L"=" + wstring(m_keepAudio ? L"1" : L"0"));
     lines.emplace_back(wstring(P_AUDIO_CROSSFADE_MS) + L"=" + to_wstring(m_audioCrossfadeMs));
-    lines.emplace_back(wstring(P_MARKER_INDICES) + L"=" + serializeIndexList(m_selectedKeyFrames));
+    lines.emplace_back(wstring(P_RAP_MARKERS) + L"=" + serializeKeyframeVector(buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)));
     lines.emplace_back(wstring(P_CUT_SCENES) + L"=" + serializeIndexList(m_cutScenes));
-    lines.emplace_back(wstring(P_MARKER_POINTS) + L"=" + serializeKeyframeVector(m_frameIndex));
 
     co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(move(lines)));
     m_projectPath = file.Path();
