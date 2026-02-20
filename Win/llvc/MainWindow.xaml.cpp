@@ -1601,6 +1601,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 #ifdef _DEBUG
         const auto logPath{filesystem::path(outputPath).replace_extension(L".log")};
         exportLog.open(logPath, std::ios::out | std::ios::trunc);
+        exportLog.setf(std::ios::unitbuf);
 #endif
         if(exportLog){
             exportLog << "llvc export debug log\n";
@@ -1624,6 +1625,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         }
 
         com_ptr<IMFAttributes> readerAttributes;
+        if(exportLog){ exportLog << "phase=reader_create\n"; }
         check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
         check_hresult(readerAttributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE));
 
@@ -1666,6 +1668,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
 
         std::vector<std::int64_t> rapTimes100ns;
+        if(exportLog){ exportLog << "phase=scan_rap_start\n"; }
         rapTimes100ns.reserve(2048);
         for(;;){
             DWORD actualStream{};
@@ -1694,6 +1697,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         }
         std::sort(rapTimes100ns.begin(), rapTimes100ns.end());
         rapTimes100ns.erase(std::unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
+        if(exportLog){ exportLog << "phase=scan_rap_done\n"; }
         if(exportLog){
             exportLog << "rap_count=" << rapTimes100ns.size() << "\n";
             for(size_t i = 0; i < rapTimes100ns.size(); ++i){
@@ -1764,6 +1768,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         com_ptr<IMFSinkWriter> writer;
         DWORD writerVideoStreamIndex{};
         auto configureWriter = [&]() -> HRESULT {
+            if(exportLog){ exportLog << "phase=writer_config_start\n"; }
             writer = nullptr;
             writerVideoStreamIndex = 0;
             writerAudioStreamIndex = 0;
@@ -1784,11 +1789,13 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             if(exportLog){
                 exportLog << "audio_path=aac_only hr=" << std::hex << hr << std::dec << "\n";
             }
+            if(exportLog){ exportLog << "phase=writer_config_done\n"; }
             return hr;
         };
 
         check_hresult(configureWriter());
 
+        if(exportLog){ exportLog << "phase=begin_writing_start\n"; }
         check_hresult(writer->BeginWriting());
         if(exportLog){ exportLog << "begin_writing=ok\n"; }
 
@@ -1800,6 +1807,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         std::uint64_t droppedByCutCount{};
         std::uint64_t droppedWaitingRapCount{};
         std::uint64_t writtenSampleCount{};
+        std::int64_t lastInTime100ns{-1};
+        std::uint32_t videoNoProgressCount{};
 
         for(;;){
             DWORD actualStream{};
@@ -1824,6 +1833,16 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 sampleTime100ns = timestamp;
             }
             const auto inTime100ns{std::max<std::int64_t>(0, sampleTime100ns)};
+            if(inTime100ns <= lastInTime100ns){
+                ++videoNoProgressCount;
+                if(videoNoProgressCount > 4096){
+                    if(exportLog){ exportLog << "video_loop_break=no_progress\n"; }
+                    break;
+                }
+            }else{
+                videoNoProgressCount = 0;
+                lastInTime100ns = inTime100ns;
+            }
             auto dropped{false};
             for(const auto& [start, end] : effectiveCutRanges100ns){
                 if(inTime100ns < start){
@@ -1998,7 +2017,9 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             if(exportLog){ exportLog << "audio_mix_done frames=" << totalFrames << "\n"; }
         }
 
+        if(exportLog){ exportLog << "phase=finalize_start\n"; }
         check_hresult(writer->Finalize());
+        if(exportLog){ exportLog << "phase=finalize_done\n"; }
         if(exportLog){
             exportLog << "summary read=" << readSampleCount
                 << " dropped_cut=" << droppedByCutCount
