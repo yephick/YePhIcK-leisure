@@ -864,24 +864,36 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
     }
 
     if(nearestIndex != m_frameIndex.size()){
-        const auto existing{static_cast<uint32_t>(nearestIndex)};
-        const auto it{find(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), existing)};
-        if(it == m_selectedKeyFrames.end()){
-            m_selectedKeyFrames.push_back(existing);
-        }else{
-            m_selectedKeyFrames.erase(it);
+        const auto removePos{static_cast<uint32_t>(nearestIndex)};
+
+        std::vector<uint32_t> updatedCuts;
+        updatedCuts.reserve(m_cutScenes.size());
+        for(const auto sceneIndex : m_cutScenes){
+            if(sceneIndex < removePos){
+                updatedCuts.push_back(sceneIndex);
+            }else if(sceneIndex == removePos || sceneIndex == (removePos + 1)){
+                updatedCuts.push_back(removePos);
+            }else{
+                updatedCuts.push_back(sceneIndex - 1);
+            }
         }
+
+        const auto newSceneCount{static_cast<uint32_t>(m_frameIndex.size())};
+        m_cutScenes.clear();
+        for(const auto sceneIndex : updatedCuts){
+            if(sceneIndex < newSceneCount){
+                m_cutScenes.push_back(sceneIndex);
+            }
+        }
+        sort(m_cutScenes.begin(), m_cutScenes.end());
+        m_cutScenes.erase(unique(m_cutScenes.begin(), m_cutScenes.end()), m_cutScenes.end());
+
+        m_frameIndex.erase(m_frameIndex.begin() + static_cast<std::ptrdiff_t>(removePos));
     }else{
         const auto insertIt{lower_bound(m_frameIndex.begin(), m_frameIndex.end(), clicked100ns, [](const IndexedFrameSample& a, int64_t t){
             return a.time100ns < t;
         })};
         const auto insertPos{static_cast<uint32_t>(distance(m_frameIndex.begin(), insertIt))};
-
-        for(auto& selected : m_selectedKeyFrames){
-            if(selected >= insertPos){
-                ++selected;
-            }
-        }
 
         std::vector<uint32_t> updatedCuts;
         updatedCuts.reserve(m_cutScenes.size() + 1);
@@ -902,11 +914,13 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
 
         const auto frameNumber{estimateFrameNumberFromTime100ns(m_mediaInfo.frameRate, clicked100ns)};
         m_frameIndex.insert(insertIt, IndexedFrameSample{.time100ns=clicked100ns, .duration100ns=0, .cleanPoint=true, .sampleIndex=frameNumber});
-        m_selectedKeyFrames.push_back(insertPos);
     }
 
-    sort(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end());
-    m_selectedKeyFrames.erase(unique(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end()), m_selectedKeyFrames.end());
+    m_selectedKeyFrames.clear();
+    m_selectedKeyFrames.reserve(m_frameIndex.size());
+    for(uint32_t i = 0; i < static_cast<uint32_t>(m_frameIndex.size()); ++i){
+        m_selectedKeyFrames.push_back(i);
+    }
 
     renderTimelineTicks();
     renderKeyframeTicks();
