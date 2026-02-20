@@ -1691,13 +1691,6 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
         PropVariantClear(&startPos);
 
-        com_ptr<IMFSinkWriter> writer;
-        check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, nullptr, writer.put()));
-
-        DWORD writerVideoStreamIndex{};
-        check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
-        check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
-
         auto hasAudioForExport{false};
         DWORD writerAudioStreamIndex{};
         std::uint32_t audioChannels{};
@@ -1705,12 +1698,12 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         com_ptr<IMFMediaType> audioPcmType;
         com_ptr<IMFMediaType> sourceAudioNativeType;
         DWORD audioStreamIndex{};
+        constexpr auto invalidAudioStream{numeric_limits<DWORD>::max()};
 
         if(m_keepAudio && sourceHasAudio()){
             com_ptr<IMFSourceReader> audioProbeReader;
             check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioProbeReader.put()));
 
-            constexpr auto invalidAudioStream{numeric_limits<DWORD>::max()};
             audioStreamIndex = invalidAudioStream;
             for(DWORD streamIndex = 0;; ++streamIndex){
                 com_ptr<IMFMediaType> type;
@@ -1740,18 +1733,58 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 }
 
                 audioPcmType = createPcmFloatAudioType(audioSampleRate, audioChannels);
-
-                HRESULT addAudioHr{E_FAIL};
-                if(sourceAudioNativeType){
-                    addAudioHr = writer->AddStream(sourceAudioNativeType.get(), &writerAudioStreamIndex);
-                }
-                if(FAILED(addAudioHr)){
-                    const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
-                    check_hresult(writer->AddStream(aacType.get(), &writerAudioStreamIndex));
-                }
-                check_hresult(writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr));
                 hasAudioForExport = true;
             }
+        }
+
+        com_ptr<IMFSinkWriter> writer;
+        DWORD writerVideoStreamIndex{};
+        auto configureWriter = [&](const bool preferSourceCodecForAudio) -> HRESULT {
+            writer = nullptr;
+            writerVideoStreamIndex = 0;
+            writerAudioStreamIndex = 0;
+
+            check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, nullptr, writer.put()));
+            check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
+            check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
+
+            if(!hasAudioForExport){
+                return S_OK;
+            }
+
+            HRESULT hr{E_FAIL};
+            if(preferSourceCodecForAudio && sourceAudioNativeType){
+                hr = writer->AddStream(sourceAudioNativeType.get(), &writerAudioStreamIndex);
+                if(SUCCEEDED(hr)){
+                    hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
+                    if(exportLog){
+                        exportLog << "audio_path=source_codec hr=" << std::hex << hr << std::dec << "\n";
+                    }
+                    if(SUCCEEDED(hr)){
+                        return S_OK;
+                    }
+                }
+            }
+
+            const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
+            hr = writer->AddStream(aacType.get(), &writerAudioStreamIndex);
+            if(SUCCEEDED(hr)){
+                hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
+            }
+            if(exportLog){
+                exportLog << "audio_path=aac hr=" << std::hex << hr << std::dec << "\n";
+            }
+            return hr;
+        };
+
+        if(hasAudioForExport){
+            auto hr = configureWriter(true);
+            if(FAILED(hr)){
+                hr = configureWriter(false);
+            }
+            check_hresult(hr);
+        }else{
+            check_hresult(configureWriter(false));
         }
 
         check_hresult(writer->BeginWriting());
@@ -1974,7 +2007,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         StatusText().Text(L"Export failed");
         exportErrorMessage = ex.message();
         if(exportLog){
-            exportLog << "error_hresult\n";
+            exportLog << "error_hresult=0x" << std::hex << static_cast<uint32_t>(ex.code().value) << std::dec << "\n";
             exportLog.flush();
         }
     }
