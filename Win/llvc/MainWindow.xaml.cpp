@@ -1696,8 +1696,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             com_ptr<IMFSourceReader> audioProbeReader;
             check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioProbeReader.put()));
 
-            constexpr auto invalidStream{numeric_limits<DWORD>::max()};
-            audioStreamIndex = invalidStream;
+            constexpr auto invalidAudioStream{numeric_limits<DWORD>::max()};
+            audioStreamIndex = invalidAudioStream;
             for(DWORD streamIndex = 0;; ++streamIndex){
                 com_ptr<IMFMediaType> type;
                 const auto hr{audioProbeReader->GetNativeMediaType(streamIndex, 0, type.put())};
@@ -1715,7 +1715,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 }
             }
 
-            if(audioStreamIndex != invalidStream){
+            if(audioStreamIndex != invalidAudioStream){
                 (void)sourceAudioNativeType->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &audioChannels);
                 (void)sourceAudioNativeType->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &audioSampleRate);
                 if(audioChannels == 0){
