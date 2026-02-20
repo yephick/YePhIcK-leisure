@@ -365,6 +365,49 @@ bool isContainerSyncSample(const com_ptr<IMFSample>& sample){
     return SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) && cleanPoint != 0;
 }
 
+com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(IMFSourceReader* reader, const DWORD streamIndex){
+    com_ptr<IMFMediaType> bestType;
+    double bestFps{};
+    std::uint32_t bestWidth{};
+    std::uint32_t bestHeight{};
+
+    for(DWORD mediaTypeIndex = 0;; ++mediaTypeIndex){
+        com_ptr<IMFMediaType> type;
+        const auto hr{reader->GetNativeMediaType(streamIndex, mediaTypeIndex, type.put())};
+        if(hr == MF_E_NO_MORE_TYPES){
+            break;
+        }
+        check_hresult(hr);
+
+        GUID major{GUID_NULL};
+        check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+        if(major != MFMediaType_Video){
+            continue;
+        }
+
+        std::uint32_t fpsNum{};
+        std::uint32_t fpsDen{};
+        (void)MFGetAttributeRatio(type.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
+        const auto fps{(fpsNum > 0 && fpsDen > 0) ? (static_cast<double>(fpsNum) / fpsDen) : 0.0};
+
+        std::uint32_t width{};
+        std::uint32_t height{};
+        (void)MFGetAttributeSize(type.get(), MF_MT_FRAME_SIZE, &width, &height);
+
+        const auto betterFps{fps > (bestFps + 0.0001)};
+        const auto sameFps{std::fabs(fps - bestFps) <= 0.0001};
+        const auto betterResolution{(width * height) > (bestWidth * bestHeight)};
+        if(!bestType || betterFps || (sameFps && betterResolution)){
+            bestType = type;
+            bestFps = fps;
+            bestWidth = width;
+            bestHeight = height;
+        }
+    }
+
+    return bestType;
+}
+
 MainWindow::MainWindow(){
     InitializeComponent();
 
@@ -1410,8 +1453,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
         check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
-        com_ptr<IMFMediaType> sourceVideoType;
-        check_hresult(reader->GetNativeMediaType(videoStreamIndex, 0, sourceVideoType.put()));
+        auto sourceVideoType{chooseBestNativeVideoMediaType(reader.get(), videoStreamIndex)};
+        if(!sourceVideoType){
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No native video media type found");
+        }
         check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, sourceVideoType.get()));
 
         GUID videoSubtype{GUID_NULL};
@@ -2174,6 +2219,22 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
             (void)type->GetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, &audioBitrate);
         }else{
             hasText = true;
+        }
+    }
+
+    if(videoStreamIndex != invalidStreamIndex){
+        if(auto bestVideoType{chooseBestNativeVideoMediaType(reader.get(), videoStreamIndex)}){
+            (void)reader->SetCurrentMediaType(videoStreamIndex, nullptr, bestVideoType.get());
+
+            MFGetAttributeSize(bestVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
+            MFGetAttributeRatio(bestVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
+            (void)bestVideoType->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
+            if(SUCCEEDED(bestVideoType->GetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, &allSamplesIndependent))){
+                result.allSamplesIndependent = allSamplesIndependent != 0 ? L"yes" : L"no";
+            }
+            if(SUCCEEDED(bestVideoType->GetUINT32(MF_MT_MAX_KEYFRAME_SPACING, &maxKeyFrameSpacing))){
+                result.maxKeyFrameSpacing = to_wstring(maxKeyFrameSpacing) + L" frames";
+            }
         }
     }
 
