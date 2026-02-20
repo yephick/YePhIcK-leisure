@@ -365,6 +365,19 @@ bool isContainerSyncSample(const com_ptr<IMFSample>& sample){
     return SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) && cleanPoint != 0;
 }
 
+#ifndef _DEBUG
+struct NullExportLog{
+    template<typename... Args>
+    void open(Args&&...){ }
+
+    template<typename T>
+    NullExportLog& operator<<(const T&){ return *this; }
+
+    explicit operator bool() const{ return false; }
+    void flush(){ }
+};
+#endif
+
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(IMFSourceReader* reader, const DWORD streamIndex){
     com_ptr<IMFMediaType> bestType;
     double bestFps{};
@@ -1393,13 +1406,19 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     }
 
     winrt::hstring exportErrorMessage{};
+#ifdef _DEBUG
     std::ofstream exportLog{};
+#else
+    NullExportLog exportLog{};
+#endif
 
     try{
         StatusText().Text(L"Exporting...");
 
+#ifdef _DEBUG
         const auto logPath{filesystem::path(outputPath).replace_extension(L".log")};
         exportLog.open(logPath, std::ios::out | std::ios::trunc);
+#endif
         if(exportLog){
             exportLog << "llvc export debug log\n";
             exportLog << "source_duration_100ns=" << sourceDuration100ns << "\n";
