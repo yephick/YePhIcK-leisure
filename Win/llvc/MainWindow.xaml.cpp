@@ -1548,8 +1548,17 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             UINT64 decodeTimestamp100ns{};
             if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
                 const auto decodeTimeSigned{static_cast<std::int64_t>(decodeTimestamp100ns)};
-                const auto outDecodeTime100ns{decodeTimeSigned - removedDurationBefore(effectiveCutRanges100ns, decodeTimeSigned)};
+                // Keep DTS/PTS skew stable across splice points by applying the same
+                // presentation-domain removed-duration offset used for sample time.
+                const auto removedAtPresentationTime{removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
+                const auto outDecodeTime100ns{decodeTimeSigned - removedAtPresentationTime};
                 check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(std::max<std::int64_t>(0, outDecodeTime100ns))));
+                if(exportLog){
+                    exportLog << "retime_dts in_pts=" << inTime100ns
+                        << " in_dts=" << decodeTimeSigned
+                        << " out_dts=" << outDecodeTime100ns
+                        << " removed=" << removedAtPresentationTime << "\n";
+                }
             }
 
             LONGLONG duration100ns{};
