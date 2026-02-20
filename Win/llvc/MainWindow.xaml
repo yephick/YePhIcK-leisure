@@ -25,6 +25,7 @@
                 <MenuFlyoutItem Text="Save project	Ctrl+S" Click="saveProjectMenuItem_Click"/>
                 <MenuFlyoutItem Text="Save project as..." Click="saveProjectAsMenuItem_Click"/>
                 <MenuFlyoutItem Text="Load video..." Click="loadVideoMenuItem_Click"/>
+                <MenuFlyoutItem Text="Export video..." Click="exportVideoMenuItem_Click"/>
                 <MenuFlyoutItem Text="Close project" Click="closeProjectMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutSubItem x:Name="RecentProjectsMenu" Text="Recent projects"/>

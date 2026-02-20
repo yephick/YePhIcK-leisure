@@ -13,6 +13,7 @@
     <ClCompile Include="pch.cpp" />
     <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
     <ClCompile Include="MainWindow.Helpers.cpp" />
+    <ClCompile Include="MainWindow.Export.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
