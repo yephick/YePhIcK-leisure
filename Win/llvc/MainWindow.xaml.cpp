@@ -90,7 +90,7 @@ constexpr auto P_AUDIO_CROSSFADE_MS{L"audio_crossfade_ms"};
 constexpr auto P_RAP_MARKERS{L"rap_markers"};
 constexpr auto P_CUT_SCENES{L"cut_scenes"};
 
-constexpr array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 10, 50, 100, 250, 500, 750, 1000}};
+constexpr std::array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 10, 50, 100, 250, 500, 750, 1000}};
 
 bool isControlModifierActive(const Windows::System::VirtualKeyModifiers modifiers){
     if((modifiers & Windows::System::VirtualKeyModifiers::Control) == Windows::System::VirtualKeyModifiers::Control){
@@ -101,35 +101,35 @@ bool isControlModifierActive(const Windows::System::VirtualKeyModifiers modifier
     return (ctrlState & Windows::UI::Core::CoreVirtualKeyStates::Down) == Windows::UI::Core::CoreVirtualKeyStates::Down;
 }
 
-uint32_t estimateFrameNumberFromTime100ns(const wstring& frameRateText, const int64_t time100ns){
+std::uint32_t estimateFrameNumberFromTime100ns(const std::wstring& frameRateText, const std::int64_t time100ns){
     try{
-        const auto fps{stod(frameRateText)};
+        const auto fps{std::stod(frameRateText)};
         if(fps > 0){
-            return static_cast<uint32_t>(max<int64_t>(0, static_cast<int64_t>(llround((time100ns / 10'000'000.0) * fps))));
+            return static_cast<std::uint32_t>(std::max<std::int64_t>(0, static_cast<std::int64_t>(std::llround((time100ns / 10'000'000.0) * fps))));
         }
     }catch(...){
     }
     return 0;
 }
 
-wstring formatDurationFileTag(const int64_t duration100ns){
-    const auto totalMs{max<int64_t>(0, (duration100ns + 5'000) / 10'000)};
+std::wstring formatDurationFileTag(const std::int64_t duration100ns){
+    const auto totalMs{std::max<std::int64_t>(0, (duration100ns + 5'000) / 10'000)};
     const auto minutes{totalMs / 60'000};
     const auto seconds{(totalMs / 1'000) % 60};
     const auto millis{totalMs % 1'000};
     return std::format(L"{:02}{:02}{:03}", minutes, seconds, millis);
 }
 
-vector<int64_t> buildSceneBoundaries100ns(const vector<IndexedFrameSample>& markers, const int64_t totalDuration100ns){
-    vector<int64_t> boundaries;
+std::vector<std::int64_t> buildSceneBoundaries100ns(const std::vector<IndexedFrameSample>& markers, const std::int64_t totalDuration100ns){
+    std::vector<std::int64_t> boundaries;
     boundaries.reserve(markers.size() + 2);
     boundaries.push_back(0);
     for(const auto& marker : markers){
-        boundaries.push_back(clamp(marker.time100ns, static_cast<int64_t>(0), totalDuration100ns));
+        boundaries.push_back(std::clamp(marker.time100ns, static_cast<std::int64_t>(0), totalDuration100ns));
     }
     boundaries.push_back(totalDuration100ns);
-    sort(boundaries.begin(), boundaries.end());
-    boundaries.erase(unique(boundaries.begin(), boundaries.end()), boundaries.end());
+    std::sort(boundaries.begin(), boundaries.end());
+    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
     if(boundaries.empty() || boundaries.front() != 0){
         boundaries.insert(boundaries.begin(), 0);
     }
@@ -139,30 +139,30 @@ vector<int64_t> buildSceneBoundaries100ns(const vector<IndexedFrameSample>& mark
     return boundaries;
 }
 
-vector<IndexedFrameSample> buildRapMarkersFromSelection(
-    const vector<IndexedFrameSample>& markers,
-    const vector<uint32_t>& selectedMarkerIndices){
+std::vector<IndexedFrameSample> buildRapMarkersFromSelection(
+    const std::vector<IndexedFrameSample>& markers,
+    const std::vector<std::uint32_t>& selectedMarkerIndices){
 
-    vector<IndexedFrameSample> rapMarkers;
+    std::vector<IndexedFrameSample> rapMarkers;
     rapMarkers.reserve(selectedMarkerIndices.size());
     for(const auto index : selectedMarkerIndices){
         if(index < markers.size()){
             rapMarkers.push_back(markers[index]);
         }
     }
-    sort(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
+    std::sort(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
         return a.time100ns < b.time100ns;
     });
-    rapMarkers.erase(unique(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
+    rapMarkers.erase(std::unique(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
         return a.time100ns == b.time100ns;
     }), rapMarkers.end());
     return rapMarkers;
 }
 
-vector<pair<int64_t, int64_t>> buildCutRanges100ns(
-    const vector<uint32_t>& cutScenes,
-    const vector<IndexedFrameSample>& rapMarkers,
-    const int64_t totalDuration100ns){
+std::vector<std::pair<std::int64_t, std::int64_t>> buildCutRanges100ns(
+    const std::vector<std::uint32_t>& cutScenes,
+    const std::vector<IndexedFrameSample>& rapMarkers,
+    const std::int64_t totalDuration100ns){
 
     const auto boundaries{buildSceneBoundaries100ns(rapMarkers, totalDuration100ns)};
     if(boundaries.size() < 2){
@@ -170,7 +170,7 @@ vector<pair<int64_t, int64_t>> buildCutRanges100ns(
     }
 
     const auto sceneCount{boundaries.size() - 1};
-    vector<pair<int64_t, int64_t>> ranges;
+    std::vector<std::pair<std::int64_t, std::int64_t>> ranges;
     for(const auto sceneIndex : cutScenes){
         if(sceneIndex >= sceneCount){
             continue;
@@ -182,29 +182,29 @@ vector<pair<int64_t, int64_t>> buildCutRanges100ns(
         }
     }
 
-    sort(ranges.begin(), ranges.end());
-    vector<pair<int64_t, int64_t>> merged;
+    std::sort(ranges.begin(), ranges.end());
+    std::vector<std::pair<std::int64_t, std::int64_t>> merged;
     for(const auto& range : ranges){
         if(merged.empty() || range.first > merged.back().second){
             merged.push_back(range);
         }else{
-            merged.back().second = max(merged.back().second, range.second);
+            merged.back().second = std::max(merged.back().second, range.second);
         }
     }
     return merged;
 }
 
-vector<pair<int64_t, int64_t>> invertCutRanges100ns(
-    const vector<pair<int64_t, int64_t>>& cutRanges,
-    const int64_t totalDuration100ns){
+std::vector<std::pair<std::int64_t, std::int64_t>> invertCutRanges100ns(
+    const std::vector<std::pair<std::int64_t, std::int64_t>>& cutRanges,
+    const std::int64_t totalDuration100ns){
 
-    vector<pair<int64_t, int64_t>> keepRanges;
-    int64_t cursor{};
+    std::vector<std::pair<std::int64_t, std::int64_t>> keepRanges;
+    std::int64_t cursor{};
     for(const auto& [start, end] : cutRanges){
         if(start > cursor){
             keepRanges.emplace_back(cursor, start);
         }
-        cursor = max(cursor, end);
+        cursor = std::max(cursor, end);
     }
     if(cursor < totalDuration100ns){
         keepRanges.emplace_back(cursor, totalDuration100ns);
@@ -212,11 +212,11 @@ vector<pair<int64_t, int64_t>> invertCutRanges100ns(
     return keepRanges;
 }
 
-vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(
-    const vector<uint32_t>& cutScenes,
-    const vector<IndexedFrameSample>& rapMarkers,
-    const int64_t totalDuration100ns,
-    const vector<int64_t>& rapTimes100ns){
+std::vector<std::pair<std::int64_t, std::int64_t>> buildEffectiveCutRangesWithRapPreroll(
+    const std::vector<std::uint32_t>& cutScenes,
+    const std::vector<IndexedFrameSample>& rapMarkers,
+    const std::int64_t totalDuration100ns,
+    const std::vector<std::int64_t>& rapTimes100ns){
 
     const auto boundaries{buildSceneBoundaries100ns(rapMarkers, totalDuration100ns)};
     if(boundaries.size() < 2){
@@ -224,21 +224,21 @@ vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(
     }
 
     const auto sceneCount{boundaries.size() - 1};
-    vector<bool> isCut(sceneCount, false);
+    std::vector<bool> isCut(sceneCount, false);
     for(const auto scene : cutScenes){
         if(scene < sceneCount){
             isCut[scene] = true;
         }
     }
 
-    vector<pair<int64_t, int64_t>> keepRanges;
+    std::vector<std::pair<std::int64_t, std::int64_t>> keepRanges;
     for(size_t i = 0; i < sceneCount; ++i){
         if(isCut[i]){
             continue;
         }
         auto start{boundaries[i]};
         const auto end{boundaries[i + 1]};
-        const auto rapIt{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), start)};
+        const auto rapIt{std::upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), start)};
         if(rapIt != rapTimes100ns.begin()){
             start = *(rapIt - 1);
         }
@@ -251,23 +251,23 @@ vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(
         return {{0, totalDuration100ns}};
     }
 
-    sort(keepRanges.begin(), keepRanges.end());
-    vector<pair<int64_t, int64_t>> mergedKeep;
+    std::sort(keepRanges.begin(), keepRanges.end());
+    std::vector<std::pair<std::int64_t, std::int64_t>> mergedKeep;
     for(const auto& range : keepRanges){
         if(mergedKeep.empty() || range.first > mergedKeep.back().second){
             mergedKeep.push_back(range);
         }else{
-            mergedKeep.back().second = max(mergedKeep.back().second, range.second);
+            mergedKeep.back().second = std::max(mergedKeep.back().second, range.second);
         }
     }
 
-    vector<pair<int64_t, int64_t>> cutRanges;
-    int64_t cursor{};
+    std::vector<std::pair<std::int64_t, std::int64_t>> cutRanges;
+    std::int64_t cursor{};
     for(const auto& [start, end] : mergedKeep){
         if(start > cursor){
             cutRanges.emplace_back(cursor, start);
         }
-        cursor = max(cursor, end);
+        cursor = std::max(cursor, end);
     }
     if(cursor < totalDuration100ns){
         cutRanges.emplace_back(cursor, totalDuration100ns);
@@ -276,13 +276,13 @@ vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(
     return cutRanges;
 }
 
-int64_t removedDurationBefore(const vector<pair<int64_t, int64_t>>& ranges, const int64_t time100ns){
-    int64_t removed{};
+std::int64_t removedDurationBefore(const std::vector<std::pair<std::int64_t, std::int64_t>>& ranges, const std::int64_t time100ns){
+    std::int64_t removed{};
     for(const auto& [start, end] : ranges){
         if(time100ns <= start){
             break;
         }
-        removed += min(time100ns, end) - start;
+        removed += std::min(time100ns, end) - start;
         if(time100ns < end){
             break;
         }
@@ -290,7 +290,7 @@ int64_t removedDurationBefore(const vector<pair<int64_t, int64_t>>& ranges, cons
     return removed;
 }
 
-uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUID& subtype){
+std::uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUID& subtype){
     UINT8* configData{};
     UINT32 configSize{};
     if(FAILED(mediaType->GetAllocatedBlob(MF_MT_MPEG_SEQUENCE_HEADER, &configData, &configSize)) || !configData || configSize == 0){
@@ -299,13 +299,13 @@ uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUI
 
     if(subtype == MFVideoFormat_H264){
         if(configSize >= 5){
-            const auto result{static_cast<uint32_t>((configData[4] & 0x03) + 1)};
+            const auto result{static_cast<std::uint32_t>((configData[4] & 0x03) + 1)};
             CoTaskMemFree(configData);
             return result;
         }
     }else if(subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265){
         if(configSize >= 22){
-            const auto result{static_cast<uint32_t>((configData[21] & 0x03) + 1)};
+            const auto result{static_cast<std::uint32_t>((configData[21] & 0x03) + 1)};
             CoTaskMemFree(configData);
             return result;
         }
@@ -315,7 +315,7 @@ uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUI
     return 4;
 }
 
-bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID& subtype, const uint32_t nalLengthFieldSize, const bool allowInconclusive){
+bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID& subtype, const std::uint32_t nalLengthFieldSize, const bool allowInconclusive){
     if(subtype != MFVideoFormat_H264 && subtype != MFVideoFormat_HEVC && subtype != MFVideoFormat_H265){
         return true;
     }
@@ -332,28 +332,28 @@ bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID&
         return allowInconclusive;
     }
 
-    auto classifyNalType = [&](const uint8_t nalHeader) -> optional<bool>{
+    auto classifyNalType = [&](const std::uint8_t nalHeader) -> std::optional<bool>{
         if(subtype == MFVideoFormat_H264){
-            const auto nalType = static_cast<uint8_t>(nalHeader & 0x1F);
+            const auto nalType = static_cast<std::uint8_t>(nalHeader & 0x1F);
             if(nalType >= 1 && nalType <= 5){
                 return nalType == 5; // IDR only
             }
         }else{
-            const auto nalType = static_cast<uint8_t>((nalHeader >> 1) & 0x3F);
+            const auto nalType = static_cast<std::uint8_t>((nalHeader >> 1) & 0x3F);
             if(nalType <= 31){
                 return nalType == 19 || nalType == 20 || nalType == 21; // HEVC IDR/CRA
             }
         }
-        return nullopt;
+        return std::nullopt;
     };
 
     // Try MP4/MOV length-prefixed NAL units first.
     {
-        const auto nalSizeField = clamp<uint32_t>(nalLengthFieldSize, 1, 4);
+        const auto nalSizeField = std::clamp<std::uint32_t>(nalLengthFieldSize, 1, 4);
         size_t offset{};
         while(offset + nalSizeField <= currentLength){
-            uint32_t nalLength{};
-            for(uint32_t i = 0; i < nalSizeField; ++i){
+            std::uint32_t nalLength{};
+            for(std::uint32_t i = 0; i < nalSizeField; ++i){
                 nalLength = (nalLength << 8) | data[offset + i];
             }
             offset += nalSizeField;
@@ -419,8 +419,8 @@ struct NullExportLog{
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(IMFSourceReader* reader, const DWORD streamIndex){
     com_ptr<IMFMediaType> bestType;
     double bestFps{};
-    uint32_t bestWidth{};
-    uint32_t bestHeight{};
+    std::uint32_t bestWidth{};
+    std::uint32_t bestHeight{};
 
     for(DWORD mediaTypeIndex = 0;; ++mediaTypeIndex){
         com_ptr<IMFMediaType> type;
@@ -436,17 +436,17 @@ com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(IMFSourceReader* reader, co
             continue;
         }
 
-        uint32_t fpsNum{};
-        uint32_t fpsDen{};
+        std::uint32_t fpsNum{};
+        std::uint32_t fpsDen{};
         (void)MFGetAttributeRatio(type.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
         const auto fps{(fpsNum > 0 && fpsDen > 0) ? (static_cast<double>(fpsNum) / fpsDen) : 0.0};
 
-        uint32_t width{};
-        uint32_t height{};
+        std::uint32_t width{};
+        std::uint32_t height{};
         (void)MFGetAttributeSize(type.get(), MF_MT_FRAME_SIZE, &width, &height);
 
         const auto betterFps{fps > (bestFps + 0.0001)};
-        const auto sameFps{fabs(fps - bestFps) <= 0.0001};
+        const auto sameFps{std::fabs(fps - bestFps) <= 0.0001};
         const auto betterResolution{(width * height) > (bestWidth * bestHeight)};
         if(!bestType || betterFps || (sameFps && betterResolution)){
             bestType = type;
@@ -459,7 +459,7 @@ com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(IMFSourceReader* reader, co
     return bestType;
 }
 
-com_ptr<IMFMediaType> createPcmFloatAudioType(const uint32_t sampleRate, const uint32_t channels){
+com_ptr<IMFMediaType> createPcmFloatAudioType(const std::uint32_t sampleRate, const std::uint32_t channels){
     com_ptr<IMFMediaType> type;
     check_hresult(MFCreateMediaType(type.put()));
     check_hresult(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio));
@@ -473,7 +473,7 @@ com_ptr<IMFMediaType> createPcmFloatAudioType(const uint32_t sampleRate, const u
     return type;
 }
 
-com_ptr<IMFMediaType> createAacOutputType(const uint32_t sampleRate, const uint32_t channels){
+com_ptr<IMFMediaType> createAacOutputType(const std::uint32_t sampleRate, const std::uint32_t channels){
     com_ptr<IMFMediaType> type;
     check_hresult(MFCreateMediaType(type.put()));
     check_hresult(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio));
@@ -487,15 +487,15 @@ com_ptr<IMFMediaType> createAacOutputType(const uint32_t sampleRate, const uint3
     return type;
 }
 
-vector<float> decodeAudioRangeToFloat(
+std::vector<float> decodeAudioRangeToFloat(
     IMFSourceReader* reader,
     const DWORD audioStreamIndex,
-    const int64_t rangeStart100ns,
-    const int64_t rangeEnd100ns,
-    const uint32_t channels,
-    const uint32_t sampleRate){
+    const std::int64_t rangeStart100ns,
+    const std::int64_t rangeEnd100ns,
+    const std::uint32_t channels,
+    const std::uint32_t sampleRate){
 
-    vector<float> out;
+    std::vector<float> out;
     if(rangeEnd100ns <= rangeStart100ns || channels == 0 || sampleRate == 0){
         return out;
     }
@@ -506,9 +506,9 @@ vector<float> decodeAudioRangeToFloat(
     check_hresult(reader->SetCurrentPosition(GUID_NULL, pos));
     PropVariantClear(&pos);
 
-    int64_t lastSampleStart100ns{-1};
-    int64_t lastSampleEnd100ns{-1};
-    uint32_t noProgressCount{};
+    std::int64_t lastSampleStart100ns{-1};
+    std::int64_t lastSampleEnd100ns{-1};
+    std::uint32_t noProgressCount{};
     for(;;){
         DWORD actualStream{};
         DWORD flags{};
@@ -560,12 +560,12 @@ vector<float> decodeAudioRangeToFloat(
         DWORD curLen{};
         check_hresult(contiguous->Lock(&bytes, &maxLen, &curLen));
 
-        const auto totalFrames{static_cast<int64_t>(curLen / (channels * sizeof(float)))};
-        const auto trimStart100ns{max<int64_t>(0, rangeStart100ns - sampleStart100ns)};
-        const auto trimEnd100ns{max<int64_t>(0, sampleEnd100ns - rangeEnd100ns)};
-        const auto trimStartFrames{min<int64_t>(totalFrames, (trimStart100ns * sampleRate) / 10'000'000)};
-        const auto trimEndFrames{min<int64_t>(totalFrames - trimStartFrames, (trimEnd100ns * sampleRate) / 10'000'000)};
-        const auto keepFrames{max<int64_t>(0, totalFrames - trimStartFrames - trimEndFrames)};
+        const auto totalFrames{static_cast<std::int64_t>(curLen / (channels * sizeof(float)))};
+        const auto trimStart100ns{std::max<std::int64_t>(0, rangeStart100ns - sampleStart100ns)};
+        const auto trimEnd100ns{std::max<std::int64_t>(0, sampleEnd100ns - rangeEnd100ns)};
+        const auto trimStartFrames{std::min<std::int64_t>(totalFrames, (trimStart100ns * sampleRate) / 10'000'000)};
+        const auto trimEndFrames{std::min<std::int64_t>(totalFrames - trimStartFrames, (trimEnd100ns * sampleRate) / 10'000'000)};
+        const auto keepFrames{std::max<std::int64_t>(0, totalFrames - trimStartFrames - trimEndFrames)};
 
         if(keepFrames > 0){
             const auto* src{reinterpret_cast<const float*>(bytes)};
@@ -579,8 +579,8 @@ vector<float> decodeAudioRangeToFloat(
     return out;
 }
 
-vector<uint32_t> remapCutScenesAfterMarkerRemoval(const vector<uint32_t>& cutScenes, const uint32_t removePos, const uint32_t newSceneCount){
-    vector<uint32_t> updatedCuts;
+std::vector<std::uint32_t> remapCutScenesAfterMarkerRemoval(const std::vector<std::uint32_t>& cutScenes, const std::uint32_t removePos, const std::uint32_t newSceneCount){
+    std::vector<std::uint32_t> updatedCuts;
     updatedCuts.reserve(cutScenes.size());
     for(const auto sceneIndex : cutScenes){
         if(sceneIndex < removePos){
@@ -592,20 +592,20 @@ vector<uint32_t> remapCutScenesAfterMarkerRemoval(const vector<uint32_t>& cutSce
         }
     }
 
-    vector<uint32_t> result;
+    std::vector<std::uint32_t> result;
     result.reserve(updatedCuts.size());
     for(const auto sceneIndex : updatedCuts){
         if(sceneIndex < newSceneCount){
             result.push_back(sceneIndex);
         }
     }
-    sort(result.begin(), result.end());
-    result.erase(unique(result.begin(), result.end()), result.end());
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
     return result;
 }
 
-vector<uint32_t> remapCutScenesAfterMarkerInsertion(const vector<uint32_t>& cutScenes, const uint32_t insertPos){
-    vector<uint32_t> updatedCuts;
+std::vector<std::uint32_t> remapCutScenesAfterMarkerInsertion(const std::vector<std::uint32_t>& cutScenes, const std::uint32_t insertPos){
+    std::vector<std::uint32_t> updatedCuts;
     updatedCuts.reserve(cutScenes.size() + 1);
     for(const auto sceneIndex : cutScenes){
         if(sceneIndex < insertPos){
@@ -617,26 +617,26 @@ vector<uint32_t> remapCutScenesAfterMarkerInsertion(const vector<uint32_t>& cutS
             updatedCuts.push_back(sceneIndex + 1);
         }
     }
-    sort(updatedCuts.begin(), updatedCuts.end());
-    updatedCuts.erase(unique(updatedCuts.begin(), updatedCuts.end()), updatedCuts.end());
+    std::sort(updatedCuts.begin(), updatedCuts.end());
+    updatedCuts.erase(std::unique(updatedCuts.begin(), updatedCuts.end()), updatedCuts.end());
     return updatedCuts;
 }
 
-void refreshSelectedMarkers(vector<uint32_t>& selectedKeyFrames, const size_t markerCount){
+void refreshSelectedMarkers(std::vector<std::uint32_t>& selectedKeyFrames, const std::size_t markerCount){
     selectedKeyFrames.clear();
     selectedKeyFrames.reserve(markerCount);
-    for(uint32_t i = 0; i < static_cast<uint32_t>(markerCount); ++i){
+    for(std::uint32_t i = 0; i < static_cast<std::uint32_t>(markerCount); ++i){
         selectedKeyFrames.push_back(i);
     }
 }
 
 struct LoadedProjectData{
-    wstring loadedFilePath;
+    std::wstring loadedFilePath;
     double zoomLevel{};
     bool keepAudio{};
     int32_t audioCrossfadeMs{};
-    vector<IndexedFrameSample> markers;
-    vector<uint32_t> cutScenes;
+    std::vector<IndexedFrameSample> markers;
+    std::vector<std::uint32_t> cutScenes;
 };
 
 LoadedProjectData parseProjectLines(
@@ -651,14 +651,14 @@ LoadedProjectData parseProjectLines(
     data.audioCrossfadeMs = defaultAudioCrossfadeMs;
 
     for(const auto& lineH : lines){
-        const wstring line{lineH.c_str()};
+        const std::wstring line{lineH.c_str()};
         const auto trimmed{trim(line)};
         if(trimmed.empty() || trimmed[0] == L'#'){
             continue;
         }
 
         const auto eqPos{line.find(L'=')};
-        if(eqPos == wstring::npos){
+        if(eqPos == std::wstring::npos){
             continue;
         }
 
@@ -668,7 +668,7 @@ LoadedProjectData parseProjectLines(
         if(key == P_FILE_PATH){
             data.loadedFilePath = value;
         }else if(key == P_STORYLINE_ZOOM){
-            try{ data.zoomLevel = stod(value); }catch(...){ }
+            try{ data.zoomLevel = std::stod(value); }catch(...){ }
         }else if(key == P_RAP_MARKERS){
             data.markers = parseKeyframeVector(value);
         }else if(key == P_CUT_SCENES){
@@ -676,7 +676,7 @@ LoadedProjectData parseProjectLines(
         }else if(key == P_KEEP_AUDIO){
             data.keepAudio = !(value == L"0" || value == L"false" || value == L"False");
         }else if(key == P_AUDIO_CROSSFADE_MS){
-            try{ data.audioCrossfadeMs = stoi(value); }catch(...){ }
+            try{ data.audioCrossfadeMs = std::stoi(value); }catch(...){ }
         }
     }
 
@@ -987,7 +987,7 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(const double pointerX){
     if(nearestIndex != m_frameIndex.size()){
         const auto removePos{static_cast<uint32_t>(nearestIndex)};
         m_cutScenes = remapCutScenesAfterMarkerRemoval(m_cutScenes, removePos, static_cast<uint32_t>(m_frameIndex.size()));
-        m_frameIndex.erase(m_frameIndex.begin() + static_cast<ptrdiff_t>(removePos));
+        m_frameIndex.erase(m_frameIndex.begin() + static_cast<std::ptrdiff_t>(removePos));
     }else{
         const auto insertIt{lower_bound(m_frameIndex.begin(), m_frameIndex.end(), clicked100ns, [](const IndexedFrameSample& a, int64_t t){
             return a.time100ns < t;
@@ -1849,7 +1849,7 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     syncAudioCrossfadeComboSelection();
     updateAudioUiAndPlaybackState();
 
-    m_frameIndex = move(projectData.markers);
+    m_frameIndex = std::move(projectData.markers);
     sort(m_frameIndex.begin(), m_frameIndex.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
         return a.time100ns < b.time100ns;
     });

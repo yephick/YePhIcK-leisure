@@ -26,19 +26,19 @@ using Control = MainWindow::Control;
 using REArgs = MainWindow::REArgs;
 using AAction = MainWindow::AAction;
 
-wstring formatDurationFileTag(const int64_t duration100ns);
-vector<IndexedFrameSample> buildRapMarkersFromSelection(const vector<IndexedFrameSample>& markers, const vector<uint32_t>& selectedMarkerIndices);
-vector<pair<int64_t, int64_t>> buildCutRanges100ns(const vector<uint32_t>& cutScenes, const vector<IndexedFrameSample>& rapMarkers, const int64_t totalDuration100ns);
-vector<pair<int64_t, int64_t>> invertCutRanges100ns(const vector<pair<int64_t, int64_t>>& cutRanges, const int64_t totalDuration100ns);
-vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(const vector<uint32_t>& cutScenes, const vector<IndexedFrameSample>& rapMarkers, const int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns);
-int64_t removedDurationBefore(const vector<pair<int64_t, int64_t>>& cutRanges, const int64_t time100ns);
+std::wstring formatDurationFileTag(const std::int64_t duration100ns);
+std::vector<IndexedFrameSample> buildRapMarkersFromSelection(const std::vector<IndexedFrameSample>& markers, const std::vector<std::uint32_t>& selectedMarkerIndices);
+std::vector<std::pair<std::int64_t, std::int64_t>> buildCutRanges100ns(const std::vector<std::uint32_t>& cutScenes, const std::vector<IndexedFrameSample>& rapMarkers, const std::int64_t totalDuration100ns);
+std::vector<std::pair<std::int64_t, std::int64_t>> invertCutRanges100ns(const std::vector<std::pair<std::int64_t, std::int64_t>>& cutRanges, const std::int64_t totalDuration100ns);
+std::vector<std::pair<std::int64_t, std::int64_t>> buildEffectiveCutRangesWithRapPreroll(const std::vector<std::uint32_t>& cutScenes, const std::vector<IndexedFrameSample>& rapMarkers, const std::int64_t totalDuration100ns, const std::vector<std::int64_t>& rapTimes100ns);
+std::int64_t removedDurationBefore(const std::vector<std::pair<std::int64_t, std::int64_t>>& cutRanges, const std::int64_t time100ns);
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(IMFSourceReader* reader, const DWORD streamIndex);
-uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUID& videoSubtype);
-bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID& videoSubtype, const uint32_t nalLengthFieldSize, const bool allowInconclusive);
+std::uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUID& videoSubtype);
+bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID& videoSubtype, const std::uint32_t nalLengthFieldSize, const bool allowInconclusive);
 bool isContainerSyncSample(const com_ptr<IMFSample>& sample);
-com_ptr<IMFMediaType> createPcmFloatAudioType(const uint32_t sampleRate, const uint32_t channels);
-com_ptr<IMFMediaType> createAacOutputType(const uint32_t sampleRate, const uint32_t channels);
-vector<float> decodeAudioRangeToFloat(IMFSourceReader* reader, const DWORD audioStreamIndex, const int64_t rangeStart100ns, const int64_t rangeEnd100ns, const uint32_t channels, const uint32_t sampleRate);
+com_ptr<IMFMediaType> createPcmFloatAudioType(const std::uint32_t sampleRate, const std::uint32_t channels);
+com_ptr<IMFMediaType> createAacOutputType(const std::uint32_t sampleRate, const std::uint32_t channels);
+std::vector<float> decodeAudioRangeToFloat(IMFSourceReader* reader, const DWORD audioStreamIndex, const std::int64_t rangeStart100ns, const std::int64_t rangeEnd100ns, const std::uint32_t channels, const std::uint32_t sampleRate);
 
 #ifndef _DEBUG
 struct NullExportLog{
@@ -53,7 +53,7 @@ struct NullExportLog{
 };
 #endif
 
-wstring pickExportOutputPath(const filesystem::path& sourceFsPath, const wchar_t* defaultExt, const int64_t outputDuration100ns, const HWND ownerWindow){
+std::wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wchar_t* defaultExt, const std::int64_t outputDuration100ns, const HWND ownerWindow){
     com_ptr<IFileSaveDialog> saveDialog;
     check_hresult(::CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(saveDialog.put())));
 
@@ -65,7 +65,7 @@ wstring pickExportOutputPath(const filesystem::path& sourceFsPath, const wchar_t
         {L"MP4 video", L"*.mp4"},
         {L"MOV video", L"*.mov"},
     };
-    check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(size(fileTypes)), fileTypes));
+    check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(std::size(fileTypes)), fileTypes));
 
     const auto isMovDefault{_wcsicmp(defaultExt, L".mov") == 0};
     check_hresult(saveDialog->SetFileTypeIndex(isMovDefault ? 2U : 1U));
@@ -93,7 +93,7 @@ wstring pickExportOutputPath(const filesystem::path& sourceFsPath, const wchar_t
     check_hresult(saveDialog->GetResult(resultItem.put()));
     PWSTR selectedPath{};
     check_hresult(resultItem->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath));
-    wstring outputPath{selectedPath ? selectedPath : L""};
+    std::wstring outputPath{selectedPath ? selectedPath : L""};
     if(selectedPath){
         ::CoTaskMemFree(selectedPath);
     }
@@ -103,9 +103,9 @@ wstring pickExportOutputPath(const filesystem::path& sourceFsPath, const wchar_t
 template<typename TLog>
 void writeExportHeaderLog(
     TLog& exportLog,
-    const int64_t sourceDuration100ns,
-    const vector<uint32_t>& cutScenes,
-    const vector<IndexedFrameSample>& frameIndex){
+    const std::int64_t sourceDuration100ns,
+    const std::vector<std::uint32_t>& cutScenes,
+    const std::vector<IndexedFrameSample>& frameIndex){
 
     if(!exportLog){
         return;
@@ -132,7 +132,7 @@ void writeExportHeaderLog(
 }
 
 
-void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>& segmentAudio, const uint32_t audioChannels, const size_t fadeFrames){
+void appendCrossfadedAudioSegment(std::vector<float>& mixedAudio, const std::vector<float>& segmentAudio, const std::uint32_t audioChannels, const std::size_t fadeFrames){
     if(segmentAudio.empty()){
         return;
     }
@@ -144,36 +144,36 @@ void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>
 
     const auto mixedFrames{mixedAudio.size() / audioChannels};
     const auto segmentFrames{segmentAudio.size() / audioChannels};
-    const auto overlapFrames{min<size_t>(fadeFrames, min(mixedFrames, segmentFrames))};
+    const auto overlapFrames{std::min<std::size_t>(fadeFrames, std::min(mixedFrames, segmentFrames))};
     if(overlapFrames == 0){
         mixedAudio.insert(mixedAudio.end(), segmentAudio.begin(), segmentAudio.end());
         return;
     }
 
-    for(size_t frame = 0; frame < overlapFrames; ++frame){
+    for(std::size_t frame = 0; frame < overlapFrames; ++frame){
         const auto fadeOut{static_cast<float>(overlapFrames - frame) / static_cast<float>(overlapFrames)};
         const auto fadeIn{static_cast<float>(frame + 1) / static_cast<float>(overlapFrames)};
-        for(uint32_t ch = 0; ch < audioChannels; ++ch){
+        for(std::uint32_t ch = 0; ch < audioChannels; ++ch){
             const auto dstIndex{(mixedFrames - overlapFrames + frame) * audioChannels + ch};
             const auto srcIndex{frame * audioChannels + ch};
             mixedAudio[dstIndex] = (mixedAudio[dstIndex] * fadeOut) + (segmentAudio[srcIndex] * fadeIn);
         }
     }
 
-    mixedAudio.insert(mixedAudio.end(), segmentAudio.begin() + static_cast<ptrdiff_t>(overlapFrames * audioChannels), segmentAudio.end());
+    mixedAudio.insert(mixedAudio.end(), segmentAudio.begin() + static_cast<std::ptrdiff_t>(overlapFrames * audioChannels), segmentAudio.end());
 }
 
-vector<float> buildMixedAudioForKeepRanges(
+std::vector<float> buildMixedAudioForKeepRanges(
     IMFSourceReader* audioReader,
     const DWORD audioStreamIndex,
-    const vector<pair<int64_t, int64_t>>& keepRanges100ns,
-    const uint32_t audioChannels,
-    const uint32_t audioSampleRate,
+    const std::vector<std::pair<std::int64_t, std::int64_t>>& keepRanges100ns,
+    const std::uint32_t audioChannels,
+    const std::uint32_t audioSampleRate,
     const int crossfadeMs){
 
-    vector<float> mixedAudio;
+    std::vector<float> mixedAudio;
     const auto fadeMs{crossfadeMs > 0 ? crossfadeMs : 100};
-    const auto fadeFrames{static_cast<size_t>((static_cast<int64_t>(audioSampleRate) * fadeMs) / 1000)};
+    const auto fadeFrames{static_cast<std::size_t>((static_cast<std::int64_t>(audioSampleRate) * fadeMs) / 1000)};
 
     for(const auto& [keepStart, keepEnd] : keepRanges100ns){
         auto segmentAudio{decodeAudioRangeToFloat(audioReader, audioStreamIndex, keepStart, keepEnd, audioChannels, audioSampleRate)};
@@ -186,15 +186,15 @@ vector<float> buildMixedAudioForKeepRanges(
 void writePcmAudioToWriter(
     IMFSinkWriter* writer,
     const DWORD writerAudioStreamIndex,
-    const vector<float>& mixedAudio,
-    const uint32_t audioChannels,
-    const uint32_t audioSampleRate){
+    const std::vector<float>& mixedAudio,
+    const std::uint32_t audioChannels,
+    const std::uint32_t audioSampleRate){
 
-    const size_t chunkFrames{1024};
-    size_t frameOffset{};
+    const std::size_t chunkFrames{1024};
+    std::size_t frameOffset{};
     const auto totalFrames{mixedAudio.size() / audioChannels};
     while(frameOffset < totalFrames){
-        const auto framesToWrite{min(chunkFrames, totalFrames - frameOffset)};
+        const auto framesToWrite{std::min(chunkFrames, totalFrames - frameOffset)};
         const auto bytesToWrite{static_cast<DWORD>(framesToWrite * audioChannels * sizeof(float))};
 
         com_ptr<IMFSample> audioSample;
@@ -222,10 +222,10 @@ void writePcmAudioToWriter(
 }
 
 struct VideoWriteStats{
-    uint64_t readSampleCount{};
-    uint64_t droppedByCutCount{};
-    uint64_t droppedWaitingRapCount{};
-    uint64_t writtenSampleCount{};
+    std::uint64_t readSampleCount{};
+    std::uint64_t droppedByCutCount{};
+    std::uint64_t droppedWaitingRapCount{};
+    std::uint64_t writtenSampleCount{};
 };
 
 
@@ -235,18 +235,18 @@ VideoWriteStats writeVideoSamplesForExport(
     const DWORD videoStreamIndex,
     IMFSinkWriter* writer,
     const DWORD writerVideoStreamIndex,
-    const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns,
+    const std::vector<std::pair<std::int64_t, std::int64_t>>& effectiveCutRanges100ns,
     const GUID videoSubtype,
-    const uint32_t nalLengthFieldSize,
+    const std::uint32_t nalLengthFieldSize,
     const bool verboseSampleLog,
     TLog& exportLog){
 
     auto waitingForCleanPoint{false};
     auto markDiscontinuityOnNextWrittenSample{false};
-    auto dtsPtsShift100ns{static_cast<int64_t>(0)};
+    auto dtsPtsShift100ns{static_cast<std::int64_t>(0)};
     auto dtsPtsShiftInitialized{false};
-    int64_t lastInTime100ns{-1};
-    uint32_t videoNoProgressCount{};
+    std::int64_t lastInTime100ns{-1};
+    std::uint32_t videoNoProgressCount{};
     VideoWriteStats stats{};
 
     for(;;){
@@ -271,7 +271,7 @@ VideoWriteStats writeVideoSamplesForExport(
         if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
             sampleTime100ns = timestamp;
         }
-        const auto inTime100ns{max<int64_t>(0, sampleTime100ns)};
+        const auto inTime100ns{std::max<std::int64_t>(0, sampleTime100ns)};
         if(inTime100ns <= lastInTime100ns){
             ++videoNoProgressCount;
             if(videoNoProgressCount > 4096){
@@ -326,11 +326,11 @@ VideoWriteStats writeVideoSamplesForExport(
         auto hasDecodeTimestamp{false};
         if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
             hasDecodeTimestamp = true;
-            const auto decodeTimeSigned{static_cast<int64_t>(decodeTimestamp100ns)};
+            const auto decodeTimeSigned{static_cast<std::int64_t>(decodeTimestamp100ns)};
             const auto removedAtPresentationTime{removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
             auto outDecodeTime100ns{decodeTimeSigned - removedAtPresentationTime};
             if(!dtsPtsShiftInitialized){
-                dtsPtsShift100ns = max<int64_t>(0, -outDecodeTime100ns);
+                dtsPtsShift100ns = std::max<std::int64_t>(0, -outDecodeTime100ns);
                 dtsPtsShiftInitialized = true;
                 if(exportLog){
                     exportLog << "dts_pts_shift=" << dtsPtsShift100ns << "\n";
@@ -338,7 +338,7 @@ VideoWriteStats writeVideoSamplesForExport(
             }
             outTime100ns += dtsPtsShift100ns;
             outDecodeTime100ns += dtsPtsShift100ns;
-            check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(max<int64_t>(0, outDecodeTime100ns))));
+            check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(std::max<std::int64_t>(0, outDecodeTime100ns))));
             if(exportLog && verboseSampleLog){
                 exportLog << "retime_dts in_pts=" << inTime100ns
                     << " in_dts=" << decodeTimeSigned
@@ -395,16 +395,16 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
     MFLifetime mf{};
 
-    const wstring sourcePath{m_loadedFile.Path().c_str()};
-    const auto sourceDuration100ns{max<int64_t>(0, static_cast<int64_t>(llround(max(0.0, m_timelineDurationSeconds) * 10'000'000.0)))};
+    const std::wstring sourcePath{m_loadedFile.Path().c_str()};
+    const auto sourceDuration100ns{std::max<std::int64_t>(0, static_cast<std::int64_t>(std::llround(std::max(0.0, m_timelineDurationSeconds) * 10'000'000.0)))};
     const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
     const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, rapMarkers, sourceDuration100ns)};
 
-    int64_t removedTotal100ns{};
+    std::int64_t removedTotal100ns{};
     for(const auto& [start, end] : cutRanges100ns){
         removedTotal100ns += (end - start);
     }
-    const auto outputDuration100ns{max<int64_t>(0, sourceDuration100ns - removedTotal100ns)};
+    const auto outputDuration100ns{std::max<std::int64_t>(0, sourceDuration100ns - removedTotal100ns)};
 
     const filesystem::path sourceFsPath{sourcePath};
     const auto sourceExt{sourceFsPath.extension().wstring()};
@@ -417,7 +417,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
     winrt::hstring exportErrorMessage{};
 #ifdef _DEBUG
-    ofstream exportLog{};
+    std::ofstream exportLog{};
 #else
     NullExportLog exportLog{};
 #endif
@@ -434,8 +434,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
 #ifdef _DEBUG
         const auto logPath{filesystem::path(outputPath).replace_extension(L".log")};
-        exportLog.open(logPath, ios::out | ios::trunc);
-        exportLog.setf(ios::unitbuf);
+        exportLog.open(logPath, std::ios::out | std::ios::trunc);
+        exportLog.setf(std::ios::unitbuf);
 #endif
         writeExportHeaderLog(exportLog, sourceDuration100ns, m_cutScenes, m_frameIndex);
 
@@ -482,7 +482,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(sourceVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
         const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
 
-        vector<int64_t> rapTimes100ns;
+        std::vector<std::int64_t> rapTimes100ns;
         if(exportLog){ exportLog << "phase=scan_rap_start\n"; }
         rapTimes100ns.reserve(2048);
         for(;;){
@@ -507,11 +507,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
 
             if(isContainerSyncSample(sample) && isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)){
-                rapTimes100ns.push_back(max<int64_t>(0, sampleTime100ns));
+                rapTimes100ns.push_back(std::max<std::int64_t>(0, sampleTime100ns));
             }
         }
-        sort(rapTimes100ns.begin(), rapTimes100ns.end());
-        rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
+        std::sort(rapTimes100ns.begin(), rapTimes100ns.end());
+        rapTimes100ns.erase(std::unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
         if(exportLog){ exportLog << "phase=scan_rap_done\n"; }
         if(exportLog){
             exportLog << "rap_count=" << rapTimes100ns.size() << "\n";
@@ -536,8 +536,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
         auto hasAudioForExport{false};
         DWORD writerAudioStreamIndex{};
-        uint32_t audioChannels{};
-        uint32_t audioSampleRate{};
+        std::uint32_t audioChannels{};
+        std::uint32_t audioSampleRate{};
         com_ptr<IMFMediaType> audioPcmType;
         com_ptr<IMFMediaType> sourceAudioNativeType;
         DWORD audioStreamIndex{};
@@ -605,7 +605,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
             }
             if(exportLog){
-                exportLog << "audio_path=aac_only hr=" << hex << hr << dec << "\n";
+                exportLog << "audio_path=aac_only hr=" << std::hex << hr << std::dec << "\n";
             }
             if(exportLog){ exportLog << "phase=writer_config_done\n"; }
             return hr;
@@ -658,7 +658,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         StatusText().Text(L"Export failed");
         exportErrorMessage = ex.message();
         if(exportLog){
-            exportLog << "error_hresult=0x" << hex << static_cast<uint32_t>(ex.code().value) << dec << "\n";
+            exportLog << "error_hresult=0x" << std::hex << static_cast<uint32_t>(ex.code().value) << std::dec << "\n";
             exportLog.flush();
         }
     }
