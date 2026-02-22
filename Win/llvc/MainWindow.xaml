@@ -24,9 +24,10 @@
                 <MenuFlyoutItem Text="Open project..." Click="openProjectMenuItem_Click"/>
                 <MenuFlyoutItem Text="Save project	Ctrl+S" Click="saveProjectMenuItem_Click"/>
                 <MenuFlyoutItem Text="Save project as..." Click="saveProjectAsMenuItem_Click"/>
+                <MenuFlyoutItem Text="Close project" Click="closeProjectMenuItem_Click"/>
+                <MenuFlyoutSeparator/>
                 <MenuFlyoutItem Text="Load video..." Click="loadVideoMenuItem_Click"/>
                 <MenuFlyoutItem Text="Export video..." Click="exportVideoMenuItem_Click"/>
-                <MenuFlyoutItem Text="Close project" Click="closeProjectMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutSubItem x:Name="RecentProjectsMenu" Text="Recent projects"/>
                 <MenuFlyoutSubItem x:Name="RecentVideosMenu" Text="Recent videos"/>
@@ -34,11 +35,6 @@
                 <MenuFlyoutItem Text="Properties" Click="propertiesMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutItem Text="Exit" Click="exitMenuItem_Click"/>
-            </controls:MenuBarItem>
-
-            <controls:MenuBarItem Title="Edit">
-                <MenuFlyoutItem Text="Undo Ctrl+Z" IsEnabled="False"/>
-                <MenuFlyoutItem Text="Redo Ctrl+Y" IsEnabled="False"/>
             </controls:MenuBarItem>
 
             <controls:MenuBarItem Title="Tools">
@@ -63,12 +59,11 @@
             <Grid VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                     <TextBlock Text="Zoom" VerticalAlignment="Center"/>
-                    <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="12" Value="3" SmallChange="0.25" LargeChange="1" ValueChanged="timelineZoomSlider_ValueChanged"/>
+                    <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="12" Value="2" SmallChange="0.25" LargeChange="1" ValueChanged="timelineZoomSlider_ValueChanged"/>
                     <CheckBox x:Name="KeepAudioCheckBox" Content="Keep audio" IsEnabled="False" VerticalAlignment="Center" Checked="keepAudioCheckBox_Changed" Unchecked="keepAudioCheckBox_Changed"/>
                     <TextBlock Text="Audio cross-fade:" VerticalAlignment="Center"/>
                     <ComboBox x:Name="AudioCrossfadeComboBox" Width="120" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
                         <ComboBoxItem Content="0 ms" Tag="0"/>
-                        <ComboBoxItem Content="10 ms" Tag="10"/>
                         <ComboBoxItem Content="50 ms" Tag="50"/>
                         <ComboBoxItem Content="100 ms" Tag="100"/>
                         <ComboBoxItem Content="250 ms" Tag="250"/>
@@ -88,25 +83,24 @@
 
                     <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="timelineScrollViewer_ViewChanged" SizeChanged="timelineScrollViewer_SizeChanged">
                         <StackPanel Orientation="Vertical" Spacing="4">
-                            <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#111111" PointerReleased="timelineTickCanvas_PointerReleased"/>
+                            <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#222222" PointerReleased="timelineTickCanvas_PointerReleased"/>
                             <Canvas x:Name="TimelineCanvas" Height="86" IsTabStop="True" Loaded="timelineCanvas_Loaded" PointerPressed="timelineCanvas_PointerPressed" PointerMoved="timelineCanvas_PointerMoved" PointerReleased="timelineCanvas_PointerReleased" PointerCanceled="timelineCanvas_PointerCanceled" PointerCaptureLost="timelineCanvas_PointerCaptureLost" Background="#111111">
                                 <Canvas x:Name="ThumbnailLayer" Height="86"/>
                                 <Canvas x:Name="CutOverlayLayer" Height="86"/>
-                                <Rectangle x:Name="TimelineCursor" Canvas.Left="0" Width="2" Height="86" Fill="White"/>
+                                <Rectangle x:Name="TimelineCursor" Canvas.Left="0" Width="3" Height="86" Fill="Green"/>
                             </Canvas>
                         </StackPanel>
                     </ScrollViewer>
 
-                    <Border Grid.Row="1" Margin="0,4,0,0" Padding="0" MinHeight="28" Background="#202020" BorderBrush="#6A6A6A" BorderThickness="1" CornerRadius="2">
-                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" IsTabStop="False" Height="20" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="6,2" Background="#2A2A2A" Foreground="#CFCFCF" Visibility="Visible" ValueChanged="timelineHorizontalScrollBar_ValueChanged"/>
+                    <Border Grid.Row="1" Margin="0,4,0,0" Padding="0" MinHeight="28" Background="#2f2f2f" BorderBrush="#6A6A6A" BorderThickness="1" CornerRadius="2">
+                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" IsTabStop="False" Height="28" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="6,2" Background="#2A2A2A" Foreground="#CFCFCF" Visibility="Visible" ValueChanged="timelineHorizontalScrollBar_ValueChanged"/>
                     </Border>
                 </Grid>
             </Border>
         </Grid>
 
         <StackPanel Grid.Row="3" Spacing="4">
-            <TextBlock x:Name="StatusText" Text="Load or drag-and-drop a .mp4/.mov file to preview."/>
-            <ProgressBar x:Name="KeyframeProgressBar" Minimum="0" Maximum="100" Value="0" Visibility="Collapsed" Height="6"/>
+            <TextBlock x:Name="StatusText" Text="Load or drag-and-drop an .mp4/.mov file to preview."/>
         </StackPanel>
 
         <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">

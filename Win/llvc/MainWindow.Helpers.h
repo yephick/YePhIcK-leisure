@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "MainWindow.xaml.h"
 
@@ -18,7 +18,7 @@ namespace winrt::llvc::implementation{
 
 std::wstring formatGuid(const _GUID& guid);
 std::wstring formatFileSize(std::uint64_t bytes);
-std::wstring formatRatio(std::uint32_t num, std::uint32_t den);
+std::wstring formatRatio(std::uint32_t num, std::uint32_t den, const std::wstring& suffix);
 
 std::wstring joinRecentItems(const std::vector<winrt::hstring>& values);
 std::vector<winrt::hstring> splitRecentItems(const std::wstring& source);

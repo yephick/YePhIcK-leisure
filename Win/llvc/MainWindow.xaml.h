@@ -12,6 +12,12 @@ struct _GUID;
 
 namespace winrt::llvc::implementation{
 
+struct Ratio final{
+    std::uint32_t num{};
+    std::uint32_t den{};
+    constexpr operator double() const noexcept{ return den != 0 ? 1.0 * num / den : 0; }
+};
+
 struct IndexedFrameSample{
     std::int64_t time100ns{};
     std::int64_t duration100ns{};
@@ -28,7 +34,7 @@ struct MediaInspectionResult{
     std::wstring duration{};
     std::wstring fileSize{};
     std::wstring resolution{};
-    std::wstring frameRate{};
+    Ratio frameRate{};
     std::wstring videoBitrate{};
     std::wstring audioBitrate{};
     std::wstring keyFrameSummary{};
@@ -111,7 +117,6 @@ private:
     std::vector<std::uint32_t> m_selectedKeyFrames{};
     std::vector<IndexedFrameSample> m_frameIndex{};
     std::vector<std::uint32_t> m_cutScenes{};
-    std::vector<std::wstring> m_projectUnknownLines{};
     winrt::hstring m_projectPath{};
     std::wstring m_lastSavedProjectSnapshot{};
     bool m_isClosing{false};
@@ -152,7 +157,7 @@ private:
     void updateTimelineCursorFromPlayback();
     void syncTimelineHorizontalScrollBar();
     void renderTimelineTicks();
-    void seekTimelineToCanvasX(double pointerX, bool bypassSnap);
+    void seekTimelineToCanvasX(double pointerX);
     void renderKeyframeTicks();
     void renderCutOverlays();
     bool toggleSelectedKeyframeAtCanvasX(double pointerX);

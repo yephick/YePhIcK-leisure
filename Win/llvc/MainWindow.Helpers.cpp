@@ -65,11 +65,11 @@ wstring formatFileSize(uint64_t bytes){
     return text;
 }
 
-wstring formatRatio(uint32_t num, uint32_t den){
+wstring formatRatio(uint32_t num, uint32_t den, const wstring& suffix){
     if(den == 0){
         return L"-";
     }
-    return std::format(L"{:.3f}", (1.0 * num) / den);
+    return std::format(L"{:.3f}{}", (1.0 * num) / den, suffix);
 }
 
 wstring joinRecentItems(const vector<hstring>& values){
