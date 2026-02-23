@@ -96,8 +96,6 @@ constexpr auto PROJECT_KEY{L"llvc project"};
 constexpr auto UNNAMED_PROJECT{L"Untitled video cut"};
 constexpr auto PROJECT_EXT{L".llvc"};
 
-constexpr array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 50, 100, 250, 500, 750, 1000}};
-
 bool isControlModifierActive(VirtualKeyModifiers modifiers){
     if((modifiers & VirtualKeyModifiers::Control) == VirtualKeyModifiers::Control){
         return true;
@@ -107,86 +105,12 @@ bool isControlModifierActive(VirtualKeyModifiers modifiers){
     return (ctrlState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down;
 }
 
-uint32_t estimateFrameNumberFromTime100ns(const Ratio& fps, int64_t time100ns){
-    if(fps.den == 0){
-        return 0;
-    }
-    return max<uint32_t>(0, static_cast<uint32_t>(time100ns / 10'000'000.0 * fps));
-}
-
 wstring formatDurationFileTag(int64_t duration100ns){
     const auto totalMs{max<int64_t>(0, (duration100ns + 5'000) / 10'000)};
     const auto minutes{totalMs / 60'000};
     const auto seconds{(totalMs / 1'000) % 60};
     const auto millis{totalMs % 1'000};
     return std::format(L"{:02}{:02}{:03}", minutes, seconds, millis);
-}
-
-vector<int64_t> buildSceneBoundaries100ns(const vector<IndexedFrameSample>& markers, int64_t totalDuration100ns){
-    vector<int64_t> boundaries;
-    boundaries.reserve(markers.size() + 2);
-    boundaries.push_back(0);
-    for(const auto& marker: markers){
-        boundaries.push_back(clamp<int64_t>(marker.time100ns, 0, totalDuration100ns));
-    }
-    boundaries.push_back(totalDuration100ns);
-    sort(boundaries.begin(), boundaries.end());
-    boundaries.erase(unique(boundaries.begin(), boundaries.end()), boundaries.end());
-    if(boundaries.empty() || boundaries.front() != 0){
-        boundaries.insert(boundaries.begin(), 0);
-    }
-    if(boundaries.back() != totalDuration100ns){
-        boundaries.push_back(totalDuration100ns);
-    }
-    return boundaries;
-}
-
-vector<IndexedFrameSample> buildRapMarkersFromSelection(const vector<IndexedFrameSample>& markers, const vector<uint32_t>& selectedMarkerIndices){
-    vector<IndexedFrameSample> rapMarkers;
-    rapMarkers.reserve(selectedMarkerIndices.size());
-    for(const auto index: selectedMarkerIndices){
-        if(index < markers.size()){
-            rapMarkers.push_back(markers[index]);
-        }
-    }
-    sort(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
-        return a.time100ns < b.time100ns;
-    });
-    rapMarkers.erase(unique(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
-        return a.time100ns == b.time100ns;
-    }), rapMarkers.end());
-    return rapMarkers;
-}
-
-vector<pair<int64_t, int64_t>> buildCutRanges100ns(const vector<uint32_t>& cutScenes, const vector<IndexedFrameSample>& rapMarkers, int64_t totalDuration100ns){
-    const auto boundaries{buildSceneBoundaries100ns(rapMarkers, totalDuration100ns)};
-    if(boundaries.size() < 2){
-        return {};
-    }
-
-    const auto sceneCount{boundaries.size() - 1};
-    vector<pair<int64_t, int64_t>> ranges;
-    for(const auto sceneIndex: cutScenes){
-        if(sceneIndex >= sceneCount){
-            continue;
-        }
-        const auto start{boundaries[sceneIndex]};
-        const auto end{boundaries[sceneIndex + 1]};
-        if(end > start){
-            ranges.emplace_back(start, end);
-        }
-    }
-
-    sort(ranges.begin(), ranges.end());
-    vector<pair<int64_t, int64_t>> merged;
-    for(const auto& range: ranges){
-        if(merged.empty() || range.first > merged.back().second){
-            merged.push_back(range);
-        }else{
-            merged.back().second = max(merged.back().second, range.second);
-        }
-    }
-    return merged;
 }
 
 vector<pair<int64_t, int64_t>> invertCutRanges100ns(const vector<pair<int64_t, int64_t>>& cutRanges, int64_t totalDuration100ns){
@@ -202,65 +126,6 @@ vector<pair<int64_t, int64_t>> invertCutRanges100ns(const vector<pair<int64_t, i
         keepRanges.emplace_back(cursor, totalDuration100ns);
     }
     return keepRanges;
-}
-
-vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(const vector<uint32_t>& cutScenes, const vector<IndexedFrameSample>& rapMarkers, int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns){
-    const auto boundaries{buildSceneBoundaries100ns(rapMarkers, totalDuration100ns)};
-    if(boundaries.size() < 2){
-        return {};
-    }
-
-    const auto sceneCount{boundaries.size() - 1};
-    vector<bool> isCut(sceneCount, false);
-    for(const auto scene: cutScenes){
-        if(scene < sceneCount){
-            isCut[scene] = true;
-        }
-    }
-
-    vector<pair<int64_t, int64_t>> keepRanges;
-    for(size_t i{0}; i < sceneCount; ++i){
-        if(isCut[i]){
-            continue;
-        }
-        auto start{boundaries[i]};
-        const auto end{boundaries[i + 1]};
-        const auto rapIt{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), start)};
-        if(rapIt != rapTimes100ns.begin()){
-            start = *(rapIt - 1);
-        }
-        if(end > start){
-            keepRanges.emplace_back(start, end);
-        }
-    }
-
-    if(keepRanges.empty()){
-        return {{0, totalDuration100ns}};
-    }
-
-    sort(keepRanges.begin(), keepRanges.end());
-    vector<pair<int64_t, int64_t>> mergedKeep;
-    for(const auto& range: keepRanges){
-        if(mergedKeep.empty() || range.first > mergedKeep.back().second){
-            mergedKeep.push_back(range);
-        }else{
-            mergedKeep.back().second = max(mergedKeep.back().second, range.second);
-        }
-    }
-
-    vector<pair<int64_t, int64_t>> cutRanges;
-    int64_t cursor{};
-    for(const auto& [start, end]: mergedKeep){
-        if(start > cursor){
-            cutRanges.emplace_back(cursor, start);
-        }
-        cursor = max(cursor, end);
-    }
-    if(cursor < totalDuration100ns){
-        cutRanges.emplace_back(cursor, totalDuration100ns);
-    }
-
-    return cutRanges;
 }
 
 int64_t removedDurationBefore(const vector<pair<int64_t, int64_t>>& ranges, int64_t time100ns){
@@ -557,105 +422,6 @@ vector<float> decodeAudioRangeToFloat(
     return out;
 }
 
-vector<uint32_t> remapCutScenesAfterMarkerRemoval(const vector<uint32_t>& cutScenes, uint32_t removePos, uint32_t newSceneCount){
-    vector<uint32_t> updatedCuts;
-    updatedCuts.reserve(cutScenes.size());
-    for(const auto sceneIndex: cutScenes){
-        if(sceneIndex < removePos){
-            updatedCuts.push_back(sceneIndex);
-        }else if(sceneIndex == removePos || sceneIndex == (removePos + 1)){
-            updatedCuts.push_back(removePos);
-        }else{
-            updatedCuts.push_back(sceneIndex - 1);
-        }
-    }
-
-    vector<uint32_t> result;
-    result.reserve(updatedCuts.size());
-    for(const auto sceneIndex: updatedCuts){
-        if(sceneIndex < newSceneCount){
-            result.push_back(sceneIndex);
-        }
-    }
-    sort(result.begin(), result.end());
-    result.erase(unique(result.begin(), result.end()), result.end());
-    return result;
-}
-
-vector<uint32_t> remapCutScenesAfterMarkerInsertion(const vector<uint32_t>& cutScenes, uint32_t insertPos){
-    vector<uint32_t> updatedCuts;
-    updatedCuts.reserve(cutScenes.size() + 1);
-    for(const auto sceneIndex: cutScenes){
-        if(sceneIndex < insertPos){
-            updatedCuts.push_back(sceneIndex);
-        }else if(sceneIndex == insertPos){
-            updatedCuts.push_back(sceneIndex);
-            updatedCuts.push_back(sceneIndex + 1);
-        }else{
-            updatedCuts.push_back(sceneIndex + 1);
-        }
-    }
-    sort(updatedCuts.begin(), updatedCuts.end());
-    updatedCuts.erase(unique(updatedCuts.begin(), updatedCuts.end()), updatedCuts.end());
-    return updatedCuts;
-}
-
-void refreshSelectedMarkers(vector<uint32_t>& selectedKeyFrames, size_t markerCount){
-    selectedKeyFrames.clear();
-    selectedKeyFrames.reserve(markerCount);
-    for(uint32_t i{0}; i < markerCount; ++i){
-        selectedKeyFrames.push_back(i);
-    }
-}
-
-struct LoadedProjectData{
-    wstring loadedFilePath;
-    double zoomLevel{};
-    bool keepAudio{};
-    int32_t audioCrossfadeMs{};
-    vector<IndexedFrameSample> markers;
-    vector<uint32_t> cutScenes;
-};
-
-LoadedProjectData parseProjectLines(const Windows::Foundation::Collections::IVector<winrt::hstring>& lines, double defaultZoomLevel, bool defaultKeepAudio, int32_t defaultAudioCrossfadeMs){
-    LoadedProjectData data{};
-    data.zoomLevel = defaultZoomLevel;
-    data.keepAudio = defaultKeepAudio;
-    data.audioCrossfadeMs = defaultAudioCrossfadeMs;
-
-    for(const auto& lineH: lines){
-        const wstring line{lineH.c_str()};
-        const auto trimmed{trim(line)};
-        if(trimmed.empty() || trimmed[0] == L'#'){
-            continue;
-        }
-
-        const auto eqPos{line.find(L'=')};
-        if(eqPos == wstring::npos){
-            continue;
-        }
-
-        const auto key{trim(line.substr(0, eqPos))};
-        const auto value{trim(line.substr(eqPos + 1))};
-
-        if(key == P_FILE_PATH){
-            data.loadedFilePath = value;
-        }else if(key == P_STORYLINE_ZOOM){
-            try{ data.zoomLevel = stod(value); }catch(...){ }
-        }else if(key == P_RAP_MARKERS){
-            data.markers = parseKeyframeVector(value);
-        }else if(key == P_CUT_SCENES){
-            data.cutScenes = parseIndexList(value);
-        }else if(key == P_KEEP_AUDIO){
-            data.keepAudio = !(value == L"0" || value == L"false" || value == L"False");
-        }else if(key == P_AUDIO_CROSSFADE_MS){
-            try{ data.audioCrossfadeMs = stoi(value); }catch(...){ }
-        }
-    }
-
-    return data;
-}
-
 MainWindow::MainWindow(){
     InitializeComponent();
 
@@ -677,7 +443,6 @@ MainWindow::MainWindow(){
     Closed({this, &MainWindow::onClosed});
     refreshRecentVideosMenu();
     refreshRecentProjectsMenu();
-    m_lastSavedProjectSnapshot = buildProjectSnapshot();
     updateWindowTitle();
 }
 
@@ -840,7 +605,7 @@ void MainWindow::stopButton_Click(const Control&, const REArgs&){
 }
 
 void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&){
-    if(m_loadedFile && m_timelineDurationSeconds > 0){
+    if(m_prj.videoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }
     updateWindowTitle();
@@ -848,26 +613,22 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
 }
 
 void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
-    m_keepAudio = KeepAudioCheckBox().IsChecked().GetBoolean();
+    m_prj.keepAudio(KeepAudioCheckBox().IsChecked().GetBoolean());
     updateAudioUiAndPlaybackState();
     updateWindowTitle();
 }
 
 void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const Control&){
     const auto selected{AudioCrossfadeComboBox().SelectedItem().try_as<Controls::ComboBoxItem>()};
-    if(!selected){
-        return;
-    }
-
-    if(!selected.Tag()){
+    if(!selected || !selected.Tag()){
         return;
     }
 
     try{
-        const auto tag{unbox_value<hstring>(selected.Tag())};
-        m_audioCrossfadeMs = normalizeAudioCrossfadeMs(stoi(wstring(tag.c_str())));
-    }catch(...){
-        m_audioCrossfadeMs = 0;
+        const auto val{stoi(wstring(unbox_value<hstring>(selected.Tag())).c_str())};
+        m_prj.audioXfadeMs(val);
+    } catch(...){
+        m_prj.audioXfadeMs(0);
     }
 
     syncAudioCrossfadeComboSelection();
@@ -938,42 +699,9 @@ void MainWindow::timelineCanvas_PointerMoved(const Control&, const PREArgs& e){
 }
 
 bool MainWindow::toggleSelectedKeyframeAtCanvasX(double pointerX){
-    if(m_timelineDurationSeconds <= 0 || TimelineTickCanvas().Width() <= 0){
+    if(!m_prj.toggleSelectedKeyframeAtCanvasX(pointerX, TimelineTickCanvas().Width(), m_timelineDurationSeconds, m_mediaInfo.frameRate)){
         return false;
     }
-
-    constexpr auto hitTolerancePx{4.0};
-    const auto width{TimelineTickCanvas().Width()};
-    const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (m_timelineDurationSeconds * 10'000'000.0))};
-
-    auto nearestIndex{m_frameIndex.size()};
-    auto nearestDistance{hitTolerancePx + 1.0};
-    for(size_t i{0}; i < m_frameIndex.size(); ++i){
-        const auto x{clamp((static_cast<double>(m_frameIndex[i].time100ns) / (m_timelineDurationSeconds * 10'000'000.0)) * width, 0.0, width)};
-        const auto distance{fabs(pointerX - x)};
-        if(distance <= hitTolerancePx && distance < nearestDistance){
-            nearestDistance = distance;
-            nearestIndex = i;
-        }
-    }
-
-    if(nearestIndex != m_frameIndex.size()){
-        const auto removePos{static_cast<uint32_t>(nearestIndex)};
-        m_cutScenes = remapCutScenesAfterMarkerRemoval(m_cutScenes, removePos, static_cast<uint32_t>(m_frameIndex.size()));
-        m_frameIndex.erase(m_frameIndex.begin() + removePos);
-    }else{
-        const auto insertIt{lower_bound(m_frameIndex.begin(), m_frameIndex.end(), clicked100ns, [](const IndexedFrameSample& a, int64_t t){
-            return a.time100ns < t;
-        })};
-        const auto insertPos{static_cast<uint32_t>(distance(m_frameIndex.begin(), insertIt))};
-
-        m_cutScenes = remapCutScenesAfterMarkerInsertion(m_cutScenes, insertPos);
-
-        const auto frameNumber{estimateFrameNumberFromTime100ns(m_mediaInfo.frameRate, clicked100ns)};
-        m_frameIndex.insert(insertIt, IndexedFrameSample{.time100ns=clicked100ns, .duration100ns=0, .cleanPoint=true, .sampleIndex=frameNumber});
-    }
-
-    refreshSelectedMarkers(m_selectedKeyFrames, m_frameIndex.size());
 
     renderTimelineTicks();
     renderKeyframeTicks();
@@ -1054,7 +782,7 @@ void MainWindow::onNaturalDurationChanged(const MPSession& sender, const Control
     const auto duration{sender.NaturalDuration()};
     m_timelineDurationSeconds = max(0.0, duration.count() / 10'000'000.0);
 
-    if(m_loadedFile && m_timelineDurationSeconds > 0){
+    if(m_prj.videoFile() && m_timelineDurationSeconds > 0){
         const auto weak{get_weak()};
         if(DispatcherQueue().HasThreadAccess()){
             renderTimelineAsync();
@@ -1199,21 +927,21 @@ void MainWindow::renderTimelineTicks(){
 }
 
 void MainWindow::renderKeyframeTicks(){
-    if(m_frameIndex.empty() || m_timelineDurationSeconds <= 0 || TimelineTickCanvas().Width() <= 0){
+    if(m_prj.frameIndex().empty() || m_timelineDurationSeconds <= 0 || TimelineTickCanvas().Width() <= 0){
         return;
     }
 
     const auto width {TimelineTickCanvas().Width()};
-    const auto total100ns {static_cast<double>(m_timelineDurationSeconds * 10'000'000.0)};
+    const auto total100ns {m_timelineDurationSeconds * 10'000'000.0};
     uint32_t cleanOrdinal{};
-    for(const auto& frame: m_frameIndex){
+    for(const auto& frame: m_prj.frameIndex()){
         if(!frame.cleanPoint){
             continue;
         }
 
         const auto x {clamp((frame.time100ns / total100ns) * width, 0.0, width)};
         // XXX: looks like isSelected is always true
-        const auto isSelected{find(m_selectedKeyFrames.begin(), m_selectedKeyFrames.end(), cleanOrdinal) != m_selectedKeyFrames.end()};
+        const auto isSelected{find(m_prj.selKeyFrames().begin(), m_prj.selKeyFrames().end(), cleanOrdinal) != m_prj.selKeyFrames().end()};
 
         Shapes::Line tick{};
         tick.X1(x);
@@ -1238,9 +966,7 @@ void MainWindow::renderCutOverlays(){
         return;
     }
 
-    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
-    const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
-    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, rapMarkers, duration100ns)};
+    const auto cutRanges100ns{m_prj.buildCutRanges100ns(m_timelineDurationSeconds)};
     const auto overlayColor {Windows::UI::ColorHelper::FromArgb(180, 0, 0, 0)};
     for(const auto& [startTime100ns, endTime100ns]: cutRanges100ns){
         const auto start{clamp((static_cast<double>(startTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
@@ -1262,33 +988,9 @@ void MainWindow::renderCutOverlays(){
 }
 
 
-bool MainWindow::toggleCutBlockAtCanvasX(const double pointerX){
-    if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
+bool MainWindow::toggleCutBlockAtCanvasX(double pointerX){
+    if(!m_prj.toggleCutBlockAtCanvasX(pointerX, TimelineCanvas().Width(), m_timelineDurationSeconds)){
         return false;
-    }
-
-    const auto width{TimelineCanvas().Width()};
-    const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (m_timelineDurationSeconds * 10'000'000.0))};
-    const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
-    const auto boundaries{buildSceneBoundaries100ns(rapMarkers, static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0))};
-    if(boundaries.size() < 2){
-        return false;
-    }
-
-    auto sceneIndex{boundaries.size() - 2};
-    for(size_t i{0}; i + 1 < boundaries.size(); ++i){
-        if(clicked100ns < boundaries[i + 1]){
-            sceneIndex = i;
-            break;
-        }
-    }
-
-    const auto it{find(m_cutScenes.begin(), m_cutScenes.end(), sceneIndex)};
-    if(it == m_cutScenes.end()){
-        m_cutScenes.push_back(static_cast<uint32_t>(sceneIndex));
-        sort(m_cutScenes.begin(), m_cutScenes.end());
-    }else{
-        m_cutScenes.erase(it);
     }
 
     renderCutOverlays();
@@ -1298,7 +1000,7 @@ bool MainWindow::toggleCutBlockAtCanvasX(const double pointerX){
 
 
 bool MainWindow::trySkipCurrentCutDuringPlayback(){
-    if(!m_player || m_cutScenes.empty() || m_timelineDurationSeconds <= 0){
+    if(!m_player || m_prj.cutScenes().empty() || m_timelineDurationSeconds <= 0){
         return false;
     }
 
@@ -1307,9 +1009,7 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
         return false;
     }
 
-    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
-    const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
-    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, rapMarkers, duration100ns)};
+    const auto cutRanges100ns{m_prj.buildCutRanges100ns(m_timelineDurationSeconds)};
     const auto now100ns{max<int64_t>(0, m_player.PlaybackSession().Position().count())};
     for(const auto& [start100ns, end100ns]: cutRanges100ns){
         if(now100ns >= start100ns && now100ns < end100ns){
@@ -1323,7 +1023,7 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
 
 
 void MainWindow::stepByFrame(int delta){
-    if(!m_player || m_frameIndex.empty() || delta == 0){
+    if(!m_player || m_prj.frameIndex().empty() || delta == 0){
         return;
     }
 
@@ -1331,17 +1031,17 @@ void MainWindow::stepByFrame(int delta){
     constexpr auto fallbackFrameDuration100ns{333'667LL}; // ~29.97 fps
 
     vector<int64_t> frameDurations;
-    frameDurations.reserve(m_frameIndex.size());
-    for(const auto& sample: m_frameIndex){
+    frameDurations.reserve(m_prj.frameIndex().size());
+    for(const auto& sample: m_prj.frameIndex()){
         if(sample.duration100ns > 0){
             frameDurations.push_back(sample.duration100ns);
         }
     }
 
     if(frameDurations.empty()){
-        for(size_t i{1}; i < m_frameIndex.size(); ++i){
-            const auto sampleCount {static_cast<int64_t>(m_frameIndex[i].sampleIndex) - static_cast<int64_t>(m_frameIndex[i - 1].sampleIndex)};
-            const auto timeDelta {m_frameIndex[i].time100ns - m_frameIndex[i - 1].time100ns};
+        for(size_t i{1}; i < m_prj.frameIndex().size(); ++i){
+            const auto sampleCount {static_cast<int64_t>(m_prj.frameIndex()[i].sampleIndex) - static_cast<int64_t>(m_prj.frameIndex()[i - 1].sampleIndex)};
+            const auto timeDelta {m_prj.frameIndex()[i].time100ns - m_prj.frameIndex()[i - 1].time100ns};
             if(sampleCount > 0 && timeDelta > 0){
                 frameDurations.push_back(timeDelta / sampleCount);
             }
@@ -1459,7 +1159,7 @@ AAction MainWindow::newProjectMenuItem_Click(const Control&, const REArgs&){
         co_return;
     }
 
-    resetProjectState(true);
+    resetProjectState();
     StatusText().Text(L"New project created");
 }
 
@@ -1531,7 +1231,7 @@ AAction MainWindow::closeProjectMenuItem_Click(const Control&, const REArgs&){
         co_return;
     }
 
-    resetProjectState(true);
+    resetProjectState();
     StatusText().Text(L"Project closed");
 }
 
@@ -1549,6 +1249,8 @@ AAction MainWindow::recentVideoMenuItem_Click(const Control& sender, const REArg
     const auto path{unbox_value<hstring>(item.Tag())};
     try{
         const auto file{co_await StorageFile::GetFileFromPathAsync(path)};
+        m_prj.clearTimeline();
+
         co_await loadVideoFileAsync(file);
     }catch(const winrt::hresult_error&){
         openFailed = true;
@@ -1614,6 +1316,8 @@ AAction MainWindow::pickAndLoadVideoAsync(){
     check_hresult(initWithWindow->Initialize(hwnd));
 
     if(const auto file{co_await picker.PickSingleFileAsync()}){
+        m_prj.clearTimeline();
+
         co_await loadVideoFileAsync(file);
     }
 }
@@ -1674,17 +1378,18 @@ void MainWindow::addRecentProject(const hstring& path){
     saveAppSettings();
 }
 
-void MainWindow::resetProjectState(bool clearLoadedVideo){
+void MainWindow::resetProjectState(){
+    if(m_player){
+        m_player.Pause();
+    }
+    m_player.Source(nullptr);
+
     ++m_timelineRenderVersion;
     m_projectPath.clear();
-    m_selectedKeyFrames.clear();
-    m_cutScenes.clear();
-    m_frameIndex.clear();
-    m_mediaInfo = MediaInspectionResult{};
+    m_prj.reset();
+    m_mediaInfo = {};
     m_timelineDurationSeconds = 0;
-    m_keepAudio = true;
-    m_audioCrossfadeMs = 0;
-    TimelineZoomSlider().Value(3);
+    TimelineZoomSlider().Value(m_prj.zoom());
     syncAudioCrossfadeComboSelection();
     updateAudioUiAndPlaybackState();
 
@@ -1696,40 +1401,8 @@ void MainWindow::resetProjectState(bool clearLoadedVideo){
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
     syncTimelineHorizontalScrollBar();
 
-    if(clearLoadedVideo){
-        if(m_player){
-            m_player.Pause();
-        }
-        m_loadedFile = nullptr;
-        m_player.Source(nullptr);
-    }
-
     StatusText().Text(L"Load or drag-and-drop an .mp4/.mov file to preview.");
-    m_lastSavedProjectSnapshot = buildProjectSnapshot();
     updateWindowTitle();
-}
-
-wstring MainWindow::buildProjectSnapshot(){
-    const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
-    const auto snapshot{std::format(
-        L"{}={}\n{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n",
-        P_FILE_PATH,
-        (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
-        P_STORYLINE_ZOOM,
-        TimelineZoomSlider().Value(),
-        P_KEEP_AUDIO,
-        m_keepAudio ? 1 : 0,
-        P_AUDIO_CROSSFADE_MS,
-        m_audioCrossfadeMs,
-        P_RAP_MARKERS,
-        serializeKeyframeVector(rapMarkers),
-        P_CUT_SCENES,
-        serializeIndexList(m_cutScenes))};
-    return snapshot;
-}
-
-bool MainWindow::isProjectDirty(){
-    return buildProjectSnapshot() != m_lastSavedProjectSnapshot;
 }
 
 void MainWindow::updateWindowTitle(){
@@ -1743,16 +1416,16 @@ void MainWindow::updateWindowTitle(){
         }
     }
 
-    if(isProjectDirty()){
+    if(m_prj.isDirty()){
         projectName += L"*";
     }
 
-    const wstring loadedFile{m_loadedFile ? m_loadedFile.Path().c_str() : L"No file"};
+    const wstring loadedFile{m_prj.videoFile() ? m_prj.videoFile().Path().c_str() : L"No file"};
     Title(hstring(std::format(L"llvc - Lossless Video Cut - {} - {}", projectName, loadedFile)));
 }
 
 IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){
-    if(!isProjectDirty()){
+    if(!m_prj.isDirty()){
         co_return true;
     }
 
@@ -1767,7 +1440,7 @@ IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){
     const auto choice{co_await dialog.ShowAsync()};
     if(choice == Controls::ContentDialogResult::Primary){
         co_await saveProjectMenuItem_Click(nullptr, RoutedEventArgs{});
-        co_return !isProjectDirty();
+        co_return !m_prj.isDirty();
     }
     if(choice == Controls::ContentDialogResult::Secondary){
         co_return true;
@@ -1777,65 +1450,36 @@ IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){
 }
 
 AAction MainWindow::openProjectFileAsync(const SFile& file){
-    resetProjectState(true);
+    resetProjectState();
 
-    const auto lines{co_await FileIO::ReadLinesAsync(file)};
-    auto projectData{parseProjectLines(lines, TimelineZoomSlider().Value(), m_keepAudio, m_audioCrossfadeMs)};
+    co_await m_prj.open(file);
 
-    if(!projectData.loadedFilePath.empty()){
+    m_prj.setZoom(clamp(m_prj.zoom(), TimelineZoomSlider().Minimum(), TimelineZoomSlider().Maximum()));
+    TimelineZoomSlider().Value(m_prj.zoom());
+
+    if(!m_prj.videoFile().Path().empty()){
         try{
-            const auto videoFile{co_await StorageFile::GetFileFromPathAsync(projectData.loadedFilePath)};
+            const auto videoFile{co_await StorageFile::GetFileFromPathAsync(m_prj.videoFile().Path())};
             co_await loadVideoFileAsync(videoFile);
         }catch(...){
             StatusText().Text(L"Project opened, but referenced video could not be loaded");
         }
     }
 
-    projectData.zoomLevel = clamp(projectData.zoomLevel, TimelineZoomSlider().Minimum(), TimelineZoomSlider().Maximum());
-    TimelineZoomSlider().Value(projectData.zoomLevel);
-    m_keepAudio = projectData.keepAudio;
-    m_audioCrossfadeMs = normalizeAudioCrossfadeMs(projectData.audioCrossfadeMs);
     syncAudioCrossfadeComboSelection();
     updateAudioUiAndPlaybackState();
 
-    m_frameIndex = std::move(projectData.markers);
-    sort(m_frameIndex.begin(), m_frameIndex.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){
-        return a.time100ns < b.time100ns;
-    });
-    const auto markerCount{m_frameIndex.size()};
-    refreshSelectedMarkers(m_selectedKeyFrames, markerCount);
-
-    m_cutScenes.clear();
-    const auto sceneCount{static_cast<uint32_t>(markerCount + 1)};
-    for(const auto sceneIndex: projectData.cutScenes){
-        if(sceneIndex < sceneCount){
-            m_cutScenes.push_back(sceneIndex);
-        }
-    }
-    sort(m_cutScenes.begin(), m_cutScenes.end());
-    m_cutScenes.erase(unique(m_cutScenes.begin(), m_cutScenes.end()), m_cutScenes.end());
     m_projectPath = file.Path();
+    addRecentProject(m_projectPath);
 
-    addRecentProject(file.Path());
-    m_lastSavedProjectSnapshot = buildProjectSnapshot();
     StatusText().Text(L"Project loaded");
     updateWindowTitle();
 }
 
 AAction MainWindow::saveProjectFileAsync(const SFile& file){
-    vector<hstring> lines;
-    lines.emplace_back(L"# llvc project file");
-    lines.emplace_back(wstring(P_FILE_PATH) + L"=" + wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
-    lines.emplace_back(wstring(P_STORYLINE_ZOOM) + L"=" + to_wstring(TimelineZoomSlider().Value()));
-    lines.emplace_back(wstring(P_KEEP_AUDIO) + L"=" + wstring(m_keepAudio ? L"1" : L"0"));
-    lines.emplace_back(wstring(P_AUDIO_CROSSFADE_MS) + L"=" + to_wstring(m_audioCrossfadeMs));
-    lines.emplace_back(wstring(P_RAP_MARKERS) + L"=" + serializeKeyframeVector(buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)));
-    lines.emplace_back(wstring(P_CUT_SCENES) + L"=" + serializeIndexList(m_cutScenes));
-
-    co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(move(lines)));
+    co_await m_prj.save(file);
     m_projectPath = file.Path();
     addRecentProject(file.Path());
-    m_lastSavedProjectSnapshot = buildProjectSnapshot();
     StatusText().Text(L"Project saved");
     updateWindowTitle();
 }
@@ -1850,13 +1494,13 @@ AAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& mes
 }
 
 AAction MainWindow::showPropertiesDialogAsync(){
-    if(!m_loadedFile || !m_mediaInfo.isValid){
+    if(!m_prj.videoFile() || !m_mediaInfo.isValid){
         co_await showInfoDialogAsync(L"Properties", L"No video is currently loaded.");
         co_return;
     }
 
     wstring content;
-    content += L"File: "; content += m_loadedFile.Path().c_str(); content += L"\n";
+    content += L"File: "; content += m_prj.videoFile().Path().c_str(); content += L"\n";
     content += L"Container: "; content += m_mediaInfo.container; content += L"\n";
     content += L"Duration: "; content += m_mediaInfo.duration; content += L"\n";
     content += L"Size: "; content += m_mediaInfo.fileSize; content += L"\n";
@@ -2123,6 +1767,8 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
         }
     }
 
+    m_prj.clearTimeline();
+
     co_await loadVideoFileAsync(file);
 }
 
@@ -2154,16 +1800,10 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     status += L" (loading story line...)";
     StatusText().Text(status);
 
-    m_frameIndex.clear();
-
     const auto source{Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
     m_player.Source(source);
     m_player.IsMuted(false);
-    m_loadedFile = file;
-    if(m_projectPath.empty()){
-        m_selectedKeyFrames.clear();
-        m_cutScenes.clear();
-    }
+    m_prj.videoFile(file);
     addRecentVideo(file.Path());
 
     ThumbnailLayer().Children().Clear();
@@ -2183,16 +1823,9 @@ bool MainWindow::sourceHasAudio() const{
     return m_mediaInfo.isValid && m_mediaInfo.audioCodec != L"none";
 }
 
-int32_t MainWindow::normalizeAudioCrossfadeMs(int32_t valueMs){
-    const auto nearest{min_element(AUDIO_CROSSFADE_PRESETS_MS.begin(), AUDIO_CROSSFADE_PRESETS_MS.end(), [valueMs](auto a, auto b){
-        return abs(a - valueMs) < abs(b - valueMs);
-    })};
-    return nearest == AUDIO_CROSSFADE_PRESETS_MS.end() ? 0 : *nearest;
-}
-
 void MainWindow::syncAudioCrossfadeComboSelection(){
-    const auto target{normalizeAudioCrossfadeMs(m_audioCrossfadeMs)};
-    m_audioCrossfadeMs = target;
+    // XXX: is this set call even needed? Or, instead, shouldn't the value be set every time a new choice is made by user?
+    m_prj.audioXfadeMs(m_prj.audioXfadeMs());
 
     const auto combo{AudioCrossfadeComboBox()};
     const auto items{combo.Items()};
@@ -2208,7 +1841,7 @@ void MainWindow::syncAudioCrossfadeComboSelection(){
 
         try{
             const auto tag{unbox_value<hstring>(item.Tag())};
-            if(stoi(wstring(tag.c_str())) == target){
+            if(stoi(wstring(tag.c_str())) == m_prj.audioXfadeMs()){
                 combo.SelectedIndex(static_cast<int32_t>(i));
                 return;
             }
@@ -2223,26 +1856,29 @@ void MainWindow::applyAudioSettingsToPlayer(){
         return;
     }
 
-    const auto allowAudio{sourceHasAudio() && m_keepAudio};
+    const auto allowAudio{sourceHasAudio() && m_prj.keepAudio()};
     m_player.IsMuted(!allowAudio);
 }
 
 void MainWindow::updateAudioUiAndPlaybackState(){
+    if(!m_prj.videoFile() || m_prj.videoFile().Path().empty()){
+        return;
+    }
     const auto hasAudio{sourceHasAudio()};
     if(!hasAudio){
-        m_keepAudio = false;
+        m_prj.keepAudio(false);
     }
 
     KeepAudioCheckBox().IsEnabled(hasAudio);
-    KeepAudioCheckBox().IsChecked(box_value(hasAudio && m_keepAudio).as<IReference<bool>>());
-    AudioCrossfadeComboBox().IsEnabled(hasAudio && m_keepAudio);
+    KeepAudioCheckBox().IsChecked(box_value(hasAudio && m_prj.keepAudio()).as<IReference<bool>>());
+    AudioCrossfadeComboBox().IsEnabled(hasAudio && m_prj.keepAudio());
     applyAudioSettingsToPlayer();
 }
 
 winrt::fire_and_forget MainWindow::renderTimelineAsync(){
     const auto lifetime{get_strong()};
 
-    if(m_isClosing || !m_loadedFile || m_timelineDurationSeconds <= 0){
+    if(m_isClosing || !m_prj.videoFile() || m_timelineDurationSeconds <= 0){
         co_return;
     }
 
@@ -2271,7 +1907,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         renderCutOverlays();
         syncTimelineHorizontalScrollBar();
 
-        const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_loadedFile)};
+        const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_prj.videoFile())};
         Windows::Media::Editing::MediaComposition composition{};
         composition.Clips().Append(clip);
 
@@ -2349,7 +1985,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         syncTimelineHorizontalScrollBar();
 
         wstring status{L"Loaded: "};
-        status += m_loadedFile.Name().c_str();
+        status += m_prj.videoFile().Name().c_str();
         status += L" (story line ready)";
         StatusText().Text(status);
     }catch(const winrt::hresult_error& ex){

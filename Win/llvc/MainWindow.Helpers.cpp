@@ -16,6 +16,9 @@
 #pragma comment(lib, "mfreadwrite.lib")
 #pragma comment(lib, "mfuuid.lib")
 
+import Utils;
+
+using namespace llvc;
 using namespace std;
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -25,15 +28,6 @@ namespace winrt::llvc::implementation{
 namespace{
 constexpr wchar_t RECENT_DELIMITER{0x1F};
 constexpr auto TIMELINE_EDGE_SENTINEL{numeric_limits<uint32_t>::max()};
-}
-
-wstring trim(wstring value){
-    const auto first {value.find_first_not_of(L" \t\r\n")};
-    if(first == wstring::npos){
-        return L"";
-    }
-    const auto last {value.find_last_not_of(L" \t\r\n")};
-    return value.substr(first, last - first + 1);
 }
 
 MFLifetime::MFLifetime(){
@@ -122,62 +116,7 @@ bool isInDialogSubtree(const DependencyObject& object){
     return false;
 }
 
-vector<uint32_t> parseIndexList(const wstring& text){
-    vector<uint32_t> values;
-    size_t start{};
-    while(start <= text.size()){
-        const auto pos {text.find(L',', start)};
-        auto token {trim(text.substr(start, pos == wstring::npos ? wstring::npos : pos - start))};
-        if(!token.empty()){
-            try{ values.push_back(static_cast<uint32_t>(stoul(token))); }catch(...){ }
-        }
-        if(pos == wstring::npos){ break; }
-        start = pos + 1;
-    }
-    return values;
-}
-
-vector<pair<uint32_t, uint32_t>> parseIndexPairs(const wstring& text){
-    vector<pair<uint32_t, uint32_t>> pairs;
-    size_t start{};
-    while(start <= text.size()){
-        const auto sep {text.find(L';', start)};
-        const auto chunk {trim(text.substr(start, sep == wstring::npos ? wstring::npos : sep - start))};
-        if(!chunk.empty()){
-            const auto comma {chunk.find(L',')};
-            if(comma != wstring::npos){
-                try{
-                    const auto a {stoul(trim(chunk.substr(0, comma)))};
-                    const auto b {stoul(trim(chunk.substr(comma + 1)))};
-                    pairs.emplace_back(a, b);
-                }catch(...){ }
-            }
-        }
-        if(sep == wstring::npos){ break; }
-        start = sep + 1;
-    }
-    return pairs;
-}
-
-wstring serializeIndexList(const vector<uint32_t>& values){
-    wstring out;
-    for(size_t i = 0; i < values.size(); ++i){
-        if(i > 0){ out += L","; }
-        out += to_wstring(values[i]);
-    }
-    return out;
-}
-
-wstring serializeIndexPairs(const vector<pair<uint32_t, uint32_t>>& values){
-    wstring out;
-    for(size_t i = 0; i < values.size(); ++i){
-        if(i > 0){ out += L";"; }
-        out += std::format(L"{},{}", values[i].first, values[i].second);
-    }
-    return out;
-}
-
-vector<int64_t> buildCleanKeyframeTimes100ns(const vector<IndexedFrameSample>& index){
+vector<int64_t> buildCleanKeyframeTimes100ns(const vector<::llvc::IndexedFrameSample>& index){
     vector<int64_t> times;
     times.reserve(index.size());
     for(const auto& sample: index){
@@ -229,40 +168,6 @@ vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(vector<pair<uin
     }
 
     return merged;
-}
-
-vector<IndexedFrameSample> parseKeyframeVector(const wstring& text){
-    vector<IndexedFrameSample> out;
-    size_t start{};
-    while(start <= text.size()){
-        const auto sep {text.find(L';', start)};
-        const auto item {trim(text.substr(start, sep == wstring::npos ? wstring::npos : sep - start))};
-        if(!item.empty()){
-            const auto at {item.find(L'@')};
-            if(at != wstring::npos){
-                try{
-                    const auto t {stoll(trim(item.substr(0, at)))};
-                    const auto i {stoul(trim(item.substr(at + 1)))};
-                    out.push_back(IndexedFrameSample{.time100ns=t, .duration100ns=0, .cleanPoint=true, .sampleIndex=i});
-                }catch(...){ }
-            }
-        }
-        if(sep == wstring::npos){ break; }
-        start = sep + 1;
-    }
-    return out;
-}
-
-wstring serializeKeyframeVector(const vector<IndexedFrameSample>& index){
-    wstring out;
-    bool first{true};
-    for(const auto& k: index){
-        if(!k.cleanPoint){ continue; }
-        if(!first){ out += L";"; }
-        first = false;
-        out += std::format(L"{}@{}", k.time100ns, k.sampleIndex);
-    }
-    return out;
 }
 
 bool hasDecoderForSubtype(const GUID& subtype){

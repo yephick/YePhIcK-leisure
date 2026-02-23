@@ -27,10 +27,7 @@ using REArgs = MainWindow::REArgs;
 using AAction = MainWindow::AAction;
 
 wstring formatDurationFileTag(const int64_t duration100ns);
-vector<IndexedFrameSample> buildRapMarkersFromSelection(const vector<IndexedFrameSample>& markers, const vector<uint32_t>& selectedMarkerIndices);
-vector<pair<int64_t, int64_t>> buildCutRanges100ns(const vector<uint32_t>& cutScenes, const vector<IndexedFrameSample>& rapMarkers, const int64_t totalDuration100ns);
 vector<pair<int64_t, int64_t>> invertCutRanges100ns(const vector<pair<int64_t, int64_t>>& cutRanges, const int64_t totalDuration100ns);
-vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(const vector<uint32_t>& cutScenes, const vector<IndexedFrameSample>& rapMarkers, const int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns);
 int64_t removedDurationBefore(const vector<pair<int64_t, int64_t>>& cutRanges, const int64_t time100ns);
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(IMFSourceReader* reader, const DWORD streamIndex);
 uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUID& videoSubtype);
@@ -99,38 +96,6 @@ wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wc
     }
     return outputPath;
 }
-
-template<typename TLog>
-void writeExportHeaderLog(
-    TLog& exportLog,
-    const int64_t sourceDuration100ns,
-    const vector<uint32_t>& cutScenes,
-    const vector<IndexedFrameSample>& frameIndex){
-
-    if(!exportLog){
-        return;
-    }
-
-    exportLog << "llvc export debug log\n";
-    exportLog << "source_duration_100ns=" << sourceDuration100ns << "\n";
-    exportLog << "cut_scenes=";
-    for(size_t i = 0; i < cutScenes.size(); ++i){
-        if(i > 0){
-            exportLog << ",";
-        }
-        exportLog << cutScenes[i];
-    }
-    exportLog << "\n";
-    exportLog << "marker_points=";
-    for(size_t i = 0; i < frameIndex.size(); ++i){
-        if(i > 0){
-            exportLog << ";";
-        }
-        exportLog << frameIndex[i].time100ns << "@" << frameIndex[i].sampleIndex;
-    }
-    exportLog << "\n";
-}
-
 
 void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>& segmentAudio, const uint32_t audioChannels, const size_t fadeFrames){
     if(segmentAudio.empty()){
@@ -229,7 +194,6 @@ struct VideoWriteStats{
 };
 
 
-template<typename TLog>
 VideoWriteStats writeVideoSamplesForExport(
     IMFSourceReader* reader,
     const DWORD videoStreamIndex,
@@ -237,16 +201,13 @@ VideoWriteStats writeVideoSamplesForExport(
     const DWORD writerVideoStreamIndex,
     const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns,
     const GUID videoSubtype,
-    const uint32_t nalLengthFieldSize,
-    const bool verboseSampleLog,
-    TLog& exportLog){
+    const uint32_t nalLengthFieldSize){
 
     auto waitingForCleanPoint{false};
     auto markDiscontinuityOnNextWrittenSample{false};
     auto dtsPtsShift100ns{static_cast<int64_t>(0)};
     auto dtsPtsShiftInitialized{false};
     int64_t lastInTime100ns{-1};
-    uint32_t videoNoProgressCount{};
     VideoWriteStats stats{};
 
     for(;;){
@@ -272,14 +233,7 @@ VideoWriteStats writeVideoSamplesForExport(
             sampleTime100ns = timestamp;
         }
         const auto inTime100ns{max<int64_t>(0, sampleTime100ns)};
-        if(inTime100ns <= lastInTime100ns){
-            ++videoNoProgressCount;
-            if(videoNoProgressCount > 4096){
-                if(exportLog){ exportLog << "video_loop_break=no_progress\n"; }
-                break;
-            }
-        }else{
-            videoNoProgressCount = 0;
+        if(inTime100ns > lastInTime100ns){
             lastInTime100ns = inTime100ns;
         }
 
@@ -295,9 +249,6 @@ VideoWriteStats writeVideoSamplesForExport(
         }
         if(dropped){
             ++stats.droppedByCutCount;
-            if(exportLog && verboseSampleLog){
-                exportLog << "drop_cut in=" << inTime100ns << "\n";
-            }
             waitingForCleanPoint = true;
             markDiscontinuityOnNextWrittenSample = true;
             continue;
@@ -308,13 +259,7 @@ VideoWriteStats writeVideoSamplesForExport(
             const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
             if(!(isContainerSync && isBitstreamRap)){
                 ++stats.droppedWaitingRapCount;
-                if(exportLog && verboseSampleLog){
-                    exportLog << "drop_waiting_rap in=" << inTime100ns << " clean=" << (isContainerSync ? 1 : 0) << " rap=" << (isBitstreamRap ? 1 : 0) << "\n";
-                }
                 continue;
-            }
-            if(exportLog){
-                exportLog << "resume_at in=" << inTime100ns << "\n";
             }
             waitingForCleanPoint = false;
         }
@@ -332,19 +277,10 @@ VideoWriteStats writeVideoSamplesForExport(
             if(!dtsPtsShiftInitialized){
                 dtsPtsShift100ns = max<int64_t>(0, -outDecodeTime100ns);
                 dtsPtsShiftInitialized = true;
-                if(exportLog){
-                    exportLog << "dts_pts_shift=" << dtsPtsShift100ns << "\n";
-                }
             }
             outTime100ns += dtsPtsShift100ns;
             outDecodeTime100ns += dtsPtsShift100ns;
             check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(max<int64_t>(0, outDecodeTime100ns))));
-            if(exportLog && verboseSampleLog){
-                exportLog << "retime_dts in_pts=" << inTime100ns
-                    << " in_dts=" << decodeTimeSigned
-                    << " out_dts=" << outDecodeTime100ns
-                    << " removed=" << removedAtPresentationTime << "\n";
-            }
         }
 
         if(!dtsPtsShiftInitialized && !hasDecodeTimestamp){
@@ -364,23 +300,11 @@ VideoWriteStats writeVideoSamplesForExport(
 
         if(markDiscontinuityOnNextWrittenSample){
             check_hresult(sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE));
-            if(exportLog && verboseSampleLog){
-                exportLog << "set_discontinuity in=" << inTime100ns << " out=" << outTime100ns << "\n";
-            }
             markDiscontinuityOnNextWrittenSample = false;
         }
 
-        if(exportLog && stats.writtenSampleCount == 0){
-            exportLog << "phase=first_video_write_attempt in=" << inTime100ns << " out=" << outTime100ns << "\n";
-        }
         check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
         ++stats.writtenSampleCount;
-        if(exportLog && stats.writtenSampleCount == 1){
-            exportLog << "phase=first_video_write_done\n";
-        }
-        if(exportLog && verboseSampleLog){
-            exportLog << "write in=" << inTime100ns << " out=" << outTime100ns << "\n";
-        }
     }
 
     return stats;
@@ -388,23 +312,16 @@ VideoWriteStats writeVideoSamplesForExport(
 
 
 AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
-    if(!m_loadedFile){
+    if(!m_prj.videoFile()){
         co_await showInfoDialogAsync(L"Export video", L"Load a video before exporting.");
         co_return;
     }
 
     MFLifetime mf{};
 
-    const wstring sourcePath{m_loadedFile.Path().c_str()};
+    const wstring sourcePath{m_prj.videoFile().Path().c_str()};
     const auto sourceDuration100ns{max<int64_t>(0, static_cast<int64_t>(llround(max(0.0, m_timelineDurationSeconds) * 10'000'000.0)))};
-    const auto rapMarkers{buildRapMarkersFromSelection(m_frameIndex, m_selectedKeyFrames)};
-    const auto cutRanges100ns{buildCutRanges100ns(m_cutScenes, rapMarkers, sourceDuration100ns)};
-
-    int64_t removedTotal100ns{};
-    for(const auto& [start, end] : cutRanges100ns){
-        removedTotal100ns += (end - start);
-    }
-    const auto outputDuration100ns{max<int64_t>(0, sourceDuration100ns - removedTotal100ns)};
+    const auto outputDuration100ns{m_prj.outputDuration100ns(m_timelineDurationSeconds)};
 
     const filesystem::path sourceFsPath{sourcePath};
     const auto sourceExt{sourceFsPath.extension().wstring()};
@@ -416,31 +333,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     }
 
     winrt::hstring exportErrorMessage{};
-#ifdef _DEBUG
-    ofstream exportLog{};
-#else
-    NullExportLog exportLog{};
-#endif
-    constexpr auto verboseSampleLog{
-#ifdef _DEBUG
-        false
-#else
-        false
-#endif
-    };
 
     try{
         StatusText().Text(L"Exporting...");
 
-#ifdef _DEBUG
-        const auto logPath{filesystem::path(outputPath).replace_extension(L".log")};
-        exportLog.open(logPath, ios::out | ios::trunc);
-        exportLog.setf(ios::unitbuf);
-#endif
-        writeExportHeaderLog(exportLog, sourceDuration100ns, m_cutScenes, m_frameIndex);
-
         com_ptr<IMFAttributes> readerAttributes;
-        if(exportLog){ exportLog << "phase=reader_create\n"; }
         check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
         check_hresult(readerAttributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE));
 
@@ -449,7 +346,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
         constexpr auto invalidStream{numeric_limits<DWORD>::max()};
         auto videoStreamIndex{invalidStream};
-        for(DWORD streamIndex = 0;; ++streamIndex){
+        for(DWORD streamIndex{0};; ++streamIndex){
             com_ptr<IMFMediaType> type;
             const auto hr{reader->GetNativeMediaType(streamIndex, 0, type.put())};
             if(hr == MF_E_INVALIDSTREAMNUMBER){
@@ -483,7 +380,6 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
 
         vector<int64_t> rapTimes100ns;
-        if(exportLog){ exportLog << "phase=scan_rap_start\n"; }
         rapTimes100ns.reserve(2048);
         for(;;){
             DWORD actualStream{};
@@ -512,21 +408,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         }
         sort(rapTimes100ns.begin(), rapTimes100ns.end());
         rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
-        if(exportLog){ exportLog << "phase=scan_rap_done\n"; }
-        if(exportLog){
-            exportLog << "rap_count=" << rapTimes100ns.size() << "\n";
-            for(size_t i = 0; i < rapTimes100ns.size(); ++i){
-                exportLog << "rap[" << i << "]=" << rapTimes100ns[i] << "\n";
-            }
-        }
 
-        const auto effectiveCutRanges100ns{buildEffectiveCutRangesWithRapPreroll(m_cutScenes, rapMarkers, sourceDuration100ns, rapTimes100ns)};
-        if(exportLog){
-            exportLog << "effective_cut_ranges_count=" << effectiveCutRanges100ns.size() << "\n";
-            for(size_t i = 0; i < effectiveCutRanges100ns.size(); ++i){
-                exportLog << "cut_range[" << i << "]=" << effectiveCutRanges100ns[i].first << "," << effectiveCutRanges100ns[i].second << "\n";
-            }
-        }
+        const auto effectiveCutRanges100ns{m_prj.buildEffectiveCutRangesWithRapPreroll(sourceDuration100ns, rapTimes100ns)};
 
         PROPVARIANT startPos{};
         startPos.vt = VT_I8;
@@ -543,7 +426,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         DWORD audioStreamIndex{};
         constexpr auto invalidAudioStream{numeric_limits<DWORD>::max()};
 
-        if(m_keepAudio && sourceHasAudio()){
+        if(m_prj.keepAudio() && sourceHasAudio()){
             com_ptr<IMFSourceReader> audioProbeReader;
             check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioProbeReader.put()));
 
@@ -583,7 +466,6 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         com_ptr<IMFSinkWriter> writer;
         DWORD writerVideoStreamIndex{};
         auto configureWriter = [&]() -> HRESULT {
-            if(exportLog){ exportLog << "phase=writer_config_start\n"; }
             writer = nullptr;
             writerVideoStreamIndex = 0;
             writerAudioStreamIndex = 0;
@@ -604,18 +486,12 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             if(SUCCEEDED(hr)){
                 hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
             }
-            if(exportLog){
-                exportLog << "audio_path=aac_only hr=" << hex << hr << dec << "\n";
-            }
-            if(exportLog){ exportLog << "phase=writer_config_done\n"; }
             return hr;
         };
 
         check_hresult(configureWriter());
 
-        if(exportLog){ exportLog << "phase=begin_writing_start\n"; }
         check_hresult(writer->BeginWriting());
-        if(exportLog){ exportLog << "begin_writing=ok\n"; }
 
         const auto videoStats{writeVideoSamplesForExport(
             reader.get(),
@@ -624,12 +500,9 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             writerVideoStreamIndex,
             effectiveCutRanges100ns,
             videoSubtype,
-            nalLengthFieldSize,
-            verboseSampleLog,
-            exportLog)};
+            nalLengthFieldSize)};
 
         if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
-            if(exportLog){ exportLog << "audio_mix_start\n"; }
             com_ptr<IMFSourceReader> audioReader;
             check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioReader.put()));
             check_hresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
@@ -637,30 +510,15 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
 
             const auto keepRanges100ns{invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
-            const auto mixedAudio{buildMixedAudioForKeepRanges(audioReader.get(), audioStreamIndex, keepRanges100ns, audioChannels, audioSampleRate, m_audioCrossfadeMs)};
+            const auto mixedAudio{buildMixedAudioForKeepRanges(audioReader.get(), audioStreamIndex, keepRanges100ns, audioChannels, audioSampleRate, m_prj.audioXfadeMs())};
             writePcmAudioToWriter(writer.get(), writerAudioStreamIndex, mixedAudio, audioChannels, audioSampleRate);
-            if(exportLog){ exportLog << "audio_mix_done frames=" << (mixedAudio.size() / audioChannels) << "\n"; }
         }
 
-        if(exportLog){ exportLog << "phase=finalize_start\n"; }
         check_hresult(writer->Finalize());
-        if(exportLog){ exportLog << "phase=finalize_done\n"; }
-        if(exportLog){
-            exportLog << "summary read=" << videoStats.readSampleCount
-                << " dropped_cut=" << videoStats.droppedByCutCount
-                << " dropped_waiting_rap=" << videoStats.droppedWaitingRapCount
-                << " written=" << videoStats.writtenSampleCount << "\n";
-            exportLog << "finalize=ok\n";
-            exportLog.flush();
-        }
         StatusText().Text(L"Export completed");
     }catch(const hresult_error& ex){
         StatusText().Text(L"Export failed");
         exportErrorMessage = ex.message();
-        if(exportLog){
-            exportLog << "error_hresult=0x" << hex << static_cast<uint32_t>(ex.code().value) << dec << "\n";
-            exportLog.flush();
-        }
     }
 
     if(!exportErrorMessage.empty()){

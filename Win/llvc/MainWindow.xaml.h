@@ -9,6 +9,8 @@
 #include <vector>
 
 struct _GUID;
+import llvc.Project;
+import llvc.Timeline;
 
 namespace winrt::llvc::implementation{
 
@@ -16,13 +18,6 @@ struct Ratio final{
     std::uint32_t num{};
     std::uint32_t den{};
     constexpr operator double() const noexcept{ return den != 0 ? 1.0 * num / den : 0; }
-};
-
-struct IndexedFrameSample{
-    std::int64_t time100ns{};
-    std::int64_t duration100ns{};
-    bool cleanPoint{};
-    std::uint32_t sampleIndex{};
 };
 
 struct MediaInspectionResult{
@@ -104,7 +99,6 @@ struct MainWindow: MainWindowT<MainWindow>{
 
 private:
     MP m_player{nullptr};
-    SFile m_loadedFile{nullptr};
     MPSession::NaturalDurationChanged_revoker m_naturalDurationChangedRevoker{};
     DTS m_positionTimer{nullptr};
     double m_timelineDurationSeconds{0};
@@ -114,22 +108,18 @@ private:
     std::vector<winrt::hstring> m_recentProjects{};
     std::uint32_t m_maxRecentVideos{5};
     std::uint32_t m_maxRecentProjects{5};
-    std::vector<std::uint32_t> m_selectedKeyFrames{};
-    std::vector<IndexedFrameSample> m_frameIndex{};
-    std::vector<std::uint32_t> m_cutScenes{};
     winrt::hstring m_projectPath{};
-    std::wstring m_lastSavedProjectSnapshot{};
     bool m_isClosing{false};
-    bool m_keepAudio{true};
-    std::int32_t m_audioCrossfadeMs{0};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};
     std::uint32_t m_timelineDragPointerId{0};
     double m_timelineDragStartX{0};
     double m_timelineDragStartOffset{0};
-    HWND getWindowHandle() const;
+    ::llvc::Project m_prj{};
+    ::llvc::Timeline m_tl{};
 
 private:
+    HWND getWindowHandle() const;
     void restoreWindowPlacement();
     void saveWindowPlacement() const;
     AAction pickAndLoadVideoAsync();
@@ -144,9 +134,7 @@ private:
     AAction showOptionsDialogAsync();
     AAction openProjectFileAsync(const SFile& file);
     AAction saveProjectFileAsync(const SFile& file);
-    void resetProjectState(bool clearLoadedVideo);
-    std::wstring buildProjectSnapshot();
-    bool isProjectDirty();
+    void resetProjectState();
     void updateWindowTitle();
     IOpBool ensureProjectSavedBeforeContinuingAsync();
     static MediaInspectionResult inspectMediaFile(const std::wstring& filePath);
@@ -169,7 +157,6 @@ private:
     bool handleStorylineKeyDown(const KRArgs& args);
     void updateAudioUiAndPlaybackState();
     void applyAudioSettingsToPlayer();
-    static std::int32_t normalizeAudioCrossfadeMs(std::int32_t valueMs);
     void syncAudioCrossfadeComboSelection();
     bool sourceHasAudio() const;
     static TS secondsToTimeSpan(double seconds);

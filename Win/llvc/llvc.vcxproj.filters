@@ -11,9 +11,12 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp" />
-    <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
+    <ClCompile Include="Generated Files\module.g.cpp" />
     <ClCompile Include="MainWindow.Helpers.cpp" />
     <ClCompile Include="MainWindow.Export.cpp" />
+    <ClCompile Include="Project.ixx" />
+    <ClCompile Include="Timeline.ixx" />
+    <ClCompile Include="Utils.ixx" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
