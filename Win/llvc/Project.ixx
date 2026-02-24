@@ -184,7 +184,7 @@ bool Project::isDirty() const{
 }
 
 void Project::videoFile(const SFile& f){
-    m_isDirty = (m_isDirty && m_loadedFile.Path() != f.Path());
+    m_isDirty = (m_isDirty && (!m_loadedFile || m_loadedFile.Path() != f.Path()));
     m_loadedFile = f;
 }
 
