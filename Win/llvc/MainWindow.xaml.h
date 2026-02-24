@@ -14,28 +14,31 @@ import llvc.Timeline;
 
 namespace winrt::llvc::implementation{
 
+using namespace ::std;
+using namespace ::winrt;
+
 struct Ratio final{
-    std::uint32_t num{};
-    std::uint32_t den{};
+    uint32_t num{};
+    uint32_t den{};
     constexpr operator double() const noexcept{ return den != 0 ? 1.0 * num / den : 0; }
 };
 
 struct MediaInspectionResult{
     bool isValid{false};
-    std::wstring errorMessage{};
-    std::wstring container{};
-    std::wstring videoCodec{};
-    std::wstring audioCodec{};
-    std::wstring duration{};
-    std::wstring fileSize{};
-    std::wstring resolution{};
+    wstring errorMessage{};
+    wstring container{};
+    wstring videoCodec{};
+    wstring audioCodec{};
+    wstring duration{};
+    wstring fileSize{};
+    wstring resolution{};
     Ratio frameRate{};
-    std::wstring videoBitrate{};
-    std::wstring audioBitrate{};
-    std::wstring keyFrameSummary{};
-    std::wstring keyFrameInterval{};
-    std::wstring allSamplesIndependent{};
-    std::wstring maxKeyFrameSpacing{};
+    wstring videoBitrate{};
+    wstring audioBitrate{};
+    wstring keyFrameSummary{};
+    wstring keyFrameInterval{};
+    wstring allSamplesIndependent{};
+    wstring maxKeyFrameSpacing{};
 };
 
 struct MainWindow: MainWindowT<MainWindow>{
@@ -102,17 +105,17 @@ private:
     MPSession::NaturalDurationChanged_revoker m_naturalDurationChangedRevoker{};
     DTS m_positionTimer{nullptr};
     double m_timelineDurationSeconds{0};
-    std::uint64_t m_timelineRenderVersion{0};
+    uint64_t m_timelineRenderVersion{0};
     MediaInspectionResult m_mediaInfo{};
-    std::vector<winrt::hstring> m_recentVideos{};
-    std::vector<winrt::hstring> m_recentProjects{};
-    std::uint32_t m_maxRecentVideos{5};
-    std::uint32_t m_maxRecentProjects{5};
-    winrt::hstring m_projectPath{};
+    vector<hstring> m_recentVideos{};
+    vector<hstring> m_recentProjects{};
+    uint32_t m_maxRecentVideos{5};
+    uint32_t m_maxRecentProjects{5};
+    hstring m_projectPath{};
     bool m_isClosing{false};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};
-    std::uint32_t m_timelineDragPointerId{0};
+    uint32_t m_timelineDragPointerId{0};
     double m_timelineDragStartX{0};
     double m_timelineDragStartOffset{0};
     ::llvc::Project m_prj{};
@@ -127,9 +130,9 @@ private:
     void saveAppSettings() const;
     void refreshRecentVideosMenu();
     void refreshRecentProjectsMenu();
-    void addRecentVideo(const winrt::hstring& path);
-    void addRecentProject(const winrt::hstring& path);
-    AAction showInfoDialogAsync(const winrt::hstring& title, const winrt::hstring& message);
+    void addRecentVideo(const hstring& path);
+    void addRecentProject(const hstring& path);
+    AAction showInfoDialogAsync(const hstring& title, const hstring& message);
     AAction showPropertiesDialogAsync();
     AAction showOptionsDialogAsync();
     AAction openProjectFileAsync(const SFile& file);
@@ -137,11 +140,11 @@ private:
     void resetProjectState();
     void updateWindowTitle();
     IOpBool ensureProjectSavedBeforeContinuingAsync();
-    static MediaInspectionResult inspectMediaFile(const std::wstring& filePath);
+    static MediaInspectionResult inspectMediaFile(const wstring& filePath);
     static bool isSupportedVideoSubtype(const _GUID& subtype);
-    static std::wstring guidToCodecName(const _GUID& subtype, bool isVideo);
+    static wstring guidToCodecName(const _GUID& subtype, bool isVideo);
     AAction loadVideoFileAsync(const SFile& file);
-    winrt::fire_and_forget renderTimelineAsync();
+    fire_and_forget renderTimelineAsync();
     void updateTimelineCursorFromPlayback();
     void syncTimelineHorizontalScrollBar();
     void renderTimelineTicks();
