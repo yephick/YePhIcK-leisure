@@ -1068,12 +1068,28 @@ void MainWindow::tryFocusTimelineCanvas(FState focusState){
     }
 }
 
+void MainWindow::closeMainMenu(){
+    const auto menuBar{MainMenuBar()};
+    if(!menuBar){
+        return;
+    }
+
+    for(const auto& item: menuBar.Items()){
+        if(const auto menuItem{item.try_as<Controls::MenuBarItem>()}){
+            menuItem.IsSelected(false);
+        }
+    }
+}
+
 bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
     const auto focused{Input::FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
     const auto focusOnMenu{focused && isInMenuSubtree(focused)};
     const auto focusInDialog{focused && isInDialogSubtree(focused)};
 
     if(!focusInDialog && (args.Key() == VirtualKey::Tab || args.Key() == VirtualKey::Escape)){
+        if(focusOnMenu){
+            closeMainMenu();
+        }
         tryFocusTimelineCanvas(FocusState::Programmatic);
         args.Handled(true);
         return true;

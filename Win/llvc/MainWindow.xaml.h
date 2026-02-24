@@ -156,6 +156,7 @@ private:
     bool trySkipCurrentCutDuringPlayback();
     void stepByFrame(int delta);
     void ensureTimelineCursorVisible(double cursorLeft);
+    void closeMainMenu();
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
     void updateAudioUiAndPlaybackState();
