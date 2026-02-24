@@ -1269,6 +1269,8 @@ AAction MainWindow::recentVideoMenuItem_Click(const Control& sender, const REArg
     if(openFailed){
         co_await showInfoDialogAsync(L"Open failed", L"Could not open selected recent video.");
     }
+
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
 AAction MainWindow::recentProjectMenuItem_Click(const Control& sender, const REArgs&){
@@ -1293,6 +1295,8 @@ AAction MainWindow::recentProjectMenuItem_Click(const Control& sender, const REA
     if(openFailed){
         co_await showInfoDialogAsync(L"Open failed", L"Could not open selected recent project.");
     }
+
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
 AAction MainWindow::propertiesMenuItem_Click(const Control&, const REArgs&){
