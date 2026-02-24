@@ -1023,7 +1023,7 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
 
 
 void MainWindow::stepByFrame(int delta){
-    if(!m_player || m_prj.frameIndex().empty() || delta == 0){
+    if(!m_player || delta == 0){
         return;
     }
 
