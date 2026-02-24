@@ -97,7 +97,7 @@ vector<hstring> splitRecentItems(const wstring& source){
 bool isInMenuSubtree(const DependencyObject& object){
     auto current{object};
     while(current){
-        if(current.try_as<Controls::MenuBar>() || current.try_as<Controls::MenuFlyoutItem>() || current.try_as<Controls::MenuFlyoutSubItem>() || current.try_as<Controls::MenuFlyoutPresenter>()){
+        if(current.try_as<Controls::MenuBar>() || current.try_as<Controls::MenuBarItem>() || current.try_as<Controls::MenuFlyoutItem>() || current.try_as<Controls::MenuFlyoutSubItem>() || current.try_as<Controls::MenuFlyoutPresenter>()){
             return true;
         }
         current = Media::VisualTreeHelper::GetParent(current);

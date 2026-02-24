@@ -1074,6 +1074,16 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
     const auto focusInDialog{focused && isInDialogSubtree(focused)};
 
     if(!focusInDialog && (args.Key() == VirtualKey::Tab || args.Key() == VirtualKey::Escape)){
+        if(focusOnMenu){
+            const auto weakThis{get_weak()};
+            DispatcherQueue().TryEnqueue([weakThis]{
+                if(const auto self{weakThis.get()}){
+                    self->tryFocusTimelineCanvas(FocusState::Programmatic);
+                }
+            });
+            return false;
+        }
+
         tryFocusTimelineCanvas(FocusState::Programmatic);
         args.Handled(true);
         return true;
@@ -1259,6 +1269,8 @@ AAction MainWindow::recentVideoMenuItem_Click(const Control& sender, const REArg
     if(openFailed){
         co_await showInfoDialogAsync(L"Open failed", L"Could not open selected recent video.");
     }
+
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
 AAction MainWindow::recentProjectMenuItem_Click(const Control& sender, const REArgs&){
@@ -1283,6 +1295,8 @@ AAction MainWindow::recentProjectMenuItem_Click(const Control& sender, const REA
     if(openFailed){
         co_await showInfoDialogAsync(L"Open failed", L"Could not open selected recent project.");
     }
+
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
 AAction MainWindow::propertiesMenuItem_Click(const Control&, const REArgs&){
