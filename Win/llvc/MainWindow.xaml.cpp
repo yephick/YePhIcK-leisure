@@ -1853,7 +1853,6 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     const auto basicProperties{co_await file.GetBasicPropertiesAsync()};
     inspected.fileSize = formatFileSize(basicProperties.Size());
     m_mediaInfo = inspected;
-    refreshVideoDetailsPanel();
 
     wstring status{L"Loaded: "};
     status += file.Name().c_str();
@@ -1864,6 +1863,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_player.Source(source);
     m_player.IsMuted(false);
     m_prj.videoFile(file);
+    refreshVideoDetailsPanel();
     addRecentVideo(file.Path());
 
     ThumbnailLayer().Children().Clear();
