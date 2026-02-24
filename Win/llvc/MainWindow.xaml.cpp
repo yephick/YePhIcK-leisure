@@ -437,6 +437,8 @@ MainWindow::MainWindow(){
 
     syncAudioCrossfadeComboSelection();
     updateAudioUiAndPlaybackState();
+    refreshVideoDetailsPanel();
+    setVideoDetailsPanelExpanded(false);
 
     restoreWindowPlacement();
     loadAppSettings();
@@ -1157,7 +1159,32 @@ void MainWindow::rootGrid_PointerReleased(const Control&, const PREArgs& args){
     if(isInMenuSubtree(source) || isInDialogSubtree(source)){
         return;
     }
+
+    if(VideoDetailsPanel().Visibility() == Visibility::Visible){
+        auto current{source};
+        auto clickedInsideDetailsPanel{false};
+        while(current){
+            if(current == VideoDetailsPanel()){
+                clickedInsideDetailsPanel = true;
+                break;
+            }
+            current = Media::VisualTreeHelper::GetParent(current);
+        }
+
+        if(!clickedInsideDetailsPanel){
+            setVideoDetailsPanelExpanded(false);
+        }
+    }
+
     tryFocusTimelineCanvas(FocusState::Programmatic);
+}
+
+void MainWindow::videoDetailsOpenMarker_Click(const Control&, const REArgs&){
+    setVideoDetailsPanelExpanded(true);
+}
+
+void MainWindow::videoDetailsCollapseMarker_Click(const Control&, const REArgs&){
+    setVideoDetailsPanelExpanded(false);
 }
 
 TS MainWindow::secondsToTimeSpan(double seconds){
@@ -1404,6 +1431,8 @@ void MainWindow::resetProjectState(){
     m_mediaInfo = {};
     m_timelineDurationSeconds = 0;
     TimelineZoomSlider().Value(m_prj.zoom());
+    refreshVideoDetailsPanel();
+    setVideoDetailsPanelExpanded(false);
     syncAudioCrossfadeComboSelection();
     updateAudioUiAndPlaybackState();
 
@@ -1513,6 +1542,14 @@ AAction MainWindow::showPropertiesDialogAsync(){
         co_return;
     }
 
+    co_await showInfoDialogAsync(L"Properties", hstring(buildSourcePropertiesText()));
+}
+
+wstring MainWindow::buildSourcePropertiesText() const{
+    if(!m_prj.videoFile() || !m_mediaInfo.isValid){
+        return L"No video is currently loaded.";
+    }
+
     wstring content;
     content += L"File: "; content += m_prj.videoFile().Path().c_str(); content += L"\n";
     content += L"Container: "; content += m_mediaInfo.container; content += L"\n";
@@ -1528,8 +1565,16 @@ AAction MainWindow::showPropertiesDialogAsync(){
     content += L"Max random access spacing: "; content += m_mediaInfo.maxKeyFrameSpacing; content += L"\n";
     content += L"Audio codec: "; content += m_mediaInfo.audioCodec; content += L"\n";
     content += L"Audio bitrate: "; content += m_mediaInfo.audioBitrate;
+    return content;
+}
 
-    co_await showInfoDialogAsync(L"Properties", hstring(content));
+void MainWindow::setVideoDetailsPanelExpanded(bool expanded){
+    VideoDetailsPanel().Visibility(expanded ? Visibility::Visible : Visibility::Collapsed);
+    VideoDetailsOpenMarker().Visibility(expanded ? Visibility::Collapsed : Visibility::Visible);
+}
+
+void MainWindow::refreshVideoDetailsPanel(){
+    VideoDetailsText().Text(buildSourcePropertiesText());
 }
 
 AAction MainWindow::showOptionsDialogAsync(){
@@ -1808,6 +1853,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     const auto basicProperties{co_await file.GetBasicPropertiesAsync()};
     inspected.fileSize = formatFileSize(basicProperties.Size());
     m_mediaInfo = inspected;
+    refreshVideoDetailsPanel();
 
     wstring status{L"Loaded: "};
     status += file.Name().c_str();

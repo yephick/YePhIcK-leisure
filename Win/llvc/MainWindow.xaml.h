@@ -81,6 +81,8 @@ struct MainWindow: MainWindowT<MainWindow>{
     void window_PreviewKeyDown(const Control& sender, const KRArgs& args);
     void window_KeyDown(const Control& sender, const KRArgs& args);
     void rootGrid_PointerReleased(const Control& sender, const PREArgs& args);
+    void videoDetailsOpenMarker_Click(const Control& sender, const REArgs& args);
+    void videoDetailsCollapseMarker_Click(const Control& sender, const REArgs& args);
     AAction newProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction openProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction saveProjectMenuItem_Click(const Control& sender, const REArgs& args);
@@ -159,6 +161,9 @@ private:
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
     void updateAudioUiAndPlaybackState();
+    void setVideoDetailsPanelExpanded(bool expanded);
+    void refreshVideoDetailsPanel();
+    wstring buildSourcePropertiesText() const;
     void applyAudioSettingsToPlayer();
     void syncAudioCrossfadeComboSelection();
     bool sourceHasAudio() const;
