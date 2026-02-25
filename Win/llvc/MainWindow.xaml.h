@@ -43,6 +43,8 @@ struct MediaInspectionResult{
     wstring keyFrameInterval{};
     wstring allSamplesIndependent{};
     wstring maxKeyFrameSpacing{};
+    bool audioDisabledForThisSource{false};
+    wstring audioDisabledReason{};
 };
 
 struct MainWindow: MainWindowT<MainWindow>{

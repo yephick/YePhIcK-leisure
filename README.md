@@ -50,3 +50,9 @@ If you find something useful and want to suggest improvements, feel free to open
 
 - The **ATT addon community** for their work on collection tracking.  
 - Open-source contributors everywhere — standing on your shoulders makes side projects way more fun.
+
+## llvc (WinUI) manual test checklist
+
+- H264-in-AVI opens successfully, keyframe/index inspection succeeds, and MP4 export plays without visible video artifacts.
+- CRAM/MJPG/Xvid/DivX (or other non-H264) AVI files are rejected with a codec-specific AVI v1 message.
+- AVI files lacking robust timestamps or reliable sync/keyframe flags are rejected with guidance to convert to MP4 first.

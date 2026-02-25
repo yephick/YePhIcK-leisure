@@ -25,3 +25,20 @@ https://docs.microsoft.com/windows/apps/winui/winui3/
 Learn more about C++/WinRT here:
 http://aka.ms/cppwinrt/
 ========================================================================
+
+========================================================================
+Manual Test Checklist (AVI input v1)
+========================================================================
+
+- H264-in-AVI:
+  - opens successfully
+  - keyframe/index inspection succeeds
+  - export writes MP4 and resulting file plays with no visible video artifacts
+
+- Non-H264 AVI (CRAM / MJPG / Xvid / DivX / etc.):
+  - open is rejected
+  - rejection message explains AVI is H.264-only in v1 and includes the codec
+
+- AVI without robust timestamps or sync/keyframe markers:
+  - open is rejected with "convert to MP4 first" guidance
+
