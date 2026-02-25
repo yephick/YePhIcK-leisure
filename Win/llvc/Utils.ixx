@@ -1,4 +1,4 @@
-﻿export module Utils;
+﻿export module llvc.Utils;
 
 import std;
 

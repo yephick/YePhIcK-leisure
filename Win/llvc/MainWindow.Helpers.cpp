@@ -16,7 +16,7 @@
 #pragma comment(lib, "mfreadwrite.lib")
 #pragma comment(lib, "mfuuid.lib")
 
-import Utils;
+import llvc.Utils;
 
 using namespace llvc;
 using namespace std;
