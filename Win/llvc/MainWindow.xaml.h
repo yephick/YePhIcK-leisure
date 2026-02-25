@@ -115,6 +115,8 @@ private:
     uint32_t m_maxRecentProjects{5};
     hstring m_projectPath{};
     bool m_isClosing{false};
+    bool m_isExportInProgress{false};
+    bool m_resumeTimelineRenderAfterExport{false};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};
     uint32_t m_timelineDragPointerId{0};

@@ -347,6 +347,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         co_return;
     }
 
+    m_isExportInProgress = true;
+    m_resumeTimelineRenderAfterExport = m_prj.videoFile() && m_timelineDurationSeconds > 0;
+    ++m_timelineRenderVersion;
+
     setStatusMessage(L"Exporting...");
     clearErrorMessage();
     setOperationInProgress(true, true);
@@ -558,6 +562,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         setOperationProgress(100);
     }
 
+    m_isExportInProgress = false;
     setOperationInProgress(false);
     if(exportSucceeded){
         setStatusMessage(L"Export completed");
@@ -570,6 +575,12 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
     if(!exportErrorMessage.empty()){
         co_await showInfoDialogAsync(L"Export failed", exportErrorMessage);
+    }
+
+    const auto shouldResumeTimeline{m_resumeTimelineRenderAfterExport && m_prj.videoFile() && m_timelineDurationSeconds > 0};
+    m_resumeTimelineRenderAfterExport = false;
+    if(shouldResumeTimeline){
+        renderTimelineAsync();
     }
 }
 

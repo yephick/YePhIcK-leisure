@@ -655,6 +655,10 @@ void MainWindow::timelineHorizontalScrollBar_ValueChanged(const Control&, const 
 
 void MainWindow::timelineScrollViewer_ViewChanged(const Control&, const SVVCArgs&){
     syncTimelineHorizontalScrollBar();
+
+    if(m_isExportInProgress && m_prj.videoFile() && m_timelineDurationSeconds > 0){
+        renderTimelineAsync();
+    }
 }
 
 void MainWindow::timelineScrollViewer_SizeChanged(const Control&, const SCArgs&){
@@ -2010,7 +2014,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
     const auto lifetime{get_strong()};
 
     if(m_isClosing || !m_prj.videoFile() || m_timelineDurationSeconds <= 0){
-        setOperationInProgress(false);
+        if(!m_isExportInProgress){
+            setOperationInProgress(false);
+        }
         co_return;
     }
 
@@ -2025,7 +2031,10 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
     }
 
     try{
-        setOperationInProgress(true, true);
+        const auto renderDuringExport{m_isExportInProgress};
+        if(!renderDuringExport){
+            setOperationInProgress(true, true);
+        }
 
         const auto renderVersion{++m_timelineRenderVersion};
         const auto zoom{TimelineZoomSlider().Value()};
@@ -2074,7 +2083,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
                 }
             }
 
-            if(nextIndex < 0){
+            if(nextIndex < 0 && !renderDuringExport){
                 auto left{firstVisibleIndex - 1};
                 auto right{lastVisibleIndex + 1};
                 while(nextIndex < 0 && (left >= 0 || right < thumbnailCount)){
@@ -2124,18 +2133,22 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         ensureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
         syncTimelineHorizontalScrollBar();
 
-        wstring status{L"Loaded: "};
-        status += m_prj.videoFile().Name().c_str();
-        status += L" (story line ready)";
-        setStatusMessage(status);
-        refreshStatusInfoSection();
-        setOperationInProgress(false);
+        if(!renderDuringExport){
+            wstring status{L"Loaded: "};
+            status += m_prj.videoFile().Name().c_str();
+            status += L" (story line ready)";
+            setStatusMessage(status);
+            refreshStatusInfoSection();
+            setOperationInProgress(false);
+        }
     }catch(const winrt::hresult_error& ex){
-        wstring status{L"Failed to render story line: "};
-        status += ex.message().c_str();
-        setStatusMessage(status);
-        setErrorMessage(ex.message().c_str());
-        setOperationInProgress(false);
+        if(!m_isExportInProgress){
+            wstring status{L"Failed to render story line: "};
+            status += ex.message().c_str();
+            setStatusMessage(status);
+            setErrorMessage(ex.message().c_str());
+            setOperationInProgress(false);
+        }
     }
 }
 
