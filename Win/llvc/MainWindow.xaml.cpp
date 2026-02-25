@@ -1469,7 +1469,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     }
 
     if(videoStreamIndex != invalidStreamIndex){
-        if(auto bestVideoType{chooseBestNativeVideoMediaType(reader.get(), videoStreamIndex)}){
+        if(auto bestVideoType{chooseBestNativeVideoMediaType(reader, videoStreamIndex)}){
             (void)reader->SetCurrentMediaType(videoStreamIndex, nullptr, bestVideoType.get());
 
             MFGetAttributeSize(bestVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);

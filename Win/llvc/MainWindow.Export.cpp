@@ -13,6 +13,8 @@
 #include <mfobjects.h>
 #include <mfreadwrite.h>
 
+#include <winrt/Windows.Storage.h>
+
 import llvc.Export;
 
 namespace winrt::llvc::implementation{
