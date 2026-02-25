@@ -2130,7 +2130,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         }
 
         updateTimelineCursorFromPlayback();
-        ensureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
+        if(!renderDuringExport && m_player && m_player.PlaybackSession().PlaybackState() == MediaPlaybackState::Playing){
+            ensureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
+        }
         syncTimelineHorizontalScrollBar();
 
         if(!renderDuringExport){
