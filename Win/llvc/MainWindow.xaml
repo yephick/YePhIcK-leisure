@@ -124,20 +124,25 @@
         </StackPanel>
 
         <Border Grid.Row="4" BorderThickness="1" BorderBrush="#4A4A4A" CornerRadius="4" Background="#141414" Padding="8,6">
-            <Grid ColumnSpacing="14" VerticalAlignment="Center">
+            <Grid ColumnSpacing="12" VerticalAlignment="Center">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="2*"/>
-                    <ColumnDefinition Width="2*"/>
-                    <ColumnDefinition Width="3*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <TextBlock x:Name="StatusText" Grid.Column="0" Text="Load or drag-and-drop an .mp4/.mov file to preview." TextTrimming="CharacterEllipsis"/>
-                <TextBlock x:Name="ErrorText" Grid.Column="1" Foreground="#FFFF8585" Text="" TextTrimming="CharacterEllipsis"/>
+                <Grid Grid.Column="0" RowSpacing="2" VerticalAlignment="Center">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Stretch" VerticalAlignment="Center">
-                    <TextBlock x:Name="InfoText" Text="Estimated output: --:--.---" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                    <ProgressBar x:Name="OperationProgressBar" Width="170" Height="16" Minimum="0" Maximum="100" Value="0" Visibility="Collapsed"/>
-                </StackPanel>
+                    <TextBlock x:Name="StatusText" Grid.Row="0" Text="Load or drag-and-drop an .mp4/.mov file to preview." TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="ErrorText" Grid.Row="1" Foreground="#FFFF8585" Text="" TextTrimming="CharacterEllipsis"/>
+                </Grid>
+
+                <TextBlock x:Name="InfoText" Grid.Column="1" Margin="0,0,10,0" Text="Estimated output: --:--.---" VerticalAlignment="Center" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"/>
+                <ProgressBar x:Name="OperationProgressBar" Grid.Column="2" Width="170" Height="16" Minimum="0" Maximum="100" Value="0" Visibility="Collapsed" HorizontalAlignment="Right"/>
             </Grid>
         </Border>
     </Grid>
