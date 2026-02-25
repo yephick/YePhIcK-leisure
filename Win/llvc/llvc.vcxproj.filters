@@ -17,6 +17,7 @@
     <ClCompile Include="Project.ixx" />
     <ClCompile Include="Timeline.ixx" />
     <ClCompile Include="Utils.ixx" />
+    <ClCompile Include="Export.ixx" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />

@@ -10,8 +10,6 @@ import Utils;
 
 export namespace llvc{
 
-constexpr auto DFLT_ZOOM{2.0};
-
 using namespace ::std;
 using namespace ::winrt;
 
@@ -63,17 +61,17 @@ private:
     static vector<IndexedFrameSample> _parseKeyframeVector(const wstring& text);
 
 private:
-    bool m_isDirty{false};
+    // these are persisted on disk
     SFile m_loadedFile{nullptr};
-    double m_zoom{DFLT_ZOOM};
+    double m_zoom{2};
     bool m_keepAudio{true};
     int32_t m_audioCrossfadeMs{0};
     vector<IndexedFrameSample> m_frameIndex{};
     vector<uint32_t> m_selectedKeyFrames{};
     vector<uint32_t> m_cutScenes{};
 
-    // must be *after* all the members to reflect proper initial state
-    wstring m_lastSavedProjectSnapshot{};
+    bool m_isDirty{false};
+    wstring m_lastSavedProjectSnapshot{}; // must be *after* all the members to reflect proper initial state
 };
 
 
