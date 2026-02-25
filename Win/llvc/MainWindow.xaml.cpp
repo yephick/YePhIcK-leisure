@@ -139,7 +139,7 @@ wstring BuildUnsupportedAviReason(const wstring& detail){
     return detail;
 }
 
-bool IsAviH264StreamCopyCandidate(IMFSourceReader* reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
+bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
     if(!reader){
         failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video in v1. This file uses unknown codec.");
         return false;
@@ -189,7 +189,7 @@ bool IsAviH264StreamCopyCandidate(IMFSourceReader* reader, DWORD videoStreamInde
     return true;
 }
 
-bool validateAviSampleTimesAndSyncFlags(IMFSourceReader* reader, DWORD videoStreamIndex, const com_ptr<IMFMediaType>& videoType, wstring& failureReason){
+bool validateAviSampleTimesAndSyncFlags(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFMediaType>& videoType, wstring& failureReason){
     if(!reader){
         failureReason = BuildUnsupportedAviReason(L"AVI file lacks usable timestamps for robust cutting; convert to MP4 first.");
         return false;
@@ -1720,7 +1720,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
             result.errorMessage = BuildUnsupportedAviReason(L"Expected exactly one video stream.");
             return result;
         }
-        if(!IsAviH264StreamCopyCandidate(reader.get(), videoStreamIndex, aviNativeH264Type, result.errorMessage)){
+        if(!IsAviH264StreamCopyCandidate(reader, videoStreamIndex, aviNativeH264Type, result.errorMessage)){
             return result;
         }
 
@@ -1735,7 +1735,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
             return result;
         }
 
-        if(!validateAviSampleTimesAndSyncFlags(reader.get(), videoStreamIndex, aviNativeH264Type, result.errorMessage)){
+        if(!validateAviSampleTimesAndSyncFlags(reader, videoStreamIndex, aviNativeH264Type, result.errorMessage)){
             return result;
         }
 

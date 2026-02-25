@@ -154,13 +154,15 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             if(videoSubtype != MFVideoFormat_H264){
                 throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI is supported only for H.264 video in v1.");
             }
-            UINT8* sequenceHeader{};
             UINT32 sequenceHeaderSize{};
-            const auto seqHr{sourceVideoType->GetAllocatedBlob(MF_MT_MPEG_SEQUENCE_HEADER, &sequenceHeader, &sequenceHeaderSize)};
-            if(SUCCEEDED(seqHr) && sequenceHeader){
-                CoTaskMemFree(sequenceHeader);
-            }
-            if(FAILED(seqHr) || sequenceHeaderSize == 0){
+            const auto seqSizeHr{sourceVideoType->GetBlobSize(MF_MT_MPEG_SEQUENCE_HEADER, &sequenceHeaderSize)};
+            std::vector<uint8_t> sequenceHeader(sequenceHeaderSize);
+            UINT32 bytesWritten{};
+            const auto seqReadHr{
+                SUCCEEDED(seqSizeHr) && sequenceHeaderSize > 0
+                    ? sourceVideoType->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, sequenceHeader.data(), sequenceHeaderSize, &bytesWritten)
+                    : E_FAIL};
+            if(FAILED(seqReadHr) || bytesWritten == 0){
                 throw hresult_error(MF_E_INVALIDMEDIATYPE, L"This AVI cannot be stream-copied to MP4 on this system (missing H.264 mux support).");
             }
         }
