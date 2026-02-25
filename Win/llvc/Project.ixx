@@ -63,7 +63,6 @@ private:
 
 private:
     bool m_isDirty{false};
-    wstring m_lastSavedProjectSnapshot{};
     SFile m_loadedFile{nullptr};
     double m_zoom{DFLT_ZOOM};
     bool m_keepAudio{true};
@@ -71,6 +70,9 @@ private:
     vector<IndexedFrameSample> m_frameIndex{};
     vector<uint32_t> m_selectedKeyFrames{};
     vector<uint32_t> m_cutScenes{};
+
+    // must be *after* all the members to reflect proper initial state
+    wstring m_lastSavedProjectSnapshot{};
 };
 
 
@@ -131,7 +133,6 @@ void Project::clearTimeline(){
     m_frameIndex.clear();
     m_selectedKeyFrames.clear();
     m_cutScenes.clear();
-    m_isDirty = true;
 }
 
 Project::AAction Project::open(const SFile& file){
@@ -472,15 +473,13 @@ bool Project::toggleCutBlockAtCanvasX(double pointerX, double width, double tlDu
 
 wstring Project::_buildProjectSnapshot() const{
     const auto snapshot{std::format(
-        L"{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n",
+        L"{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n",
         P_STORYLINE_ZOOM,
         m_zoom,
         P_KEEP_AUDIO,
         m_keepAudio ? 1 : 0,
         P_AUDIO_CROSSFADE_MS,
         m_audioCrossfadeMs,
-        P_FILE_PATH,
-        (m_loadedFile ? m_loadedFile.Path().c_str() : L""),
         P_RAP_MARKERS,
         _serializeRapMarkers(),
         P_CUT_SCENES,
