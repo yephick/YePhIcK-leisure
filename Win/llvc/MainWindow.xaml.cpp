@@ -103,7 +103,36 @@ wstring guidToVideoCodecName(const GUID& subtype){
     if(subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265){
         return L"HEVC";
     }
-    return formatGuid(subtype);
+
+    const auto hasMfSubtypeBase{
+        subtype.Data2 == 0x0000
+        && subtype.Data3 == 0x0010
+        && subtype.Data4[0] == 0x80
+        && subtype.Data4[1] == 0x00
+        && subtype.Data4[2] == 0x00
+        && subtype.Data4[3] == 0xAA
+        && subtype.Data4[4] == 0x00
+        && subtype.Data4[5] == 0x38
+        && subtype.Data4[6] == 0x9B
+        && subtype.Data4[7] == 0x71};
+    if(hasMfSubtypeBase){
+        const DWORD fcc{subtype.Data1};
+        wchar_t fourcc[5]{};
+        for(int i{}; i < 4; ++i){
+            const auto c{static_cast<wchar_t>((fcc >> (i * 8)) & 0xFF)};
+            if(c < 0x20 || c > 0x7E){
+                fourcc[0] = L'\0';
+                break;
+            }
+            fourcc[i] = static_cast<wchar_t>(towupper(c));
+        }
+
+        if(fourcc[0] != L'\0'){
+            return fourcc;
+        }
+    }
+
+    return L"unknown codec";
 }
 
 wstring BuildUnsupportedAviReason(const wstring& detail){
