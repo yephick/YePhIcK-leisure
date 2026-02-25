@@ -290,13 +290,31 @@ vector<pair<int64_t, int64_t>> Project::buildEffectiveCutRangesWithRapPreroll(in
         }
     }
 
-    vector<pair<int64_t, int64_t>> cutRanges;
-    for(size_t i{0}; i < sceneCount; ++i){
+    vector<pair<int64_t, int64_t>> rawCutBlocks;
+    for(size_t i{}; i < sceneCount;){
         if(!isCut[i]){
+            ++i;
             continue;
         }
-        const auto start{boundaries[i]};
-        const auto end{boundaries[i + 1]};
+
+        auto blockStart{i};
+        auto blockEnd{i + 1};
+        ++i;
+        while(i < sceneCount && isCut[i]){
+            blockEnd = i + 1;
+            ++i;
+        }
+
+        const auto start{boundaries[blockStart]};
+        const auto end{boundaries[blockEnd]};
+        if(end > start){
+            rawCutBlocks.emplace_back(start, end);
+        }
+    }
+
+    vector<pair<int64_t, int64_t>> cutRanges;
+    cutRanges.reserve(rawCutBlocks.size());
+    for(const auto& [start, end]: rawCutBlocks){
         const auto startRapIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), start)};
         if(startRapIt == rapTimes100ns.end()){
             continue;
@@ -503,9 +521,16 @@ vector<IndexedFrameSample> Project::_parseKeyframeVector(const wstring& text){
         const auto sep{text.find(L';', start)};
         const auto item{trim(text.substr(start, sep == wstring::npos ? wstring::npos : sep - start))};
         if(!item.empty()){
+            const auto at{item.find(L'@')};
+            const auto timeToken{trim(at == wstring::npos ? item : item.substr(0, at))};
+            const auto sampleToken{at == wstring::npos ? wstring{} : trim(item.substr(at + 1))};
             try{
-                const auto t{stoll(item)};
-                out.push_back(IndexedFrameSample{.time100ns = t, .duration100ns = 0, .cleanPoint = true, .sampleIndex = 0});
+                const auto t{stoll(timeToken)};
+                uint32_t sampleIndex{};
+                if(!sampleToken.empty()){
+                    sampleIndex = stoul(sampleToken);
+                }
+                out.push_back(IndexedFrameSample{.time100ns = t, .duration100ns = 0, .cleanPoint = true, .sampleIndex = sampleIndex});
             }catch(...){}
         }
         if(sep == wstring::npos){ break; }
