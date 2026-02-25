@@ -46,9 +46,29 @@
             </controls:MenuBarItem>
         </controls:MenuBar>
 
-        <Border Grid.Row="1" BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="8">
-            <controls:MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
-        </Border>
+        <Grid Grid.Row="1">
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="8">
+                <controls:MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
+            </Border>
+
+            <Button x:Name="VideoDetailsOpenMarker" Width="26" Height="64" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0" Padding="0"
+                    Content="❯" Click="videoDetailsOpenMarker_Click" ToolTipService.ToolTip="Show source video details"/>
+
+            <Border x:Name="VideoDetailsPanel" Width="340" HorizontalAlignment="Left" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
+                    BorderBrush="#707070" BorderThickness="1" Background="#E6101010" Visibility="Collapsed">
+                <Grid>
+                    <ScrollViewer Margin="0,0,30,0" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Source video details" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="VideoDetailsText" Text="No video is currently loaded." TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <Button x:Name="VideoDetailsCollapseMarker" Width="24" HorizontalAlignment="Right" VerticalAlignment="Stretch" Padding="0"
+                            Content="❮" Click="videoDetailsCollapseMarker_Click" ToolTipService.ToolTip="Collapse details panel"/>
+                </Grid>
+            </Border>
+        </Grid>
 
         <Grid Grid.Row="2" RowSpacing="6">
             <Grid.RowDefinitions>
@@ -56,23 +76,21 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <Grid VerticalAlignment="Center">
-                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <TextBlock Text="Zoom" VerticalAlignment="Center"/>
-                    <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="12" Value="2" SmallChange="0.25" LargeChange="1" ValueChanged="timelineZoomSlider_ValueChanged"/>
-                    <CheckBox x:Name="KeepAudioCheckBox" Content="Keep audio" IsEnabled="False" VerticalAlignment="Center" Checked="keepAudioCheckBox_Changed" Unchecked="keepAudioCheckBox_Changed"/>
-                    <TextBlock Text="Audio cross-fade:" VerticalAlignment="Center"/>
-                    <ComboBox x:Name="AudioCrossfadeComboBox" Width="120" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
-                        <ComboBoxItem Content="0 ms" Tag="0"/>
-                        <ComboBoxItem Content="50 ms" Tag="50"/>
-                        <ComboBoxItem Content="100 ms" Tag="100"/>
-                        <ComboBoxItem Content="250 ms" Tag="250"/>
-                        <ComboBoxItem Content="500 ms" Tag="500"/>
-                        <ComboBoxItem Content="750 ms" Tag="750"/>
-                        <ComboBoxItem Content="1 s" Tag="1000"/>
-                    </ComboBox>
-                </StackPanel>
-            </Grid>
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <TextBlock Text="Zoom" VerticalAlignment="Center"/>
+                <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="12" Value="2" SmallChange="0.25" LargeChange="1" ValueChanged="timelineZoomSlider_ValueChanged"/>
+                <CheckBox x:Name="KeepAudioCheckBox" Content="Keep audio" IsEnabled="False" VerticalAlignment="Center" Checked="keepAudioCheckBox_Changed" Unchecked="keepAudioCheckBox_Changed"/>
+                <TextBlock Text="Audio cross-fade:" VerticalAlignment="Center"/>
+                <ComboBox x:Name="AudioCrossfadeComboBox" Width="120" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
+                    <ComboBoxItem Content="0 ms" Tag="0"/>
+                    <ComboBoxItem Content="50 ms" Tag="50"/>
+                    <ComboBoxItem Content="100 ms" Tag="100"/>
+                    <ComboBoxItem Content="250 ms" Tag="250"/>
+                    <ComboBoxItem Content="500 ms" Tag="500"/>
+                    <ComboBoxItem Content="750 ms" Tag="750"/>
+                    <ComboBoxItem Content="1 s" Tag="1000"/>
+                </ComboBox>
+            </StackPanel>
 
             <Border Grid.Row="1" BorderThickness="1" BorderBrush="#404040" Background="#111111" CornerRadius="4" Padding="6">
                 <Grid RowSpacing="4">
@@ -82,7 +100,7 @@
                     </Grid.RowDefinitions>
 
                     <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="timelineScrollViewer_ViewChanged" SizeChanged="timelineScrollViewer_SizeChanged">
-                        <StackPanel Orientation="Vertical" Spacing="4">
+                        <StackPanel Spacing="4">
                             <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#222222" PointerReleased="timelineTickCanvas_PointerReleased"/>
                             <Canvas x:Name="TimelineCanvas" Height="86" IsTabStop="True" Loaded="timelineCanvas_Loaded" PointerPressed="timelineCanvas_PointerPressed" PointerMoved="timelineCanvas_PointerMoved" PointerReleased="timelineCanvas_PointerReleased" PointerCanceled="timelineCanvas_PointerCanceled" PointerCaptureLost="timelineCanvas_PointerCaptureLost" Background="#111111">
                                 <Canvas x:Name="ThumbnailLayer" Height="86"/>
@@ -99,9 +117,7 @@
             </Border>
         </Grid>
 
-        <StackPanel Grid.Row="3" Spacing="4">
-            <TextBlock x:Name="StatusText" Text="Load or drag-and-drop an .mp4/.mov file to preview."/>
-        </StackPanel>
+        <TextBlock Grid.Row="3" x:Name="StatusText" Text="Load or drag-and-drop an .mp4/.mov file to preview."/>
 
         <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
             <Button x:Name="StartButton" Content="Start" IsTabStop="False" Click="startButton_Click"/>
