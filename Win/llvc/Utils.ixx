@@ -1,11 +1,6 @@
-﻿module;
+﻿export module Utils;
 
-#include <cstdint>
-#include <format>
-#include <string>
-#include <vector>
-
-export module Utils;
+import std;
 
 export namespace llvc{
 

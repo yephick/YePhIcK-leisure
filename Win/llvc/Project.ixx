@@ -5,6 +5,7 @@
 
 export module llvc.Project;
 
+import std;
 import Utils;
 
 export namespace llvc{
@@ -58,7 +59,7 @@ struct Project final{
 
 private:
     wstring _buildProjectSnapshot() const;
-    wstring _serializeRapMarkers() const;
+    wstring _serializeCutMarkers() const;
     static vector<IndexedFrameSample> _parseKeyframeVector(const wstring& text);
 
 private:
@@ -88,7 +89,7 @@ constexpr auto P_FILE_PATH{L"file_path"};
 constexpr auto P_STORYLINE_ZOOM{L"storyline_zoom"};
 constexpr auto P_KEEP_AUDIO{L"keep_audio"};
 constexpr auto P_AUDIO_CROSSFADE_MS{L"audio_crossfade_ms"};
-constexpr auto P_RAP_MARKERS{L"rap_markers"};
+constexpr auto P_CUT_MARKERS{L"cut_markers"};
 constexpr auto P_CUT_SCENES{L"cut_scenes"};
 
 struct LoadedProjectData{
@@ -120,7 +121,7 @@ LoadedProjectData _parseProjectLines(const Windows::Foundation::Collections::IVe
 
         if(key == P_FILE_PATH)          { data.loadedFilePath = value; } else
         if(key == P_STORYLINE_ZOOM)     { data.zoomLevel      = value; } else
-        if(key == P_RAP_MARKERS)        { data.markers        = value; } else
+        if(key == P_CUT_MARKERS)        { data.markers        = value; } else
         if(key == P_CUT_SCENES)         { data.cutScenes      = value; } else
         if(key == P_KEEP_AUDIO)         { data.keepAudio      = value; } else
         if(key == P_AUDIO_CROSSFADE_MS) { data.audioXfadeMs   = value; }
@@ -170,7 +171,7 @@ Project::AAction Project::save(const SFile& file){
     lines.emplace_back(wstring(P_STORYLINE_ZOOM) + L"=" + to_wstring(m_zoom));
     lines.emplace_back(wstring(P_KEEP_AUDIO) + L"=" + wstring(m_keepAudio ? L"1" : L"0"));
     lines.emplace_back(wstring(P_AUDIO_CROSSFADE_MS) + L"=" + to_wstring(m_audioCrossfadeMs));
-    lines.emplace_back(wstring(P_RAP_MARKERS) + L"=" + _serializeRapMarkers());
+    lines.emplace_back(wstring(P_CUT_MARKERS) + L"=" + _serializeCutMarkers());
     lines.emplace_back(wstring(P_CUT_SCENES) + L"=" + serializeIndexList(m_cutScenes));
 
     co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(move(lines)));
@@ -290,49 +291,62 @@ vector<pair<int64_t, int64_t>> Project::buildEffectiveCutRangesWithRapPreroll(in
         }
     }
 
-    vector<pair<int64_t, int64_t>> keepRanges;
-    for(size_t i{0}; i < sceneCount; ++i){
-        if(isCut[i]){
+    vector<pair<int64_t, int64_t>> rawCutBlocks;
+    for(size_t i{}; i < sceneCount;){
+        if(!isCut[i]){
+            ++i;
             continue;
         }
-        auto start{boundaries[i]};
-        const auto end{boundaries[i + 1]};
-        const auto rapIt{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), start)};
-        if(rapIt != rapTimes100ns.begin()){
-            start = *(rapIt - 1);
+
+        auto blockStart{i};
+        auto blockEnd{i + 1};
+        ++i;
+        while(i < sceneCount && isCut[i]){
+            blockEnd = i + 1;
+            ++i;
         }
+
+        const auto start{boundaries[blockStart]};
+        const auto end{boundaries[blockEnd]};
         if(end > start){
-            keepRanges.emplace_back(start, end);
-        }
-    }
-
-    if(keepRanges.empty()){
-        return {{0, totalDuration100ns}};
-    }
-
-    sort(keepRanges.begin(), keepRanges.end());
-    vector<pair<int64_t, int64_t>> mergedKeep;
-    for(const auto& range: keepRanges){
-        if(mergedKeep.empty() || range.first > mergedKeep.back().second){
-            mergedKeep.push_back(range);
-        } else{
-            mergedKeep.back().second = max(mergedKeep.back().second, range.second);
+            rawCutBlocks.emplace_back(start, end);
         }
     }
 
     vector<pair<int64_t, int64_t>> cutRanges;
-    int64_t cursor{};
-    for(const auto& [start, end]: mergedKeep){
-        if(start > cursor){
-            cutRanges.emplace_back(cursor, start);
+    cutRanges.reserve(rawCutBlocks.size());
+    for(const auto& [start, end]: rawCutBlocks){
+        const auto startRapIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), start)};
+        if(startRapIt == rapTimes100ns.end()){
+            continue;
         }
-        cursor = max(cursor, end);
-    }
-    if(cursor < totalDuration100ns){
-        cutRanges.emplace_back(cursor, totalDuration100ns);
+
+        const auto endRapIt{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), end)};
+        if(endRapIt == rapTimes100ns.begin()){
+            continue;
+        }
+
+        const auto alignedStart{*startRapIt};
+        const auto alignedEnd{*(endRapIt - 1)};
+        if(alignedEnd > alignedStart){
+            cutRanges.emplace_back(alignedStart, alignedEnd);
+        }
     }
 
-    return cutRanges;
+    if(cutRanges.empty()){
+        return {};
+    }
+
+    sort(cutRanges.begin(), cutRanges.end());
+    vector<pair<int64_t, int64_t>> mergedCuts;
+    for(const auto& range: cutRanges){
+        if(mergedCuts.empty() || range.first > mergedCuts.back().second){
+            mergedCuts.push_back(range);
+        } else{
+            mergedCuts.back().second = max(mergedCuts.back().second, range.second);
+        }
+    }
+    return mergedCuts;
 }
 
 int64_t Project::outputDuration100ns(double tlDurationSeconds) const{
@@ -480,15 +494,15 @@ wstring Project::_buildProjectSnapshot() const{
         m_keepAudio ? 1 : 0,
         P_AUDIO_CROSSFADE_MS,
         m_audioCrossfadeMs,
-        P_RAP_MARKERS,
-        _serializeRapMarkers(),
+        P_CUT_MARKERS,
+        _serializeCutMarkers(),
         P_CUT_SCENES,
         serializeIndexList(m_cutScenes)
     )};
     return snapshot;
 }
 
-wstring Project::_serializeRapMarkers() const{
+wstring Project::_serializeCutMarkers() const{
     const auto markers{buildRapMarkersFromSelection()};
     wstring out;
     bool first{true};
@@ -496,7 +510,7 @@ wstring Project::_serializeRapMarkers() const{
         if(!k.cleanPoint){ continue; }
         if(!first){ out += L";"; }
         first = false;
-        out += std::format(L"{}@{}", k.time100ns, k.sampleIndex);
+        out += std::format(L"{}", k.time100ns);
     }
     return out;
 }
@@ -509,13 +523,16 @@ vector<IndexedFrameSample> Project::_parseKeyframeVector(const wstring& text){
         const auto item{trim(text.substr(start, sep == wstring::npos ? wstring::npos : sep - start))};
         if(!item.empty()){
             const auto at{item.find(L'@')};
-            if(at != wstring::npos){
-                try{
-                    const auto t{stoll(trim(item.substr(0, at)))};
-                    const auto i{stoul(trim(item.substr(at + 1)))};
-                    out.push_back(IndexedFrameSample{.time100ns = t, .duration100ns = 0, .cleanPoint = true, .sampleIndex = i});
-                }catch(...){}
-            }
+            const auto timeToken{trim(at == wstring::npos ? item : item.substr(0, at))};
+            const auto sampleToken{at == wstring::npos ? wstring{} : trim(item.substr(at + 1))};
+            try{
+                const auto t{stoll(timeToken)};
+                uint32_t sampleIndex{};
+                if(!sampleToken.empty()){
+                    sampleIndex = stoul(sampleToken);
+                }
+                out.push_back(IndexedFrameSample{.time100ns = t, .duration100ns = 0, .cleanPoint = true, .sampleIndex = sampleIndex});
+            }catch(...){}
         }
         if(sep == wstring::npos){ break; }
         start = sep + 1;
