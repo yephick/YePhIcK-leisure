@@ -354,6 +354,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     winrt::hstring exportErrorMessage{};
     auto exportSucceeded{false};
 
+    winrt::apartment_context uiThread;
     co_await winrt::resume_background();
 
     try{
@@ -551,7 +552,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         exportErrorMessage = ex.message();
     }
 
-    co_await winrt::resume_foreground(DispatcherQueue());
+    co_await uiThread;
 
     if(exportSucceeded){
         setOperationProgress(100);
