@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <ctime>
 #include <cwctype>
 #include <cwchar>
 #include <filesystem>
@@ -25,6 +27,9 @@
 #include <mfreadwrite.h>
 
 #include <microsoft.ui.xaml.window.h>
+#include <propkey.h>
+#include <propsys.h>
+#include <propvarutil.h>
 #include <shobjidl_core.h>
 #include <winrt/Windows.Storage.FileProperties.h>
 #include <winrt/Microsoft.UI.Input.h>
@@ -78,6 +83,33 @@ using IOpBool = MainWindow::IOpBool;
 using TS = MainWindow::TS;
 
 constexpr auto W_POS_L{L"WindowLeft"};
+
+namespace{
+
+std::wstring readShellStringProperty(const std::wstring& filePath, const PROPERTYKEY& key){
+    winrt::com_ptr<IPropertyStore> propertyStore;
+    const auto hr{SHGetPropertyStoreFromParsingName(filePath.c_str(), nullptr, GPS_BESTEFFORT, IID_PPV_ARGS(propertyStore.put()))};
+    if(FAILED(hr) || !propertyStore){
+        return {};
+    }
+
+    PROPVARIANT value{};
+    PropVariantInit(&value);
+
+    std::wstring text;
+    if(SUCCEEDED(propertyStore->GetValue(key, &value))){
+        PWSTR converted{};
+        if(SUCCEEDED(PropVariantToStringAlloc(value, &converted)) && converted){
+            text = converted;
+            ::CoTaskMemFree(converted);
+        }
+    }
+
+    PropVariantClear(&value);
+    return text;
+}
+
+}
 constexpr auto W_POS_T{L"WindowTop"};
 constexpr auto W_POS_W{L"WindowWidth"};
 constexpr auto W_POS_H{L"WindowHeight"};
@@ -1260,6 +1292,10 @@ wstring MainWindow::buildSourcePropertiesText() const{
     content += L"Container: "; content += m_mediaInfo.container; content += L"\n";
     content += L"Duration: "; content += m_mediaInfo.duration; content += L"\n";
     content += L"Size: "; content += m_mediaInfo.fileSize; content += L"\n";
+    content += L"Created: "; content += m_mediaInfo.sourceCreated; content += L"\n";
+    content += L"Modified: "; content += m_mediaInfo.sourceModified; content += L"\n";
+    content += L"Encoded by: "; content += (m_mediaInfo.sourceEncodedBy.empty() ? L"-" : m_mediaInfo.sourceEncodedBy); content += L"\n";
+    content += L"Comment: "; content += (m_mediaInfo.sourceComment.empty() ? L"-" : m_mediaInfo.sourceComment); content += L"\n";
     content += L"Video codec: "; content += m_mediaInfo.videoCodec; content += L"\n";
     content += L"Resolution: "; content += m_mediaInfo.resolution; content += L"\n";
     content += L"FPS: "; content += formatRatio(m_mediaInfo.frameRate.num, m_mediaInfo.frameRate.den, L" fps"); content += L"\n";
@@ -1289,6 +1325,22 @@ wstring MainWindow::formatTimelineDurationText(int64_t duration100ns){
     const auto seconds{(totalMs / 1'000) % 60};
     const auto millis{totalMs % 1'000};
     return std::format(L"{:02}:{:02}.{:03}", minutes, seconds, millis);
+}
+
+
+wstring MainWindow::formatDateTimeText(const winrt::Windows::Foundation::DateTime& value){
+    const auto asTimeT{winrt::clock::to_time_t(value)};
+    tm localTime{};
+    if(localtime_s(&localTime, &asTimeT) != 0){
+        return L"-";
+    }
+
+    wchar_t timestamp[64]{};
+    if(wcsftime(timestamp, size(timestamp), L"%Y-%m-%d %H:%M:%S", &localTime) == 0){
+        return L"-";
+    }
+
+    return timestamp;
 }
 
 void MainWindow::setStatusMessage(const wstring& message){
@@ -1540,6 +1592,9 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     if(videoStreamIndex != invalidStreamIndex){
         analyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen, result);
     }
+
+    result.sourceEncodedBy = readShellStringProperty(filePath, PKEY_Media_EncodedBy);
+    result.sourceComment = readShellStringProperty(filePath, PKEY_Comment);
     result.isValid = true;
     return result;
 }
@@ -1608,6 +1663,8 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
 
     const auto basicProperties{co_await file.GetBasicPropertiesAsync()};
     inspected.fileSize = formatFileSize(basicProperties.Size());
+    inspected.sourceCreated = formatDateTimeText(file.DateCreated());
+    inspected.sourceModified = formatDateTimeText(basicProperties.DateModified());
     m_mediaInfo = inspected;
 
     wstring status{L"Loaded: "};
