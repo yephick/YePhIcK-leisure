@@ -23,7 +23,7 @@ export module llvc.Export;
 
 import std;
 
-export namespace winrt::llvc::implementation{
+export namespace llvc{
 
 using namespace ::std;
 using namespace ::winrt;
@@ -54,7 +54,7 @@ VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reade
 
 }
 
-namespace winrt::llvc::implementation{
+namespace llvc{
 
 using namespace ::std;
 using namespace ::winrt;

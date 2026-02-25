@@ -21,6 +21,7 @@ namespace winrt::llvc::implementation{
 
 using namespace std;
 using namespace winrt;
+using namespace ::llvc;
 
 using Control = MainWindow::Control;
 using REArgs = MainWindow::REArgs;

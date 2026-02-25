@@ -47,6 +47,7 @@ import llvc.Export;
 
 using namespace std;
 using namespace winrt;
+using namespace ::llvc;
 using namespace Microsoft::UI::Xaml;
 using namespace Microsoft::UI::Input;
 using namespace Microsoft::UI::Xaml::Controls;
