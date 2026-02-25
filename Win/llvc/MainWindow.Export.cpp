@@ -352,7 +352,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     try{
         setStatusMessage(L"Exporting...");
         clearErrorMessage();
-        setOperationInProgress(true);
+        setOperationInProgress(true, true);
         setOperationProgress(0);
 
         com_ptr<IMFAttributes> readerAttributes;

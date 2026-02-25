@@ -799,7 +799,10 @@ void MainWindow::onNaturalDurationChanged(const MPSession& sender, const Control
                 self->renderTimelineAsync();
             }
         });
+        return;
     }
+
+    setOperationInProgress(false);
 }
 
 void MainWindow::onPositionTimerTick(const Control&, const Control&){
@@ -1620,14 +1623,20 @@ void MainWindow::refreshStatusInfoSection(){
     InfoText().Text(text);
 }
 
-void MainWindow::setOperationInProgress(bool active){
+void MainWindow::setOperationInProgress(bool active, bool indeterminate){
     if(active){
-        OperationProgressBar().Value(0);
+        OperationProgressBar().IsIndeterminate(indeterminate);
+        if(!indeterminate){
+            OperationProgressBar().Value(0);
+        }
+    }else{
+        OperationProgressBar().IsIndeterminate(false);
     }
     OperationProgressBar().Visibility(active ? Visibility::Visible : Visibility::Collapsed);
 }
 
 void MainWindow::setOperationProgress(double percent){
+    OperationProgressBar().IsIndeterminate(false);
     OperationProgressBar().Value(clamp(percent, 0.0, 100.0));
 }
 
@@ -1886,6 +1895,8 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
 }
 
 AAction MainWindow::loadVideoFileAsync(const SFile& file){
+    setOperationInProgress(true, true);
+
     MediaInspectionResult inspected{};
     try{
         inspected = inspectMediaFile(file.Path().c_str());
@@ -1901,6 +1912,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
         status += inspected.errorMessage;
         setStatusMessage(status);
         setErrorMessage(inspected.errorMessage);
+        setOperationInProgress(false);
         co_await showInfoDialogAsync(L"Unsupported media", hstring(status));
         co_return;
     }
@@ -1996,6 +2008,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
     const auto lifetime{get_strong()};
 
     if(m_isClosing || !m_prj.videoFile() || m_timelineDurationSeconds <= 0){
+        setOperationInProgress(false);
         co_return;
     }
 
@@ -2010,6 +2023,8 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
     }
 
     try{
+        setOperationInProgress(true, true);
+
         const auto renderVersion{++m_timelineRenderVersion};
         const auto zoom{TimelineZoomSlider().Value()};
         const auto totalWidth{max(800.0, m_timelineDurationSeconds * 14.0 * zoom)};
@@ -2106,11 +2121,13 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         status += L" (story line ready)";
         setStatusMessage(status);
         refreshStatusInfoSection();
+        setOperationInProgress(false);
     }catch(const winrt::hresult_error& ex){
         wstring status{L"Failed to render story line: "};
         status += ex.message().c_str();
         setStatusMessage(status);
         setErrorMessage(ex.message().c_str());
+        setOperationInProgress(false);
     }
 }
 

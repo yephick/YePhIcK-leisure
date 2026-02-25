@@ -16,7 +16,6 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <controls:MenuBar x:Name="MainMenuBar" Grid.Row="0" IsTabStop="False">
@@ -124,7 +123,7 @@
             <Button x:Name="StopButton" Content="Stop" IsTabStop="False" Click="stopButton_Click"/>
         </StackPanel>
 
-        <Border Grid.Row="5" BorderThickness="1" BorderBrush="#4A4A4A" CornerRadius="4" Background="#141414" Padding="8,6">
+        <Border Grid.Row="4" BorderThickness="1" BorderBrush="#4A4A4A" CornerRadius="4" Background="#141414" Padding="8,6">
             <Grid ColumnSpacing="14" VerticalAlignment="Center">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*"/>

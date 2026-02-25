@@ -170,7 +170,7 @@ private:
     void setErrorMessage(const wstring& message);
     void clearErrorMessage();
     void refreshStatusInfoSection();
-    void setOperationInProgress(bool active);
+    void setOperationInProgress(bool active, bool indeterminate = false);
     void setOperationProgress(double percent);
     static wstring formatTimelineDurationText(int64_t duration100ns);
     bool sourceHasAudio() const;
