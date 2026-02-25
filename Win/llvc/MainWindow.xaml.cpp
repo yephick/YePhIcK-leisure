@@ -17,6 +17,7 @@
 #include <string_view>
 #include <functional>
 #include <vector>
+#include <unordered_set>
 
 #include <mfapi.h>
 #include <mferror.h>
@@ -946,6 +947,8 @@ void MainWindow::renderKeyframeTicks(){
 
     const auto width {TimelineTickCanvas().Width()};
     const auto total100ns {m_timelineDurationSeconds * 10'000'000.0};
+    const unordered_set<uint32_t> selectedKeyframes{m_prj.selKeyFrames().begin(), m_prj.selKeyFrames().end()};
+
     uint32_t cleanOrdinal{};
     for(const auto& frame: m_prj.frameIndex()){
         if(!frame.cleanPoint){
@@ -953,8 +956,7 @@ void MainWindow::renderKeyframeTicks(){
         }
 
         const auto x {clamp((frame.time100ns / total100ns) * width, 0.0, width)};
-        // XXX: looks like isSelected is always true
-        const auto isSelected{find(m_prj.selKeyFrames().begin(), m_prj.selKeyFrames().end(), cleanOrdinal) != m_prj.selKeyFrames().end()};
+        const auto isSelected{selectedKeyframes.contains(cleanOrdinal)};
 
         Shapes::Line tick{};
         tick.X1(x);
@@ -1961,9 +1963,6 @@ bool MainWindow::sourceHasAudio() const{
 }
 
 void MainWindow::syncAudioCrossfadeComboSelection(){
-    // XXX: is this set call even needed? Or, instead, shouldn't the value be set every time a new choice is made by user?
-    m_prj.audioXfadeMs(m_prj.audioXfadeMs());
-
     const auto combo{AudioCrossfadeComboBox()};
     const auto items{combo.Items()};
     for(uint32_t i{0}; i < items.Size(); ++i){
@@ -1986,6 +1985,16 @@ void MainWindow::syncAudioCrossfadeComboSelection(){
     }
 
     combo.SelectedIndex(0);
+    if(const auto firstItem{combo.SelectedItem().try_as<Controls::ComboBoxItem>()}){
+        if(firstItem.Tag()){
+            try{
+                const auto tag{unbox_value<hstring>(firstItem.Tag())};
+                m_prj.audioXfadeMs(stoi(wstring(tag.c_str())));
+            }catch(...){
+                m_prj.audioXfadeMs(0);
+            }
+        }
+    }
 }
 
 void MainWindow::applyAudioSettingsToPlayer(){
