@@ -6,7 +6,7 @@
 export module llvc.Project;
 
 import std;
-import Utils;
+import llvc.Utils;
 
 export namespace llvc{
 
