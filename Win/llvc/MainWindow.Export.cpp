@@ -7,6 +7,7 @@
 #include <limits>
 
 #include <algorithm>
+#include <functional>
 
 #include <mfapi.h>
 #include <mferror.h>
@@ -201,7 +202,9 @@ VideoWriteStats writeVideoSamplesForExport(
     const DWORD writerVideoStreamIndex,
     const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns,
     const GUID videoSubtype,
-    const uint32_t nalLengthFieldSize){
+    const uint32_t nalLengthFieldSize,
+    const int64_t sourceDuration100ns,
+    const function<void(double)>& progressCallback){
 
     auto waitingForCleanPoint{false};
     auto markDiscontinuityOnNextWrittenSample{false};
@@ -209,6 +212,10 @@ VideoWriteStats writeVideoSamplesForExport(
     auto dtsPtsShiftInitialized{false};
     int64_t lastInTime100ns{-1};
     VideoWriteStats stats{};
+
+    if(progressCallback){
+        progressCallback(0.0);
+    }
 
     for(;;){
         DWORD actualStream{};
@@ -305,8 +312,16 @@ VideoWriteStats writeVideoSamplesForExport(
 
         check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
         ++stats.writtenSampleCount;
+
+        if(progressCallback && sourceDuration100ns > 0 && (stats.readSampleCount % 24 == 0)) {
+            const auto pct{(100.0 * inTime100ns) / sourceDuration100ns};
+            progressCallback(pct);
+        }
     }
 
+    if(progressCallback){
+        progressCallback(100.0);
+    }
     return stats;
 }
 
@@ -335,7 +350,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     winrt::hstring exportErrorMessage{};
 
     try{
-        StatusText().Text(L"Exporting...");
+        setStatusMessage(L"Exporting...");
+        clearErrorMessage();
+        setOperationInProgress(true);
+        setOperationProgress(0);
 
         com_ptr<IMFAttributes> readerAttributes;
         check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
@@ -500,7 +518,13 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             writerVideoStreamIndex,
             effectiveCutRanges100ns,
             videoSubtype,
-            nalLengthFieldSize)};
+            nalLengthFieldSize,
+            sourceDuration100ns,
+            [self = get_weak()](double pct){
+                if(const auto strong = self.get()){
+                    strong->setOperationProgress(pct);
+                }
+            })};
 
         if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
             com_ptr<IMFSourceReader> audioReader;
@@ -514,10 +538,15 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             writePcmAudioToWriter(writer.get(), writerAudioStreamIndex, mixedAudio, audioChannels, audioSampleRate);
         }
 
+        setOperationProgress(100);
         check_hresult(writer->Finalize());
-        StatusText().Text(L"Export completed");
+        setStatusMessage(L"Export completed");
+        setOperationInProgress(false);
+        refreshStatusInfoSection();
     }catch(const hresult_error& ex){
-        StatusText().Text(L"Export failed");
+        setOperationInProgress(false);
+        setStatusMessage(L"Export failed");
+        setErrorMessage(ex.message().c_str());
         exportErrorMessage = ex.message();
     }
 

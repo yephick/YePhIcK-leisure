@@ -166,6 +166,13 @@ private:
     wstring buildSourcePropertiesText() const;
     void applyAudioSettingsToPlayer();
     void syncAudioCrossfadeComboSelection();
+    void setStatusMessage(const wstring& message);
+    void setErrorMessage(const wstring& message);
+    void clearErrorMessage();
+    void refreshStatusInfoSection();
+    void setOperationInProgress(bool active);
+    void setOperationProgress(double percent);
+    static wstring formatTimelineDurationText(int64_t duration100ns);
     bool sourceHasAudio() const;
     static TS secondsToTimeSpan(double seconds);
     static bool isRectVisibleOnAnyMonitor(const RECT& rect);

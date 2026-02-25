@@ -16,6 +16,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <controls:MenuBar x:Name="MainMenuBar" Grid.Row="0" IsTabStop="False">
@@ -117,12 +118,28 @@
             </Border>
         </Grid>
 
-        <TextBlock Grid.Row="3" x:Name="StatusText" Text="Load or drag-and-drop an .mp4/.mov file to preview."/>
-
-        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
             <Button x:Name="StartButton" Content="Start" IsTabStop="False" Click="startButton_Click"/>
             <Button x:Name="PauseButton" Content="Pause" IsTabStop="False" Click="pauseButton_Click"/>
             <Button x:Name="StopButton" Content="Stop" IsTabStop="False" Click="stopButton_Click"/>
         </StackPanel>
+
+        <Border Grid.Row="5" BorderThickness="1" BorderBrush="#4A4A4A" CornerRadius="4" Background="#141414" Padding="8,6">
+            <Grid ColumnSpacing="14" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="3*"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="StatusText" Grid.Column="0" Text="Load or drag-and-drop an .mp4/.mov file to preview." TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="ErrorText" Grid.Column="1" Foreground="#FFFF8585" Text="" TextTrimming="CharacterEllipsis"/>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                    <TextBlock x:Name="InfoText" Text="Estimated output: --:--.---" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <ProgressBar x:Name="OperationProgressBar" Width="170" Height="16" Minimum="0" Maximum="100" Value="0" Visibility="Collapsed"/>
+                </StackPanel>
+            </Grid>
+        </Border>
     </Grid>
 </Window>
