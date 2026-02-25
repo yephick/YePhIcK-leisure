@@ -17,7 +17,13 @@
 #include <mfobjects.h>
 #include <mfreadwrite.h>
 
+#include <propkey.h>
+#include <propsys.h>
+#include <propvarutil.h>
+
 #include <shobjidl_core.h>
+
+#include <wil/resource.h>
 
 export module llvc.Export;
 
@@ -51,6 +57,7 @@ void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>
 vector<float> buildMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs);
 void writePcmAudioToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, const vector<float>& mixedAudio, uint32_t audioChannels, uint32_t audioSampleRate);
 VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback);
+void applyExportFileMetadata(const std::wstring& sourcePath, const std::wstring& outputPath, const std::wstring& exportComment);
 
 }
 
@@ -588,6 +595,41 @@ VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reade
         progressCallback(100.0);
     }
     return stats;
+}
+
+void applyExportFileMetadata(const std::wstring& sourcePath, const std::wstring& outputPath, const std::wstring& exportComment){
+    wil::unique_hfile sourceHandle{::CreateFileW(sourcePath.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+    if(sourceHandle){
+        FILETIME creationTime{};
+        FILETIME lastAccessTime{};
+        FILETIME lastWriteTime{};
+        if(::GetFileTime(sourceHandle.get(), &creationTime, &lastAccessTime, &lastWriteTime)){
+            wil::unique_hfile outputHandle{::CreateFileW(outputPath.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+            if(outputHandle){
+                (void)::SetFileTime(outputHandle.get(), &creationTime, &lastAccessTime, &lastWriteTime);
+            }
+        }
+    }
+
+    com_ptr<IPropertyStore> propertyStore;
+    const auto propertyStoreHr{SHGetPropertyStoreFromParsingName(outputPath.c_str(), nullptr, GPS_READWRITE, IID_PPV_ARGS(propertyStore.put()))};
+    if(SUCCEEDED(propertyStoreHr) && propertyStore){
+        PROPVARIANT encodedByValue{};
+        if(SUCCEEDED(InitPropVariantFromString(L"llvc", &encodedByValue))){
+            (void)propertyStore->SetValue(PKEY_Media_EncodedBy, encodedByValue);
+            PropVariantClear(&encodedByValue);
+        }
+
+        if(!exportComment.empty()){
+            PROPVARIANT commentValue{};
+            if(SUCCEEDED(InitPropVariantFromString(exportComment.c_str(), &commentValue))){
+                (void)propertyStore->SetValue(PKEY_Comment, commentValue);
+                PropVariantClear(&commentValue);
+            }
+        }
+
+        (void)propertyStore->Commit();
+    }
 }
 
 }

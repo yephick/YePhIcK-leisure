@@ -6,6 +6,8 @@
 #include <limits>
 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 
 #include <mfapi.h>
 #include <mferror.h>
@@ -40,6 +42,22 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     const auto outputDuration100ns{m_prj.outputDuration100ns(m_timelineDurationSeconds)};
 
     const filesystem::path sourceFsPath{sourcePath};
+
+    auto makeExportComment = [&](const filesystem::path& sourcePathForComment) -> wstring {
+        const auto now{chrono::system_clock::now()};
+        const auto nowTimeT{chrono::system_clock::to_time_t(now)};
+        tm localTime{};
+        if(localtime_s(&localTime, &nowTimeT) != 0){
+            return L"created by llvc from " + sourcePathForComment.filename().wstring();
+        }
+
+        wchar_t timestamp[64]{};
+        if(wcsftime(timestamp, size(timestamp), L"%Y-%m-%d %H:%M:%S", &localTime) == 0){
+            return L"created by llvc from " + sourcePathForComment.filename().wstring();
+        }
+
+        return L"created by llvc from " + sourcePathForComment.filename().wstring() + L" on " + timestamp;
+    };
     const auto sourceExt{sourceFsPath.extension().wstring()};
     const auto defaultExt{_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4"};
 
@@ -58,6 +76,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
     winrt::hstring exportErrorMessage{};
     auto exportSucceeded{false};
+    const auto exportComment{makeExportComment(sourceFsPath)};
 
     winrt::apartment_context uiThread;
     co_await winrt::resume_background();
@@ -252,6 +271,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         }
 
         check_hresult(writer->Finalize());
+        applyExportFileMetadata(sourcePath, outputPath, exportComment);
         exportSucceeded = true;
     }catch(const hresult_error& ex){
         exportErrorMessage = ex.message();
