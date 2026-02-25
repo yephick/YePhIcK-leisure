@@ -1529,8 +1529,10 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     m_projectPath = file.Path();
     addRecentProject(m_projectPath);
 
-    setStatusMessage(L"Project loaded");
-    clearErrorMessage();
+    if(m_prj.videoFile().Path().empty()){
+        setStatusMessage(L"Project loaded");
+        clearErrorMessage();
+    }
     updateWindowTitle();
     refreshStatusInfoSection();
 }
@@ -2051,6 +2053,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
 
         for(int builtCount{0}; builtCount < thumbnailCount; ++builtCount){
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
+                if(m_isClosing){
+                    setOperationInProgress(false);
+                }
                 co_return;
             }
 
@@ -2094,6 +2099,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
             const auto t{(nextIndex + 0.5) / thumbnailCount};
             const auto stream{co_await composition.GetThumbnailAsync(secondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
+                if(m_isClosing){
+                    setOperationInProgress(false);
+                }
                 co_return;
             }
 
