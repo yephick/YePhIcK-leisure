@@ -33,6 +33,8 @@ struct MediaInspectionResult{
     wstring fileSize{};
     wstring sourceCreated{};
     wstring sourceModified{};
+    wstring sourceEncodedBy{};
+    wstring sourceComment{};
     wstring resolution{};
     Ratio frameRate{};
     wstring videoBitrate{};

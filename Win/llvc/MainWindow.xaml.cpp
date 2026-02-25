@@ -27,6 +27,9 @@
 #include <mfreadwrite.h>
 
 #include <microsoft.ui.xaml.window.h>
+#include <propkey.h>
+#include <propsys.h>
+#include <propvarutil.h>
 #include <shobjidl_core.h>
 #include <winrt/Windows.Storage.FileProperties.h>
 #include <winrt/Microsoft.UI.Input.h>
@@ -80,6 +83,33 @@ using IOpBool = MainWindow::IOpBool;
 using TS = MainWindow::TS;
 
 constexpr auto W_POS_L{L"WindowLeft"};
+
+namespace{
+
+std::wstring readShellStringProperty(const std::wstring& filePath, const PROPERTYKEY& key){
+    winrt::com_ptr<IPropertyStore> propertyStore;
+    const auto hr{SHGetPropertyStoreFromParsingName(filePath.c_str(), nullptr, GPS_BESTEFFORT, IID_PPV_ARGS(propertyStore.put()))};
+    if(FAILED(hr) || !propertyStore){
+        return {};
+    }
+
+    PROPVARIANT value{};
+    PropVariantInit(&value);
+
+    std::wstring text;
+    if(SUCCEEDED(propertyStore->GetValue(key, &value))){
+        PWSTR converted{};
+        if(SUCCEEDED(PropVariantToStringAlloc(value, &converted)) && converted){
+            text = converted;
+            ::CoTaskMemFree(converted);
+        }
+    }
+
+    PropVariantClear(&value);
+    return text;
+}
+
+}
 constexpr auto W_POS_T{L"WindowTop"};
 constexpr auto W_POS_W{L"WindowWidth"};
 constexpr auto W_POS_H{L"WindowHeight"};
@@ -1264,6 +1294,8 @@ wstring MainWindow::buildSourcePropertiesText() const{
     content += L"Size: "; content += m_mediaInfo.fileSize; content += L"\n";
     content += L"Created: "; content += m_mediaInfo.sourceCreated; content += L"\n";
     content += L"Modified: "; content += m_mediaInfo.sourceModified; content += L"\n";
+    content += L"Encoded by: "; content += (m_mediaInfo.sourceEncodedBy.empty() ? L"-" : m_mediaInfo.sourceEncodedBy); content += L"\n";
+    content += L"Comment: "; content += (m_mediaInfo.sourceComment.empty() ? L"-" : m_mediaInfo.sourceComment); content += L"\n";
     content += L"Video codec: "; content += m_mediaInfo.videoCodec; content += L"\n";
     content += L"Resolution: "; content += m_mediaInfo.resolution; content += L"\n";
     content += L"FPS: "; content += formatRatio(m_mediaInfo.frameRate.num, m_mediaInfo.frameRate.den, L" fps"); content += L"\n";
@@ -1560,6 +1592,9 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     if(videoStreamIndex != invalidStreamIndex){
         analyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen, result);
     }
+
+    result.sourceEncodedBy = readShellStringProperty(filePath, PKEY_Media_EncodedBy);
+    result.sourceComment = readShellStringProperty(filePath, PKEY_Comment);
     result.isValid = true;
     return result;
 }
