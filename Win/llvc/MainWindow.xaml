@@ -46,32 +46,39 @@
             </controls:MenuBarItem>
         </controls:MenuBar>
 
-        <Grid Grid.Row="1">
-            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="8">
+        <Grid Grid.Row="1" ColumnSpacing="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.Column="0" VerticalAlignment="Stretch">
+                <Button x:Name="VideoDetailsOpenMarker" Width="26" Height="64" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="0"
+                        Content="❯" Click="videoDetailsOpenMarker_Click" ToolTipService.ToolTip="Show source video details"/>
+
+                <Border x:Name="VideoDetailsPanel" Width="340" HorizontalAlignment="Left" VerticalAlignment="Stretch" Padding="10" CornerRadius="4"
+                        BorderBrush="#707070" BorderThickness="1" Background="#E6101010" Visibility="Collapsed">
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <ScrollViewer VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Source video details" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="VideoDetailsText" Text="No video is currently loaded." TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </ScrollViewer>
+
+                        <Button Grid.Column="1" x:Name="VideoDetailsCollapseMarker" Width="24" HorizontalAlignment="Right" VerticalAlignment="Stretch" Padding="0"
+                                Content="❮" Click="videoDetailsCollapseMarker_Click" ToolTipService.ToolTip="Collapse details panel"/>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="8">
                 <controls:MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
-            </Border>
-
-            <Button x:Name="VideoDetailsOpenMarker" Width="26" Height="64" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0" Padding="0"
-                    Content="❯" Click="videoDetailsOpenMarker_Click" ToolTipService.ToolTip="Show source video details"/>
-
-            <Border x:Name="VideoDetailsPanel" Width="340" HorizontalAlignment="Left" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
-                    BorderBrush="#707070" BorderThickness="1" Background="#E6101010" Visibility="Collapsed">
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <ScrollViewer VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel Spacing="6">
-                            <TextBlock Text="Source video details" FontWeight="SemiBold"/>
-                            <TextBlock x:Name="VideoDetailsText" Text="No video is currently loaded." TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </ScrollViewer>
-
-                    <Button Grid.Column="1" x:Name="VideoDetailsCollapseMarker" Width="24" HorizontalAlignment="Right" VerticalAlignment="Stretch" Padding="0"
-                            Content="❮" Click="videoDetailsCollapseMarker_Click" ToolTipService.ToolTip="Collapse details panel"/>
-                </Grid>
             </Border>
         </Grid>
 
