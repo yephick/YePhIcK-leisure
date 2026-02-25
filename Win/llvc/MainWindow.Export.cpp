@@ -7,6 +7,7 @@
 #include <limits>
 
 #include <algorithm>
+#include <functional>
 
 #include <mfapi.h>
 #include <mferror.h>
@@ -201,7 +202,9 @@ VideoWriteStats writeVideoSamplesForExport(
     const DWORD writerVideoStreamIndex,
     const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns,
     const GUID videoSubtype,
-    const uint32_t nalLengthFieldSize){
+    const uint32_t nalLengthFieldSize,
+    const int64_t sourceDuration100ns,
+    const function<void(double)>& progressCallback){
 
     auto waitingForCleanPoint{false};
     auto markDiscontinuityOnNextWrittenSample{false};
@@ -209,6 +212,10 @@ VideoWriteStats writeVideoSamplesForExport(
     auto dtsPtsShiftInitialized{false};
     int64_t lastInTime100ns{-1};
     VideoWriteStats stats{};
+
+    if(progressCallback){
+        progressCallback(0.0);
+    }
 
     for(;;){
         DWORD actualStream{};
@@ -305,8 +312,16 @@ VideoWriteStats writeVideoSamplesForExport(
 
         check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
         ++stats.writtenSampleCount;
+
+        if(progressCallback && sourceDuration100ns > 0 && (stats.readSampleCount % 24 == 0)) {
+            const auto pct{(100.0 * inTime100ns) / sourceDuration100ns};
+            progressCallback(pct);
+        }
     }
 
+    if(progressCallback){
+        progressCallback(100.0);
+    }
     return stats;
 }
 
@@ -332,11 +347,21 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         co_return;
     }
 
+    m_isExportInProgress = true;
+    m_resumeTimelineRenderAfterExport = m_prj.videoFile() && m_timelineDurationSeconds > 0;
+    ++m_timelineRenderVersion;
+
+    setStatusMessage(L"Exporting...");
+    clearErrorMessage();
+    setOperationInProgress(true, true);
+
     winrt::hstring exportErrorMessage{};
+    auto exportSucceeded{false};
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
 
     try{
-        StatusText().Text(L"Exporting...");
-
         com_ptr<IMFAttributes> readerAttributes;
         check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
         check_hresult(readerAttributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE));
@@ -500,7 +525,18 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             writerVideoStreamIndex,
             effectiveCutRanges100ns,
             videoSubtype,
-            nalLengthFieldSize)};
+            nalLengthFieldSize,
+            sourceDuration100ns,
+            [self = get_weak()](double pct){
+                if(const auto strong = self.get()){
+                    strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct](){
+                        if(const auto ui = weak.get()){
+                            ui->setOperationProgress(pct);
+                        }
+                    });
+                }
+            })};
+        (void)videoStats;
 
         if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
             com_ptr<IMFSourceReader> audioReader;
@@ -515,16 +551,44 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         }
 
         check_hresult(writer->Finalize());
-        StatusText().Text(L"Export completed");
+        exportSucceeded = true;
     }catch(const hresult_error& ex){
-        StatusText().Text(L"Export failed");
         exportErrorMessage = ex.message();
+    }
+
+    co_await uiThread;
+
+    if(exportSucceeded){
+        setOperationProgress(100);
+    }
+
+    m_isExportInProgress = false;
+    setOperationInProgress(false);
+    if(exportSucceeded){
+        setStatusMessage(L"Export completed");
+        clearErrorMessage();
+        refreshStatusInfoSection();
+    }else{
+        setStatusMessage(L"Export failed");
+        setErrorMessage(exportErrorMessage.c_str());
     }
 
     if(!exportErrorMessage.empty()){
         co_await showInfoDialogAsync(L"Export failed", exportErrorMessage);
     }
+
+    const auto shouldResumeTimeline{m_resumeTimelineRenderAfterExport && m_prj.videoFile() && m_timelineDurationSeconds > 0};
+    m_resumeTimelineRenderAfterExport = false;
+    if(shouldResumeTimeline){
+        wstring status{L"Loaded: "};
+        status += m_prj.videoFile().Name().c_str();
+        status += L" (loading story line...)";
+        setStatusMessage(status);
+        clearErrorMessage();
+        renderTimelineAsync();
+    }
 }
+
 
 
 } // namespace winrt::llvc::implementation

@@ -117,12 +117,33 @@
             </Border>
         </Grid>
 
-        <TextBlock Grid.Row="3" x:Name="StatusText" Text="Load or drag-and-drop an .mp4/.mov file to preview."/>
-
-        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
             <Button x:Name="StartButton" Content="Start" IsTabStop="False" Click="startButton_Click"/>
             <Button x:Name="PauseButton" Content="Pause" IsTabStop="False" Click="pauseButton_Click"/>
             <Button x:Name="StopButton" Content="Stop" IsTabStop="False" Click="stopButton_Click"/>
         </StackPanel>
+
+        <Border Grid.Row="4" BorderThickness="1" BorderBrush="#4A4A4A" CornerRadius="4" Background="#141414" Padding="8,6">
+            <Grid ColumnSpacing="12" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Grid Grid.Column="0" RowSpacing="2" VerticalAlignment="Center">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock x:Name="StatusText" Grid.Row="0" Text="Load or drag-and-drop an .mp4/.mov file to preview." TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="ErrorText" Grid.Row="1" Foreground="#FFFF8585" Text="" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+                </Grid>
+
+                <TextBlock x:Name="InfoText" Grid.Column="1" Margin="0,0,10,0" Text="Estimated output: --:--.---" VerticalAlignment="Center" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"/>
+                <ProgressBar x:Name="OperationProgressBar" Grid.Column="2" Width="170" Height="16" Minimum="0" Maximum="100" Value="0" Visibility="Collapsed" HorizontalAlignment="Right"/>
+            </Grid>
+        </Border>
     </Grid>
 </Window>

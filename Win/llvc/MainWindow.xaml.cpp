@@ -446,6 +446,7 @@ MainWindow::MainWindow(){
     refreshRecentVideosMenu();
     refreshRecentProjectsMenu();
     updateWindowTitle();
+    refreshStatusInfoSection();
 }
 
 HWND MainWindow::getWindowHandle() const{
@@ -618,6 +619,7 @@ void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
     m_prj.keepAudio(KeepAudioCheckBox().IsChecked().GetBoolean());
     updateAudioUiAndPlaybackState();
     updateWindowTitle();
+    refreshStatusInfoSection();
 }
 
 void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const Control&){
@@ -635,6 +637,7 @@ void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const C
 
     syncAudioCrossfadeComboSelection();
     updateWindowTitle();
+    refreshStatusInfoSection();
 }
 
 void MainWindow::timelineHorizontalScrollBar_ValueChanged(const Control&, const RBVArgs& args){
@@ -652,6 +655,10 @@ void MainWindow::timelineHorizontalScrollBar_ValueChanged(const Control&, const 
 
 void MainWindow::timelineScrollViewer_ViewChanged(const Control&, const SVVCArgs&){
     syncTimelineHorizontalScrollBar();
+
+    if(m_isExportInProgress && m_prj.videoFile() && m_timelineDurationSeconds > 0){
+        renderTimelineAsync();
+    }
 }
 
 void MainWindow::timelineScrollViewer_SizeChanged(const Control&, const SCArgs&){
@@ -796,7 +803,10 @@ void MainWindow::onNaturalDurationChanged(const MPSession& sender, const Control
                 self->renderTimelineAsync();
             }
         });
+        return;
     }
+
+    setOperationInProgress(false);
 }
 
 void MainWindow::onPositionTimerTick(const Control&, const Control&){
@@ -891,6 +901,7 @@ void MainWindow::renderTimelineTicks(){
     const auto width{TimelineCanvas().Width()};
     TimelineTickCanvas().Width(width);
     if(m_timelineDurationSeconds <= 0 || width <= 0){
+        refreshStatusInfoSection();
         return;
     }
 
@@ -935,27 +946,22 @@ void MainWindow::renderKeyframeTicks(){
 
     const auto width {TimelineTickCanvas().Width()};
     const auto total100ns {m_timelineDurationSeconds * 10'000'000.0};
-    uint32_t cleanOrdinal{};
+
     for(const auto& frame: m_prj.frameIndex()){
         if(!frame.cleanPoint){
             continue;
         }
 
         const auto x {clamp((frame.time100ns / total100ns) * width, 0.0, width)};
-        // XXX: looks like isSelected is always true
-        const auto isSelected{find(m_prj.selKeyFrames().begin(), m_prj.selKeyFrames().end(), cleanOrdinal) != m_prj.selKeyFrames().end()};
 
         Shapes::Line tick{};
         tick.X1(x);
         tick.X2(x);
         tick.Y1(0);
-        tick.Y2(isSelected ? 8.0 : 5.0);
-        tick.Stroke(Media::SolidColorBrush(isSelected
-            ? Windows::UI::ColorHelper::FromArgb(255, 255, 80, 80)
-            : Windows::UI::ColorHelper::FromArgb(255, 80, 200, 255)));
-        tick.StrokeThickness(isSelected ? 2.0 : 1.0);
+        tick.Y2(8.0);
+        tick.Stroke(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 255, 80, 80)));
+        tick.StrokeThickness(2.0);
         TimelineTickCanvas().Children().Append(tick);
-        ++cleanOrdinal;
     }
 }
 
@@ -965,6 +971,7 @@ void MainWindow::renderCutOverlays(){
     const auto width{TimelineCanvas().Width()};
     CutOverlayLayer().Width(width);
     if(m_timelineDurationSeconds <= 0 || width <= 0){
+        refreshStatusInfoSection();
         return;
     }
 
@@ -987,6 +994,8 @@ void MainWindow::renderCutOverlays(){
         Controls::Canvas::SetTop(block, 0.0);
         CutOverlayLayer().Children().Append(block);
     }
+
+    refreshStatusInfoSection();
 }
 
 
@@ -1197,7 +1206,8 @@ AAction MainWindow::newProjectMenuItem_Click(const Control&, const REArgs&){
     }
 
     resetProjectState();
-    StatusText().Text(L"New project created");
+    setStatusMessage(L"New project created");
+    clearErrorMessage();
 }
 
 AAction MainWindow::openProjectMenuItem_Click(const Control&, const REArgs&){
@@ -1269,7 +1279,8 @@ AAction MainWindow::closeProjectMenuItem_Click(const Control&, const REArgs&){
     }
 
     resetProjectState();
-    StatusText().Text(L"Project closed");
+    setStatusMessage(L"Project closed");
+    clearErrorMessage();
 }
 
 AAction MainWindow::loadVideoMenuItem_Click(const Control&, const REArgs&){
@@ -1444,7 +1455,9 @@ void MainWindow::resetProjectState(){
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
     syncTimelineHorizontalScrollBar();
 
-    StatusText().Text(L"Load or drag-and-drop an .mp4/.mov file to preview.");
+    setStatusMessage(L"Load or drag-and-drop an .mp4/.mov file to preview.");
+    clearErrorMessage();
+    refreshStatusInfoSection();
     updateWindowTitle();
 }
 
@@ -1505,7 +1518,7 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
             const auto videoFile{co_await StorageFile::GetFileFromPathAsync(m_prj.videoFile().Path())};
             co_await loadVideoFileAsync(videoFile);
         }catch(...){
-            StatusText().Text(L"Project opened, but referenced video could not be loaded");
+            setStatusMessage(L"Project opened, but referenced video could not be loaded");
         }
     }
 
@@ -1515,16 +1528,22 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     m_projectPath = file.Path();
     addRecentProject(m_projectPath);
 
-    StatusText().Text(L"Project loaded");
+    if(m_prj.videoFile().Path().empty()){
+        setStatusMessage(L"Project loaded");
+        clearErrorMessage();
+    }
     updateWindowTitle();
+    refreshStatusInfoSection();
 }
 
 AAction MainWindow::saveProjectFileAsync(const SFile& file){
     co_await m_prj.save(file);
     m_projectPath = file.Path();
     addRecentProject(file.Path());
-    StatusText().Text(L"Project saved");
+    setStatusMessage(L"Project saved");
+    clearErrorMessage();
     updateWindowTitle();
+    refreshStatusInfoSection();
 }
 
 AAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& message){
@@ -1575,6 +1594,53 @@ void MainWindow::setVideoDetailsPanelExpanded(bool expanded){
 
 void MainWindow::refreshVideoDetailsPanel(){
     VideoDetailsText().Text(buildSourcePropertiesText());
+}
+
+wstring MainWindow::formatTimelineDurationText(int64_t duration100ns){
+    const auto clamped{max<int64_t>(0, duration100ns)};
+    const auto totalMs{(clamped + 5'000) / 10'000};
+    const auto minutes{totalMs / 60'000};
+    const auto seconds{(totalMs / 1'000) % 60};
+    const auto millis{totalMs % 1'000};
+    return std::format(L"{:02}:{:02}.{:03}", minutes, seconds, millis);
+}
+
+void MainWindow::setStatusMessage(const wstring& message){
+    StatusText().Text(message);
+}
+
+void MainWindow::setErrorMessage(const wstring& message){
+    ErrorText().Text(message);
+    ErrorText().Visibility(message.empty() ? Visibility::Collapsed : Visibility::Visible);
+}
+
+void MainWindow::clearErrorMessage(){
+    ErrorText().Text(L"");
+    ErrorText().Visibility(Visibility::Collapsed);
+}
+
+void MainWindow::refreshStatusInfoSection(){
+    const auto outputDuration100ns{m_prj.outputDuration100ns(m_timelineDurationSeconds)};
+    wstring text{L"Estimated output: "};
+    text += formatTimelineDurationText(outputDuration100ns);
+    InfoText().Text(text);
+}
+
+void MainWindow::setOperationInProgress(bool active, bool indeterminate){
+    if(active){
+        OperationProgressBar().IsIndeterminate(indeterminate);
+        if(!indeterminate){
+            OperationProgressBar().Value(0);
+        }
+    }else{
+        OperationProgressBar().IsIndeterminate(false);
+    }
+    OperationProgressBar().Visibility(active ? Visibility::Visible : Visibility::Collapsed);
+}
+
+void MainWindow::setOperationProgress(double percent){
+    OperationProgressBar().IsIndeterminate(false);
+    OperationProgressBar().Value(clamp(percent, 0.0, 100.0));
 }
 
 AAction MainWindow::showOptionsDialogAsync(){
@@ -1799,19 +1865,19 @@ void MainWindow::window_DragOver(const Control&, const DEArgs& e){
 AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
     const auto view{e.DataView()};
     if(!view.Contains(Windows::ApplicationModel::DataTransfer::StandardDataFormats::StorageItems())){
-        StatusText().Text(L"Dropped content is not a file");
+        setStatusMessage(L"Dropped content is not a file");
         co_return;
     }
 
     const auto items{co_await view.GetStorageItemsAsync()};
     if(items.Size() != 1){
-        StatusText().Text(L"Only support a single .mp4 or .mov file");
+        setStatusMessage(L"Only support a single .mp4 or .mov file");
         co_return;
     }
 
     const auto file{items.GetAt(0).try_as<StorageFile>()};
     if(!file){
-        StatusText().Text(L"Dropped content is not a file");
+        setStatusMessage(L"Dropped content is not a file");
         __debugbreak(); // this should have been caught earlier in this function!
         co_return;
     }
@@ -1821,7 +1887,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
         wstring lower{ext.c_str()};
         transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
         if(lower != L".mp4" && lower != L".mov"){
-            StatusText().Text(L"Only .mp4 and .mov files are supported");
+            setStatusMessage(L"Only .mp4 and .mov files are supported");
             co_return;
         }
     }
@@ -1832,6 +1898,8 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
 }
 
 AAction MainWindow::loadVideoFileAsync(const SFile& file){
+    setOperationInProgress(true, true);
+
     MediaInspectionResult inspected{};
     try{
         inspected = inspectMediaFile(file.Path().c_str());
@@ -1845,7 +1913,9 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     if(!inspected.isValid){
         wstring status{L"Open rejected: "};
         status += inspected.errorMessage;
-        StatusText().Text(status);
+        setStatusMessage(status);
+        setErrorMessage(inspected.errorMessage);
+        setOperationInProgress(false);
         co_await showInfoDialogAsync(L"Unsupported media", hstring(status));
         co_return;
     }
@@ -1857,7 +1927,8 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     wstring status{L"Loaded: "};
     status += file.Name().c_str();
     status += L" (loading story line...)";
-    StatusText().Text(status);
+    setStatusMessage(status);
+    clearErrorMessage();
 
     const auto source{Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
     m_player.Source(source);
@@ -1877,6 +1948,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
 
     updateAudioUiAndPlaybackState();
     updateWindowTitle();
+    refreshStatusInfoSection();
 }
 
 bool MainWindow::sourceHasAudio() const{
@@ -1884,9 +1956,6 @@ bool MainWindow::sourceHasAudio() const{
 }
 
 void MainWindow::syncAudioCrossfadeComboSelection(){
-    // XXX: is this set call even needed? Or, instead, shouldn't the value be set every time a new choice is made by user?
-    m_prj.audioXfadeMs(m_prj.audioXfadeMs());
-
     const auto combo{AudioCrossfadeComboBox()};
     const auto items{combo.Items()};
     for(uint32_t i{0}; i < items.Size(); ++i){
@@ -1909,6 +1978,16 @@ void MainWindow::syncAudioCrossfadeComboSelection(){
     }
 
     combo.SelectedIndex(0);
+    if(const auto firstItem{combo.SelectedItem().try_as<Controls::ComboBoxItem>()}){
+        if(firstItem.Tag()){
+            try{
+                const auto tag{unbox_value<hstring>(firstItem.Tag())};
+                m_prj.audioXfadeMs(stoi(wstring(tag.c_str())));
+            }catch(...){
+                m_prj.audioXfadeMs(0);
+            }
+        }
+    }
 }
 
 void MainWindow::applyAudioSettingsToPlayer(){
@@ -1939,6 +2018,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
     const auto lifetime{get_strong()};
 
     if(m_isClosing || !m_prj.videoFile() || m_timelineDurationSeconds <= 0){
+        if(!m_isExportInProgress){
+            setOperationInProgress(false);
+        }
         co_return;
     }
 
@@ -1953,6 +2035,11 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
     }
 
     try{
+        const auto renderDuringExport{m_isExportInProgress};
+        if(!renderDuringExport){
+            setOperationInProgress(true, true);
+        }
+
         const auto renderVersion{++m_timelineRenderVersion};
         const auto zoom{TimelineZoomSlider().Value()};
         const auto totalWidth{max(800.0, m_timelineDurationSeconds * 14.0 * zoom)};
@@ -1979,6 +2066,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
 
         for(int builtCount{0}; builtCount < thumbnailCount; ++builtCount){
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
+                if(m_isClosing){
+                    setOperationInProgress(false);
+                }
                 co_return;
             }
 
@@ -1997,7 +2087,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
                 }
             }
 
-            if(nextIndex < 0){
+            if(nextIndex < 0 && !renderDuringExport){
                 auto left{firstVisibleIndex - 1};
                 auto right{lastVisibleIndex + 1};
                 while(nextIndex < 0 && (left >= 0 || right < thumbnailCount)){
@@ -2022,6 +2112,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
             const auto t{(nextIndex + 0.5) / thumbnailCount};
             const auto stream{co_await composition.GetThumbnailAsync(secondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
+                if(m_isClosing){
+                    setOperationInProgress(false);
+                }
                 co_return;
             }
 
@@ -2041,17 +2134,27 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         }
 
         updateTimelineCursorFromPlayback();
-        ensureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
+        if(!renderDuringExport && m_player && m_player.PlaybackSession().PlaybackState() == MediaPlaybackState::Playing){
+            ensureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
+        }
         syncTimelineHorizontalScrollBar();
 
-        wstring status{L"Loaded: "};
-        status += m_prj.videoFile().Name().c_str();
-        status += L" (story line ready)";
-        StatusText().Text(status);
+        if(!renderDuringExport){
+            wstring status{L"Loaded: "};
+            status += m_prj.videoFile().Name().c_str();
+            status += L" (story line ready)";
+            setStatusMessage(status);
+            refreshStatusInfoSection();
+            setOperationInProgress(false);
+        }
     }catch(const winrt::hresult_error& ex){
-        wstring status{L"Failed to render story line: "};
-        status += ex.message().c_str();
-        StatusText().Text(status);
+        if(!m_isExportInProgress){
+            wstring status{L"Failed to render story line: "};
+            status += ex.message().c_str();
+            setStatusMessage(status);
+            setErrorMessage(ex.message().c_str());
+            setOperationInProgress(false);
+        }
     }
 }
 

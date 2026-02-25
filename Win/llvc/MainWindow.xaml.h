@@ -115,6 +115,8 @@ private:
     uint32_t m_maxRecentProjects{5};
     hstring m_projectPath{};
     bool m_isClosing{false};
+    bool m_isExportInProgress{false};
+    bool m_resumeTimelineRenderAfterExport{false};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};
     uint32_t m_timelineDragPointerId{0};
@@ -166,6 +168,13 @@ private:
     wstring buildSourcePropertiesText() const;
     void applyAudioSettingsToPlayer();
     void syncAudioCrossfadeComboSelection();
+    void setStatusMessage(const wstring& message);
+    void setErrorMessage(const wstring& message);
+    void clearErrorMessage();
+    void refreshStatusInfoSection();
+    void setOperationInProgress(bool active, bool indeterminate = false);
+    void setOperationProgress(double percent);
+    static wstring formatTimelineDurationText(int64_t duration100ns);
     bool sourceHasAudio() const;
     static TS secondsToTimeSpan(double seconds);
     static bool isRectVisibleOnAnyMonitor(const RECT& rect);
