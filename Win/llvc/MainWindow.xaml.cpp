@@ -1616,10 +1616,12 @@ void MainWindow::setStatusMessage(const wstring& message){
 
 void MainWindow::setErrorMessage(const wstring& message){
     ErrorText().Text(message);
+    ErrorText().Visibility(message.empty() ? Visibility::Collapsed : Visibility::Visible);
 }
 
 void MainWindow::clearErrorMessage(){
     ErrorText().Text(L"");
+    ErrorText().Visibility(Visibility::Collapsed);
 }
 
 void MainWindow::refreshStatusInfoSection(){

@@ -138,7 +138,7 @@
                     </Grid.RowDefinitions>
 
                     <TextBlock x:Name="StatusText" Grid.Row="0" Text="Load or drag-and-drop an .mp4/.mov file to preview." TextTrimming="CharacterEllipsis"/>
-                    <TextBlock x:Name="ErrorText" Grid.Row="1" Foreground="#FFFF8585" Text="" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="ErrorText" Grid.Row="1" Foreground="#FFFF8585" Text="" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
                 </Grid>
 
                 <TextBlock x:Name="InfoText" Grid.Column="1" Margin="0,0,10,0" Text="Estimated output: --:--.---" VerticalAlignment="Center" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"/>
