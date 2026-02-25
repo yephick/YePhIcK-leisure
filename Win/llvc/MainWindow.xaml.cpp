@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <ctime>
 #include <cwctype>
 #include <cwchar>
 #include <filesystem>
@@ -1260,6 +1262,8 @@ wstring MainWindow::buildSourcePropertiesText() const{
     content += L"Container: "; content += m_mediaInfo.container; content += L"\n";
     content += L"Duration: "; content += m_mediaInfo.duration; content += L"\n";
     content += L"Size: "; content += m_mediaInfo.fileSize; content += L"\n";
+    content += L"Created: "; content += m_mediaInfo.sourceCreated; content += L"\n";
+    content += L"Modified: "; content += m_mediaInfo.sourceModified; content += L"\n";
     content += L"Video codec: "; content += m_mediaInfo.videoCodec; content += L"\n";
     content += L"Resolution: "; content += m_mediaInfo.resolution; content += L"\n";
     content += L"FPS: "; content += formatRatio(m_mediaInfo.frameRate.num, m_mediaInfo.frameRate.den, L" fps"); content += L"\n";
@@ -1289,6 +1293,22 @@ wstring MainWindow::formatTimelineDurationText(int64_t duration100ns){
     const auto seconds{(totalMs / 1'000) % 60};
     const auto millis{totalMs % 1'000};
     return std::format(L"{:02}:{:02}.{:03}", minutes, seconds, millis);
+}
+
+
+wstring MainWindow::formatDateTimeText(const winrt::Windows::Foundation::DateTime& value){
+    const auto asTimeT{winrt::clock::to_time_t(value)};
+    tm localTime{};
+    if(localtime_s(&localTime, &asTimeT) != 0){
+        return L"-";
+    }
+
+    wchar_t timestamp[64]{};
+    if(wcsftime(timestamp, size(timestamp), L"%Y-%m-%d %H:%M:%S", &localTime) == 0){
+        return L"-";
+    }
+
+    return timestamp;
 }
 
 void MainWindow::setStatusMessage(const wstring& message){
@@ -1608,6 +1628,8 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
 
     const auto basicProperties{co_await file.GetBasicPropertiesAsync()};
     inspected.fileSize = formatFileSize(basicProperties.Size());
+    inspected.sourceCreated = formatDateTimeText(file.DateCreated());
+    inspected.sourceModified = formatDateTimeText(basicProperties.DateModified());
     m_mediaInfo = inspected;
 
     wstring status{L"Loaded: "};

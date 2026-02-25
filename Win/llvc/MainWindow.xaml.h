@@ -31,6 +31,8 @@ struct MediaInspectionResult{
     wstring audioCodec{};
     wstring duration{};
     wstring fileSize{};
+    wstring sourceCreated{};
+    wstring sourceModified{};
     wstring resolution{};
     Ratio frameRate{};
     wstring videoBitrate{};
@@ -175,6 +177,7 @@ private:
     void setOperationInProgress(bool active, bool indeterminate = false);
     void setOperationProgress(double percent);
     static wstring formatTimelineDurationText(int64_t duration100ns);
+    static wstring formatDateTimeText(const winrt::Windows::Foundation::DateTime& value);
     bool sourceHasAudio() const;
     static TS secondsToTimeSpan(double seconds);
     static bool isRectVisibleOnAnyMonitor(const RECT& rect);
