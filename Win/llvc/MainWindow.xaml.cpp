@@ -17,7 +17,6 @@
 #include <string_view>
 #include <functional>
 #include <vector>
-#include <unordered_set>
 
 #include <mfapi.h>
 #include <mferror.h>
@@ -947,28 +946,22 @@ void MainWindow::renderKeyframeTicks(){
 
     const auto width {TimelineTickCanvas().Width()};
     const auto total100ns {m_timelineDurationSeconds * 10'000'000.0};
-    const unordered_set<uint32_t> selectedKeyframes{m_prj.selKeyFrames().begin(), m_prj.selKeyFrames().end()};
 
-    uint32_t cleanOrdinal{};
     for(const auto& frame: m_prj.frameIndex()){
         if(!frame.cleanPoint){
             continue;
         }
 
         const auto x {clamp((frame.time100ns / total100ns) * width, 0.0, width)};
-        const auto isSelected{selectedKeyframes.contains(cleanOrdinal)};
 
         Shapes::Line tick{};
         tick.X1(x);
         tick.X2(x);
         tick.Y1(0);
-        tick.Y2(isSelected ? 8.0 : 5.0);
-        tick.Stroke(Media::SolidColorBrush(isSelected
-            ? Windows::UI::ColorHelper::FromArgb(255, 255, 80, 80)
-            : Windows::UI::ColorHelper::FromArgb(255, 80, 200, 255)));
-        tick.StrokeThickness(isSelected ? 2.0 : 1.0);
+        tick.Y2(8.0);
+        tick.Stroke(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 255, 80, 80)));
+        tick.StrokeThickness(2.0);
         TimelineTickCanvas().Children().Append(tick);
-        ++cleanOrdinal;
     }
 }
 
