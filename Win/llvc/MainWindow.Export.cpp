@@ -580,6 +580,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     const auto shouldResumeTimeline{m_resumeTimelineRenderAfterExport && m_prj.videoFile() && m_timelineDurationSeconds > 0};
     m_resumeTimelineRenderAfterExport = false;
     if(shouldResumeTimeline){
+        wstring status{L"Loaded: "};
+        status += m_prj.videoFile().Name().c_str();
+        status += L" (loading story line...)";
+        setStatusMessage(status);
+        clearErrorMessage();
         renderTimelineAsync();
     }
 }
