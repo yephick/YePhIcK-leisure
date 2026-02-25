@@ -347,14 +347,16 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         co_return;
     }
 
+    setStatusMessage(L"Exporting...");
+    clearErrorMessage();
+    setOperationInProgress(true, true);
+
     winrt::hstring exportErrorMessage{};
+    auto exportSucceeded{false};
+
+    co_await winrt::resume_background();
 
     try{
-        setStatusMessage(L"Exporting...");
-        clearErrorMessage();
-        setOperationInProgress(true, true);
-        setOperationProgress(0);
-
         com_ptr<IMFAttributes> readerAttributes;
         check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
         check_hresult(readerAttributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE));
@@ -522,9 +524,14 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             sourceDuration100ns,
             [self = get_weak()](double pct){
                 if(const auto strong = self.get()){
-                    strong->setOperationProgress(pct);
+                    strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct](){
+                        if(const auto ui = weak.get()){
+                            ui->setOperationProgress(pct);
+                        }
+                    });
                 }
             })};
+        (void)videoStats;
 
         if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
             com_ptr<IMFSourceReader> audioReader;
@@ -538,22 +545,33 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             writePcmAudioToWriter(writer.get(), writerAudioStreamIndex, mixedAudio, audioChannels, audioSampleRate);
         }
 
-        setOperationProgress(100);
         check_hresult(writer->Finalize());
-        setStatusMessage(L"Export completed");
-        setOperationInProgress(false);
-        refreshStatusInfoSection();
+        exportSucceeded = true;
     }catch(const hresult_error& ex){
-        setOperationInProgress(false);
-        setStatusMessage(L"Export failed");
-        setErrorMessage(ex.message().c_str());
         exportErrorMessage = ex.message();
+    }
+
+    co_await winrt::resume_foreground(DispatcherQueue());
+
+    if(exportSucceeded){
+        setOperationProgress(100);
+    }
+
+    setOperationInProgress(false);
+    if(exportSucceeded){
+        setStatusMessage(L"Export completed");
+        clearErrorMessage();
+        refreshStatusInfoSection();
+    }else{
+        setStatusMessage(L"Export failed");
+        setErrorMessage(exportErrorMessage.c_str());
     }
 
     if(!exportErrorMessage.empty()){
         co_await showInfoDialogAsync(L"Export failed", exportErrorMessage);
     }
 }
+
 
 
 } // namespace winrt::llvc::implementation
