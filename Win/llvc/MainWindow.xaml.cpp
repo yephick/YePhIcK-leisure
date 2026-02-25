@@ -86,6 +86,194 @@ constexpr auto W_POS_L{L"WindowLeft"};
 
 namespace{
 
+constexpr int64_t HNS_PER_SECOND{10'000'000LL};
+
+bool isAviPath(const wstring& filePath){
+    if(filePath.size() < 4){
+        return false;
+    }
+    const auto ext{filePath.substr(filePath.size() - 4)};
+    return _wcsicmp(ext.c_str(), L".avi") == 0;
+}
+
+wstring guidToVideoCodecName(const GUID& subtype){
+    if(subtype == MFVideoFormat_H264){
+        return L"H.264";
+    }
+    if(subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265){
+        return L"HEVC";
+    }
+
+    const auto hasMfSubtypeBase{
+        subtype.Data2 == 0x0000
+        && subtype.Data3 == 0x0010
+        && subtype.Data4[0] == 0x80
+        && subtype.Data4[1] == 0x00
+        && subtype.Data4[2] == 0x00
+        && subtype.Data4[3] == 0xAA
+        && subtype.Data4[4] == 0x00
+        && subtype.Data4[5] == 0x38
+        && subtype.Data4[6] == 0x9B
+        && subtype.Data4[7] == 0x71};
+    if(hasMfSubtypeBase){
+        const DWORD fcc{subtype.Data1};
+        wchar_t fourcc[5]{};
+        for(int i{}; i < 4; ++i){
+            const auto c{static_cast<wchar_t>((fcc >> (i * 8)) & 0xFF)};
+            if(c < 0x20 || c > 0x7E){
+                fourcc[0] = L'\0';
+                break;
+            }
+            fourcc[i] = static_cast<wchar_t>(towupper(c));
+        }
+
+        if(fourcc[0] != L'\0'){
+            return fourcc;
+        }
+    }
+
+    return L"unknown codec";
+}
+
+wstring BuildUnsupportedAviReason(const wstring& detail){
+    return detail;
+}
+
+bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
+    if(!reader){
+        failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video in v1. This file uses unknown codec.");
+        return false;
+    }
+
+    com_ptr<IMFMediaType> firstVideoType;
+    GUID firstVideoSubtype{GUID_NULL};
+    auto hasH264NativeType{false};
+    for(DWORD mediaTypeIndex{};; ++mediaTypeIndex){
+        com_ptr<IMFMediaType> type;
+        const auto hr{reader->GetNativeMediaType(videoStreamIndex, mediaTypeIndex, type.put())};
+        if(hr == MF_E_NO_MORE_TYPES){
+            break;
+        }
+        if(FAILED(hr)){
+            failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video in v1. This file could not be inspected.");
+            return false;
+        }
+
+        GUID major{GUID_NULL};
+        GUID subtype{GUID_NULL};
+        if(FAILED(type->GetGUID(MF_MT_MAJOR_TYPE, &major)) || major != MFMediaType_Video){
+            continue;
+        }
+        if(FAILED(type->GetGUID(MF_MT_SUBTYPE, &subtype))){
+            continue;
+        }
+
+        if(!firstVideoType){
+            firstVideoType = type;
+            firstVideoSubtype = subtype;
+        }
+
+        if(subtype == MFVideoFormat_H264){
+            hasH264NativeType = true;
+            selectedVideoType = type;
+            break;
+        }
+    }
+
+    if(!hasH264NativeType){
+        const auto codec{firstVideoType ? guidToVideoCodecName(firstVideoSubtype) : wstring(L"unknown codec")};
+        failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video. This file uses " + codec);
+        return false;
+    }
+
+    return true;
+}
+
+bool validateAviSampleTimesAndSyncFlags(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFMediaType>& videoType, wstring& failureReason){
+    if(!reader){
+        failureReason = BuildUnsupportedAviReason(L"AVI file lacks usable timestamps for robust cutting; convert to MP4 first");
+        return false;
+    }
+
+    uint32_t fpsNum{};
+    uint32_t fpsDen{};
+    const auto hasFrameRate{videoType && SUCCEEDED(MFGetAttributeRatio(videoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen)) && fpsNum > 0 && fpsDen > 0};
+    const auto saneFrameRate{hasFrameRate && fpsNum <= 240 * fpsDen};
+    const auto fallbackDuration100ns{saneFrameRate ? static_cast<int64_t>((HNS_PER_SECOND * static_cast<int64_t>(fpsDen) + (fpsNum / 2)) / fpsNum) : 0LL};
+
+    constexpr auto maxForwardJump100ns{10LL * HNS_PER_SECOND};
+    int64_t previousTime100ns{-1};
+    int64_t syntheticTime100ns{};
+    bool hasAnySample{};
+    bool hasAnyCleanPoint{};
+
+    PROPVARIANT startPos{};
+    startPos.vt = VT_I8;
+    startPos.hVal.QuadPart = 0;
+    check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
+    PropVariantClear(&startPos);
+
+    for(;;){
+        DWORD actualStream{};
+        DWORD flags{};
+        LONGLONG timestamp{};
+        com_ptr<IMFSample> sample;
+        const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+        if(FAILED(hr)){
+            failureReason = BuildUnsupportedAviReason(L"AVI file lacks usable timestamps for robust cutting; convert to MP4 first");
+            return false;
+        }
+        if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+            break;
+        }
+        if(!sample){
+            continue;
+        }
+
+        hasAnySample = true;
+        int64_t sampleTime100ns{};
+        if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
+            if(!saneFrameRate || fallbackDuration100ns <= 0){
+                failureReason = BuildUnsupportedAviReason(L"AVI file lacks usable timestamps for robust cutting; convert to MP4 first");
+                return false;
+            }
+            sampleTime100ns = syntheticTime100ns;
+            syntheticTime100ns += fallbackDuration100ns;
+        }else if(sampleTime100ns < 0){
+            failureReason = BuildUnsupportedAviReason(L"AVI file lacks usable timestamps for robust cutting; convert to MP4 first");
+            return false;
+        }
+
+        if(previousTime100ns >= 0){
+            if(sampleTime100ns < previousTime100ns){
+                failureReason = BuildUnsupportedAviReason(L"AVI file lacks usable timestamps for robust cutting; convert to MP4 first");
+                return false;
+            }
+            if(sampleTime100ns - previousTime100ns > maxForwardJump100ns){
+                failureReason = BuildUnsupportedAviReason(L"AVI file lacks usable timestamps for robust cutting; convert to MP4 first");
+                return false;
+            }
+        }
+
+        previousTime100ns = sampleTime100ns;
+        UINT32 cleanPoint{};
+        if(SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) && cleanPoint != 0){
+            hasAnyCleanPoint = true;
+        }
+    }
+
+    if(!hasAnySample || !hasAnyCleanPoint){
+        failureReason = BuildUnsupportedAviReason(L"AVI keyframe markers are not reliable for robust cutting; convert to MP4 first");
+        return false;
+    }
+
+    startPos.vt = VT_I8;
+    startPos.hVal.QuadPart = 0;
+    check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
+    PropVariantClear(&startPos);
+    return true;
+}
+
 std::wstring readShellStringProperty(const std::wstring& filePath, const PROPERTYKEY& key){
     winrt::com_ptr<IPropertyStore> propertyStore;
     const auto hr{SHGetPropertyStoreFromParsingName(filePath.c_str(), nullptr, GPS_BESTEFFORT, IID_PPV_ARGS(propertyStore.put()))};
@@ -1080,6 +1268,7 @@ AAction MainWindow::pickAndLoadVideoAsync(){
     picker.SuggestedStartLocation(PickerLocationId::VideosLibrary);
     picker.FileTypeFilter().Append(L".mp4");
     picker.FileTypeFilter().Append(L".mov");
+    picker.FileTypeFilter().Append(L".avi");
 
     const auto hwnd{getWindowHandle()};
     auto initWithWindow{picker.as<IInitializeWithWindow>()};
@@ -1173,7 +1362,7 @@ void MainWindow::resetProjectState(){
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
     syncTimelineHorizontalScrollBar();
 
-    setStatusMessage(L"Load or drag-and-drop an .mp4/.mov file to preview.");
+    setStatusMessage(L"Load or drag-and-drop an .mp4/.mov/.avi (H.264 only) file to preview.");
     clearErrorMessage();
     refreshStatusInfoSection();
     updateWindowTitle();
@@ -1306,6 +1495,9 @@ wstring MainWindow::buildSourcePropertiesText() const{
     content += L"Max random access spacing: "; content += m_mediaInfo.maxKeyFrameSpacing; content += L"\n";
     content += L"Audio codec: "; content += m_mediaInfo.audioCodec; content += L"\n";
     content += L"Audio bitrate: "; content += m_mediaInfo.audioBitrate;
+    if(m_mediaInfo.audioDisabledForThisSource && !m_mediaInfo.audioDisabledReason.empty()){
+        content += L"\nAudio note: "; content += m_mediaInfo.audioDisabledReason;
+    }
     return content;
 }
 
@@ -1485,6 +1677,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     auto videoStreamIndex{invalidStreamIndex};
     uint32_t allSamplesIndependent{};
     uint32_t maxKeyFrameSpacing{};
+    const auto sourceIsAvi{isAviPath(filePath)};
 
     for(DWORD streamIndex{0};; ++streamIndex){
         com_ptr<IMFMediaType> type;
@@ -1521,8 +1714,43 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         }
     }
 
+    com_ptr<IMFMediaType> aviNativeH264Type;
+    if(sourceIsAvi){
+        if(videoCount != 1){
+            result.errorMessage = BuildUnsupportedAviReason(L"Expected exactly one video stream");
+            return result;
+        }
+        if(!IsAviH264StreamCopyCandidate(reader, videoStreamIndex, aviNativeH264Type, result.errorMessage)){
+            return result;
+        }
+
+        GUID aviSubtype{GUID_NULL};
+        check_hresult(aviNativeH264Type->GetGUID(MF_MT_SUBTYPE, &aviSubtype));
+        if(aviSubtype != MFVideoFormat_H264){
+            if(aviSubtype == MFVideoFormat_HEVC || aviSubtype == MFVideoFormat_H265){
+                result.errorMessage = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video. This file uses HEVC");
+            }else{
+                result.errorMessage = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video. This file uses " + guidToVideoCodecName(aviSubtype));
+            }
+            return result;
+        }
+
+        if(!validateAviSampleTimesAndSyncFlags(reader, videoStreamIndex, aviNativeH264Type, result.errorMessage)){
+            return result;
+        }
+
+        check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, aviNativeH264Type.get()));
+        videoSubtype = MFVideoFormat_H264;
+        MFGetAttributeSize(aviNativeH264Type.get(), MF_MT_FRAME_SIZE, &width, &height);
+        MFGetAttributeRatio(aviNativeH264Type.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
+        (void)aviNativeH264Type->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
+    }
+
     if(videoStreamIndex != invalidStreamIndex){
         if(auto bestVideoType{chooseBestNativeVideoMediaType(reader, videoStreamIndex)}){
+            if(sourceIsAvi){
+                bestVideoType = aviNativeH264Type;
+            }
             (void)reader->SetCurrentMediaType(videoStreamIndex, nullptr, bestVideoType.get());
 
             MFGetAttributeSize(bestVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
@@ -1538,19 +1766,19 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     }
 
     if(videoCount != 1){
-        result.errorMessage = L"Expected exactly one video stream.";
+        result.errorMessage = L"Expected exactly one video stream";
         return result;
     }
     if(audioCount > 1){
-        result.errorMessage = L"Multiple audio streams are not supported.";
+        result.errorMessage = L"Multiple audio streams are not supported";
         return result;
     }
     if(hasText){
-        result.errorMessage = L"Subtitle/text streams are not supported.";
+        result.errorMessage = L"Subtitle/text streams are not supported";
         return result;
     }
     if(!isSupportedVideoSubtype(videoSubtype)){
-        result.errorMessage = L"Video codec not supported. Only H.264 and HEVC are allowed.";
+        result.errorMessage = L"Video codec not supported. Only H.264 and HEVC are allowed";
         return result;
     }
 
@@ -1560,8 +1788,10 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         result.container = L"MP4";
     }else if(lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mov"){
         result.container = L"MOV";
+    }else if(lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".avi"){
+        result.container = L"AVI";
     }else{
-        result.errorMessage = L"Container not supported. Only MP4 and MOV are allowed.";
+        result.errorMessage = L"Container not supported. Only MP4, MOV, and AVI (H.264 only) are allowed";
         return result;
     }
 
@@ -1590,7 +1820,17 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     result.videoBitrate = videoBitrate > 0 ? (to_wstring(videoBitrate / 1000) + L" kbps") : L"-";
     result.audioBitrate = audioBitrate > 0 ? (to_wstring((audioBitrate * 8) / 1000) + L" kbps") : L"none";
     if(videoStreamIndex != invalidStreamIndex){
+        PROPVARIANT startPos{};
+        startPos.vt = VT_I8;
+        startPos.hVal.QuadPart = 0;
+        check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
+        PropVariantClear(&startPos);
         analyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen, result);
+    }
+
+    if(sourceIsAvi && audioCount > 0){
+        result.audioDisabledForThisSource = true;
+        result.audioDisabledReason = L"AVI audio passthrough is disabled in v1. Export will keep video only";
     }
 
     result.sourceEncodedBy = readShellStringProperty(filePath, PKEY_Media_EncodedBy);
@@ -1612,7 +1852,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
 
     const auto items{co_await view.GetStorageItemsAsync()};
     if(items.Size() != 1){
-        setStatusMessage(L"Only support a single .mp4 or .mov file");
+        setStatusMessage(L"Only support a single .mp4/.mov/.avi (H.264) file");
         co_return;
     }
 
@@ -1627,8 +1867,8 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
         const auto ext{file.FileType()};
         wstring lower{ext.c_str()};
         transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
-        if(lower != L".mp4" && lower != L".mov"){
-            setStatusMessage(L"Only .mp4 and .mov files are supported");
+        if(lower != L".mp4" && lower != L".mov" && lower != L".avi"){
+            setStatusMessage(L"Only .mp4, .mov, and .avi (H.264) files are supported");
             co_return;
         }
     }
@@ -1747,13 +1987,17 @@ void MainWindow::updateAudioUiAndPlaybackState(){
         return;
     }
     const auto hasAudio{sourceHasAudio()};
+    const auto audioHardDisabled{m_mediaInfo.audioDisabledForThisSource};
     if(!hasAudio){
         m_prj.keepAudio(false);
     }
+    if(audioHardDisabled){
+        m_prj.keepAudio(false);
+    }
 
-    KeepAudioCheckBox().IsEnabled(hasAudio);
-    KeepAudioCheckBox().IsChecked(box_value(hasAudio && m_prj.keepAudio()).as<IReference<bool>>());
-    AudioCrossfadeComboBox().IsEnabled(hasAudio && m_prj.keepAudio());
+    KeepAudioCheckBox().IsEnabled(hasAudio && !audioHardDisabled);
+    KeepAudioCheckBox().IsChecked(box_value(hasAudio && !audioHardDisabled && m_prj.keepAudio()).as<IReference<bool>>());
+    AudioCrossfadeComboBox().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
     applyAudioSettingsToPlayer();
 }
 

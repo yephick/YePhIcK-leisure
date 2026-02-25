@@ -29,6 +29,11 @@ using Control = MainWindow::Control;
 using REArgs = MainWindow::REArgs;
 using AAction = MainWindow::AAction;
 
+bool isAviSourcePath(const std::wstring& path){
+    return path.size() >= 4 && _wcsicmp(path.substr(path.size() - 4).c_str(), L".avi") == 0;
+}
+
+
 AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     if(!m_prj.videoFile()){
         co_await showInfoDialogAsync(L"Export video", L"Load a video before exporting.");
@@ -59,9 +64,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         return L"created by llvc from " + sourcePathForComment.filename().wstring() + L" on " + timestamp;
     };
     const auto sourceExt{sourceFsPath.extension().wstring()};
-    const auto defaultExt{_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4"};
+    const auto sourceIsAvi{isAviSourcePath(sourcePath)};
+    const auto defaultExt{sourceIsAvi ? L".mp4" : (_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4")};
 
-    const auto outputPath{pickExportOutputPath(sourceFsPath, defaultExt, outputDuration100ns, getWindowHandle())};
+    const auto outputPath{pickExportOutputPath(sourceFsPath, defaultExt, outputDuration100ns, getWindowHandle(), sourceIsAvi)};
     if(outputPath.empty()){
         co_return;
     }
@@ -115,6 +121,26 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
         auto sourceVideoType{chooseBestNativeVideoMediaType(reader, videoStreamIndex)};
+        if(sourceIsAvi){
+            sourceVideoType = nullptr;
+            for(DWORD mediaTypeIndex{};; ++mediaTypeIndex){
+                com_ptr<IMFMediaType> type;
+                const auto hr{reader->GetNativeMediaType(videoStreamIndex, mediaTypeIndex, type.put())};
+                if(hr == MF_E_NO_MORE_TYPES){
+                    break;
+                }
+                check_hresult(hr);
+
+                GUID major{GUID_NULL};
+                GUID subtype{GUID_NULL};
+                check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+                check_hresult(type->GetGUID(MF_MT_SUBTYPE, &subtype));
+                if(major == MFMediaType_Video && subtype == MFVideoFormat_H264){
+                    sourceVideoType = type;
+                    break;
+                }
+            }
+        }
         if(!sourceVideoType){
             throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No native video media type found");
         }
@@ -123,6 +149,23 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         GUID videoSubtype{GUID_NULL};
         check_hresult(sourceVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
         const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
+
+        if(sourceIsAvi){
+            if(videoSubtype != MFVideoFormat_H264){
+                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI is supported only for H.264 video");
+            }
+            UINT32 sequenceHeaderSize{};
+            const auto seqSizeHr{sourceVideoType->GetBlobSize(MF_MT_MPEG_SEQUENCE_HEADER, &sequenceHeaderSize)};
+            std::vector<uint8_t> sequenceHeader(sequenceHeaderSize);
+            UINT32 bytesWritten{};
+            const auto seqReadHr{
+                SUCCEEDED(seqSizeHr) && sequenceHeaderSize > 0
+                    ? sourceVideoType->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, sequenceHeader.data(), sequenceHeaderSize, &bytesWritten)
+                    : E_FAIL};
+            if(FAILED(seqReadHr) || bytesWritten == 0){
+                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"This AVI cannot be stream-copied to MP4 on this system (missing H.264 mux support)");
+            }
+        }
 
         vector<int64_t> rapTimes100ns;
         rapTimes100ns.reserve(2048);
@@ -171,7 +214,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         DWORD audioStreamIndex{};
         constexpr auto invalidAudioStream{numeric_limits<DWORD>::max()};
 
-        if(m_prj.keepAudio() && sourceHasAudio()){
+        if(!sourceIsAvi && m_prj.keepAudio() && sourceHasAudio()){
             com_ptr<IMFSourceReader> audioProbeReader;
             check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioProbeReader.put()));
 
@@ -234,7 +277,13 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             return hr;
         };
 
-        check_hresult(configureWriter());
+        const auto writerConfigHr{configureWriter()};
+        if(FAILED(writerConfigHr)){
+            if(sourceIsAvi){
+                throw hresult_error(writerConfigHr, L"This AVI cannot be stream-copied to MP4 on this system (missing H.264 mux support).");
+            }
+            check_hresult(writerConfigHr);
+        }
 
         check_hresult(writer->BeginWriting());
 

@@ -52,7 +52,7 @@ com_ptr<IMFMediaType> createPcmFloatAudioType(uint32_t sampleRate, uint32_t chan
 com_ptr<IMFMediaType> createAacOutputType(uint32_t sampleRate, uint32_t channels);
 vector<float> decodeAudioRangeToFloat(const com_ptr<IMFSourceReader>& reader, DWORD audioStreamIndex, int64_t rangeStart100ns, int64_t rangeEnd100ns, uint32_t channels, uint32_t sampleRate);
 
-wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow);
+wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow, bool mp4Only);
 void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>& segmentAudio, uint32_t audioChannels, size_t fadeFrames);
 vector<float> buildMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs);
 void writePcmAudioToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, const vector<float>& mixedAudio, uint32_t audioChannels, uint32_t audioSampleRate);
@@ -354,7 +354,7 @@ vector<float> decodeAudioRangeToFloat(const com_ptr<IMFSourceReader>& reader, DW
     return out;
 }
 
-wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow){
+wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow, bool mp4Only){
     com_ptr<IFileSaveDialog> saveDialog;
     check_hresult(::CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(saveDialog.put())));
 
@@ -362,15 +362,24 @@ wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wc
     check_hresult(saveDialog->GetOptions(&options));
     check_hresult(saveDialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT));
 
-    const COMDLG_FILTERSPEC fileTypes[]{
-        {L"MP4 video", L"*.mp4"},
-        {L"MOV video", L"*.mov"},
-    };
-    check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(size(fileTypes)), fileTypes));
+    if(mp4Only){
+        const COMDLG_FILTERSPEC fileTypes[]{
+            {L"MP4 video", L"*.mp4"},
+        };
+        check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(size(fileTypes)), fileTypes));
+        check_hresult(saveDialog->SetFileTypeIndex(1));
+        check_hresult(saveDialog->SetDefaultExtension(L"mp4"));
+    }else{
+        const COMDLG_FILTERSPEC fileTypes[]{
+            {L"MP4 video", L"*.mp4"},
+            {L"MOV video", L"*.mov"},
+        };
+        check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(size(fileTypes)), fileTypes));
 
-    const auto isMovDefault{_wcsicmp(defaultExt, L".mov") == 0};
-    check_hresult(saveDialog->SetFileTypeIndex(isMovDefault ? 2U : 1U));
-    check_hresult(saveDialog->SetDefaultExtension(isMovDefault ? L"mov" : L"mp4"));
+        const auto isMovDefault{_wcsicmp(defaultExt, L".mov") == 0};
+        check_hresult(saveDialog->SetFileTypeIndex(isMovDefault ? 2U : 1U));
+        check_hresult(saveDialog->SetDefaultExtension(isMovDefault ? L"mov" : L"mp4"));
+    }
 
     const auto suggestedName{sourceFsPath.stem().wstring() + L" - " + formatDurationFileTag(outputDuration100ns)};
     check_hresult(saveDialog->SetFileName(suggestedName.c_str()));
