@@ -184,7 +184,7 @@ bool Project::isDirty() const{
 }
 
 void Project::videoFile(const SFile& f){
-    m_isDirty = (m_isDirty && (!m_loadedFile || m_loadedFile.Path() != f.Path()));
+    m_isDirty = false;
     m_loadedFile = f;
 }
 
@@ -352,7 +352,8 @@ void Project::refreshSelectedMarkers(){
     for(uint32_t i{0}; i < markerCount; ++i){
         m_selectedKeyFrames.push_back(i);
     }
-    m_isDirty = (m_isDirty && sav == m_selectedKeyFrames);
+    const auto neq{sav != m_selectedKeyFrames};
+    m_isDirty = (m_isDirty && neq);
 }
 
 void Project::remapCutScenesAfterMarkerRemoval(uint32_t removePos){
