@@ -129,8 +129,18 @@ private:
     uint32_t m_timelineDragPointerId{0};
     double m_timelineDragStartX{0};
     double m_timelineDragStartOffset{0};
+    bool m_isApplyingUndoRedoState{false};
     ::llvc::Project m_prj{};
     ::llvc::Timeline m_tl{};
+
+    struct UndoRedoState final{
+        vector<::llvc::IndexedFrameSample> frameIndex{};
+        vector<uint32_t> cutScenes{};
+        bool keepAudio{true};
+        int32_t audioCrossfadeMs{0};
+    };
+    vector<UndoRedoState> m_undoStack{};
+    vector<UndoRedoState> m_redoStack{};
 
 private:
     HWND getWindowHandle() const;
@@ -169,6 +179,13 @@ private:
     void ensureTimelineCursorVisible(double cursorLeft);
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
+    UndoRedoState captureUndoRedoState() const;
+    bool isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const;
+    void clearUndoRedoHistory();
+    bool pushUndoStateIfChanged();
+    bool applyUndoRedoState(const UndoRedoState& state, bool fromUndo);
+    bool undoLastEdit();
+    bool redoLastEdit();
     void updateAudioUiAndPlaybackState();
     void setVideoDetailsPanelExpanded(bool expanded);
     void refreshVideoDetailsPanel();
