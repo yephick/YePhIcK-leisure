@@ -1283,16 +1283,10 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         return true;
     }
 
-    if(focusOnMenu || focusInDialog){
-        return false;
-    }
-
-    tryFocusTimelineCanvas(FocusState::Programmatic);
-
     const auto ctrlState{InputKeyboardSource::GetKeyStateForCurrentThread(VirtualKey::Control)};
     const auto ctrlDown{(ctrlState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down};
 
-    if(ctrlDown){
+    if(!focusInDialog && ctrlDown){
         if(args.Key() == VirtualKey::Z){
             (void)undoLastEdit();
             args.Handled(true);
@@ -1319,6 +1313,12 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
             return true;
         }
     }
+
+    if(focusOnMenu || focusInDialog){
+        return false;
+    }
+
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 
     switch(args.Key()){
     case VirtualKey::Space:
