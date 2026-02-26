@@ -2326,8 +2326,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         }
 
         const auto renderVersion{++m_timelineRenderVersion};
-        const auto zoom{TimelineZoomSlider().Value()};
-        const auto totalWidth{max(800.0, m_timelineDurationSeconds * 14.0 * zoom)};
+        const auto zoomSetting{TimelineZoomSlider().Value()};
+        const auto zoomScale{zoomSetting / 4.0};
+        const auto totalWidth{max(800.0, m_timelineDurationSeconds * 14.0 * zoomScale)};
         const auto thumbnailCount{clamp(static_cast<int>(totalWidth / 150.0), 8, 96)};
         const auto thumbnailWidth{totalWidth / thumbnailCount};
 
