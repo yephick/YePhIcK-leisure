@@ -129,9 +129,9 @@
         </Grid>
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
-            <Button x:Name="StartButton" Content="▶" IsTabStop="False" Click="startButton_Click" ToolTipService.ToolTip="Start"/>
-            <Button x:Name="PauseButton" Content="⏸" IsTabStop="False" Click="pauseButton_Click" ToolTipService.ToolTip="Pause"/>
-            <Button x:Name="StopButton" Content="⏹" IsTabStop="False" Click="stopButton_Click" ToolTipService.ToolTip="Stop"/>
+            <Button x:Name="StartButton" Content="▶" FontFamily="Segoe UI Symbol" IsTabStop="False" Click="startButton_Click" ToolTipService.ToolTip="Start"/>
+            <Button x:Name="PauseButton" Content="⏸︎" FontFamily="Segoe UI Symbol" IsTabStop="False" Click="pauseButton_Click" ToolTipService.ToolTip="Pause"/>
+            <Button x:Name="StopButton" Content="⏹︎" FontFamily="Segoe UI Symbol" IsTabStop="False" Click="stopButton_Click" ToolTipService.ToolTip="Stop"/>
         </StackPanel>
 
         <Border Grid.Row="4" BorderThickness="1" BorderBrush="#4A4A4A" CornerRadius="4" Background="#141414" Padding="8,6">
