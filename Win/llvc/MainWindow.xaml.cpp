@@ -1393,6 +1393,16 @@ TS MainWindow::secondsToTimeSpan(double seconds){
     return chrono::duration_cast<TimeSpan>(chrono::duration<double>(seconds));
 }
 
+AAction MainWindow::undoMenuItem_Click(const Control&, const REArgs&){
+    (void)undoLastEdit();
+    co_return;
+}
+
+AAction MainWindow::redoMenuItem_Click(const Control&, const REArgs&){
+    (void)redoLastEdit();
+    co_return;
+}
+
 AAction MainWindow::newProjectMenuItem_Click(const Control&, const REArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
         co_return;

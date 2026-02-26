@@ -37,6 +37,11 @@
                 <MenuFlyoutItem Text="Exit" Click="exitMenuItem_Click"/>
             </controls:MenuBarItem>
 
+            <controls:MenuBarItem Title="Edit">
+                <MenuFlyoutItem Text="Undo	Ctrl+Z" Click="undoMenuItem_Click"/>
+                <MenuFlyoutItem Text="Redo	Ctrl+Y" Click="redoMenuItem_Click"/>
+            </controls:MenuBarItem>
+
             <controls:MenuBarItem Title="Tools">
                 <MenuFlyoutItem Text="Options" Click="optionsMenuItem_Click"/>
             </controls:MenuBarItem>

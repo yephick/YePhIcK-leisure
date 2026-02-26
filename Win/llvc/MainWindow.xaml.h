@@ -91,6 +91,8 @@ struct MainWindow: MainWindowT<MainWindow>{
     void videoDetailsOpenMarker_Click(const Control& sender, const REArgs& args);
     void videoDetailsCollapseMarker_Click(const Control& sender, const REArgs& args);
     AAction newProjectMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction undoMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction redoMenuItem_Click(const Control& sender, const REArgs& args);
     AAction openProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction saveProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction saveProjectAsMenuItem_Click(const Control& sender, const REArgs& args);
