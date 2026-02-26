@@ -99,7 +99,7 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <Button x:Name="ReevaluateClearCutMarkersButton" Content="⟳" Width="34" IsTabStop="False" Click="reevaluateClearCutMarkersButton_Click" ToolTipService.ToolTip="Reevaluate clear cut markers"/>
                     <TextBlock Text="Zoom" VerticalAlignment="Center"/>
-                    <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="12" Value="2" SmallChange="0.25" LargeChange="1" ValueChanged="timelineZoomSlider_ValueChanged"/>
+                    <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="0.5" Maximum="12" Value="2" SmallChange="0.25" LargeChange="1" ValueChanged="timelineZoomSlider_ValueChanged"/>
                 </StackPanel>
             </Grid>
 
