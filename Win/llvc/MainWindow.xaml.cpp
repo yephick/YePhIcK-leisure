@@ -411,6 +411,103 @@ bool isControlModifierActive(VirtualKeyModifiers modifiers){
     return (ctrlState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down;
 }
 
+bool MainWindow::isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const{
+    if(a.keepAudio != b.keepAudio || a.audioCrossfadeMs != b.audioCrossfadeMs || a.cutScenes != b.cutScenes || a.frameIndex.size() != b.frameIndex.size()){
+        return false;
+    }
+
+    for(size_t i{}; i < a.frameIndex.size(); ++i){
+        const auto& l{a.frameIndex[i]};
+        const auto& r{b.frameIndex[i]};
+        if(l.time100ns != r.time100ns || l.duration100ns != r.duration100ns || l.cleanPoint != r.cleanPoint || l.sampleIndex != r.sampleIndex){
+            return false;
+        }
+    }
+
+    return true;
+}
+
+MainWindow::UndoRedoState MainWindow::captureUndoRedoState() const{
+    return UndoRedoState{
+        .frameIndex = m_prj.frameIndex(),
+        .cutScenes = m_prj.cutScenes(),
+        .keepAudio = m_prj.keepAudio(),
+        .audioCrossfadeMs = m_prj.audioXfadeMs(),
+    };
+}
+
+void MainWindow::clearUndoRedoHistory(){
+    m_undoStack.clear();
+    m_redoStack.clear();
+}
+
+bool MainWindow::pushUndoStateIfChanged(){
+    if(m_isApplyingUndoRedoState){
+        return false;
+    }
+
+    const auto current{captureUndoRedoState()};
+    if(!m_undoStack.empty() && isSameUndoRedoState(m_undoStack.back(), current)){
+        return false;
+    }
+
+    m_undoStack.push_back(current);
+    m_redoStack.clear();
+    return true;
+}
+
+bool MainWindow::applyUndoRedoState(const UndoRedoState& state, bool fromUndo){
+    const auto current{captureUndoRedoState()};
+    if(isSameUndoRedoState(current, state)){
+        return false;
+    }
+
+    m_isApplyingUndoRedoState = true;
+
+    m_prj.frameIndex() = state.frameIndex;
+    m_prj.refreshSelectedMarkers();
+    m_prj.cutScenes() = state.cutScenes;
+    m_prj.keepAudio(state.keepAudio);
+    m_prj.audioXfadeMs(state.audioCrossfadeMs);
+
+    syncAudioCrossfadeComboSelection();
+    updateAudioUiAndPlaybackState();
+    renderTimelineTicks();
+    renderKeyframeTicks();
+    renderCutOverlays();
+    updateWindowTitle();
+    refreshStatusInfoSection();
+
+    m_isApplyingUndoRedoState = false;
+
+    setStatusMessage(fromUndo ? L"Undo applied" : L"Redo applied");
+    return true;
+}
+
+bool MainWindow::undoLastEdit(){
+    if(m_undoStack.empty()){
+        setStatusMessage(L"Nothing to undo");
+        return false;
+    }
+
+    const auto previous{m_undoStack.back()};
+    m_undoStack.pop_back();
+    m_redoStack.push_back(captureUndoRedoState());
+    return applyUndoRedoState(previous, true);
+}
+
+bool MainWindow::redoLastEdit(){
+    if(m_redoStack.empty()){
+        setStatusMessage(L"Nothing to redo");
+        return false;
+    }
+
+    const auto next{m_redoStack.back()};
+    m_redoStack.pop_back();
+    m_undoStack.push_back(captureUndoRedoState());
+    return applyUndoRedoState(next, false);
+}
+
 MainWindow::MainWindow(){
     InitializeComponent();
 
@@ -623,6 +720,8 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
     }
 
     const auto previousCutRanges{m_prj.buildCutRanges100ns(m_timelineDurationSeconds)};
+    const auto beforeState{captureUndoRedoState()};
+    const auto hasUndoSnapshot{pushUndoStateIfChanged()};
     vector<IndexedFrameSample> updatedMarkers;
     updatedMarkers.reserve(originalMarkers.size() * 2);
 
@@ -667,6 +766,10 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
     updateWindowTitle();
 
     wstring status{L"Reevaluated clear cut markers against RAP frames"};
+    const auto didChange{!isSameUndoRedoState(beforeState, captureUndoRedoState())};
+    if(!didChange && hasUndoSnapshot && !m_undoStack.empty()){
+        m_undoStack.pop_back();
+    }
     if(replacedCount == 0){
         status += L" (no changes needed)";
     }else{
@@ -684,6 +787,10 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
 }
 
 void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
+    if(m_isApplyingUndoRedoState){
+        return;
+    }
+    (void)pushUndoStateIfChanged();
     m_prj.keepAudio(KeepAudioCheckBox().IsChecked().GetBoolean());
     updateAudioUiAndPlaybackState();
     updateWindowTitle();
@@ -691,15 +798,21 @@ void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
 }
 
 void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const Control&){
+    if(m_isApplyingUndoRedoState){
+        return;
+    }
+
     const auto selected{AudioCrossfadeComboBox().SelectedItem().try_as<Controls::ComboBoxItem>()};
     if(!selected || !selected.Tag()){
         return;
     }
 
     try{
+        (void)pushUndoStateIfChanged();
         const auto val{stoi(wstring(unbox_value<hstring>(selected.Tag())).c_str())};
         m_prj.audioXfadeMs(val);
     } catch(...){
+        (void)pushUndoStateIfChanged();
         m_prj.audioXfadeMs(0);
     }
 
@@ -776,6 +889,7 @@ void MainWindow::timelineCanvas_PointerMoved(const Control&, const PREArgs& e){
 }
 
 bool MainWindow::toggleSelectedKeyframeAtCanvasX(double pointerX){
+    (void)pushUndoStateIfChanged();
     if(!m_prj.toggleSelectedKeyframeAtCanvasX(pointerX, TimelineTickCanvas().Width(), m_timelineDurationSeconds, m_mediaInfo.frameRate)){
         return false;
     }
@@ -1068,6 +1182,7 @@ void MainWindow::renderCutOverlays(){
 
 
 bool MainWindow::toggleCutBlockAtCanvasX(double pointerX){
+    (void)pushUndoStateIfChanged();
     if(!m_prj.toggleCutBlockAtCanvasX(pointerX, TimelineCanvas().Width(), m_timelineDurationSeconds)){
         return false;
     }
@@ -1168,16 +1283,20 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         return true;
     }
 
-    if(focusOnMenu || focusInDialog){
-        return false;
-    }
-
-    tryFocusTimelineCanvas(FocusState::Programmatic);
-
     const auto ctrlState{InputKeyboardSource::GetKeyStateForCurrentThread(VirtualKey::Control)};
     const auto ctrlDown{(ctrlState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down};
 
-    if(ctrlDown){
+    if(!focusInDialog && ctrlDown){
+        if(args.Key() == VirtualKey::Z){
+            (void)undoLastEdit();
+            args.Handled(true);
+            return true;
+        }
+        if(args.Key() == VirtualKey::Y){
+            (void)redoLastEdit();
+            args.Handled(true);
+            return true;
+        }
         if(args.Key() == VirtualKey::O){
             (void)openProjectMenuItem_Click(nullptr, {});
             args.Handled(true);
@@ -1194,6 +1313,12 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
             return true;
         }
     }
+
+    if(focusOnMenu || focusInDialog){
+        return false;
+    }
+
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 
     switch(args.Key()){
     case VirtualKey::Space:
@@ -1266,6 +1391,16 @@ void MainWindow::videoDetailsCollapseMarker_Click(const Control&, const REArgs&)
 
 TS MainWindow::secondsToTimeSpan(double seconds){
     return chrono::duration_cast<TimeSpan>(chrono::duration<double>(seconds));
+}
+
+AAction MainWindow::undoMenuItem_Click(const Control&, const REArgs&){
+    (void)undoLastEdit();
+    co_return;
+}
+
+AAction MainWindow::redoMenuItem_Click(const Control&, const REArgs&){
+    (void)redoLastEdit();
+    co_return;
 }
 
 AAction MainWindow::newProjectMenuItem_Click(const Control&, const REArgs&){
@@ -1508,6 +1643,7 @@ void MainWindow::resetProjectState(){
     ++m_timelineRenderVersion;
     m_projectPath.clear();
     m_prj.reset();
+    clearUndoRedoHistory();
     m_mediaInfo = {};
     m_timelineDurationSeconds = 0;
     TimelineZoomSlider().Value(m_prj.zoom());
@@ -2036,6 +2172,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
     }
 
     m_prj.clearTimeline();
+    clearUndoRedoHistory();
 
     co_await loadVideoFileAsync(file);
 }
@@ -2101,6 +2238,9 @@ bool MainWindow::sourceHasAudio() const{
 }
 
 void MainWindow::syncAudioCrossfadeComboSelection(){
+    const auto previousGuard{m_isApplyingUndoRedoState};
+    m_isApplyingUndoRedoState = true;
+
     const auto combo{AudioCrossfadeComboBox()};
     const auto items{combo.Items()};
     for(uint32_t i{0}; i < items.Size(); ++i){
@@ -2117,6 +2257,7 @@ void MainWindow::syncAudioCrossfadeComboSelection(){
             const auto tag{unbox_value<hstring>(item.Tag())};
             if(stoi(wstring(tag.c_str())) == m_prj.audioXfadeMs()){
                 combo.SelectedIndex(static_cast<int32_t>(i));
+                m_isApplyingUndoRedoState = previousGuard;
                 return;
             }
         }catch(...){ }
@@ -2133,6 +2274,8 @@ void MainWindow::syncAudioCrossfadeComboSelection(){
             }
         }
     }
+
+    m_isApplyingUndoRedoState = previousGuard;
 }
 
 void MainWindow::applyAudioSettingsToPlayer(){
@@ -2157,9 +2300,12 @@ void MainWindow::updateAudioUiAndPlaybackState(){
         m_prj.keepAudio(false);
     }
 
+    const auto previousGuard{m_isApplyingUndoRedoState};
+    m_isApplyingUndoRedoState = true;
     KeepAudioCheckBox().IsEnabled(hasAudio && !audioHardDisabled);
     KeepAudioCheckBox().IsChecked(box_value(hasAudio && !audioHardDisabled && m_prj.keepAudio()).as<IReference<bool>>());
     AudioCrossfadeComboBox().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
+    m_isApplyingUndoRedoState = previousGuard;
     applyAudioSettingsToPlayer();
 }
 
@@ -2190,8 +2336,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         }
 
         const auto renderVersion{++m_timelineRenderVersion};
-        const auto zoom{TimelineZoomSlider().Value()};
-        const auto totalWidth{max(800.0, m_timelineDurationSeconds * 14.0 * zoom)};
+        const auto zoomSetting{TimelineZoomSlider().Value()};
+        const auto zoomScale{zoomSetting / 4.0};
+        const auto totalWidth{max(800.0, m_timelineDurationSeconds * 14.0 * zoomScale)};
         const auto thumbnailCount{clamp(static_cast<int>(totalWidth / 150.0), 8, 96)};
         const auto thumbnailWidth{totalWidth / thumbnailCount};
 

@@ -66,7 +66,7 @@ private:
 private:
     // these are persisted on disk
     SFile m_loadedFile{nullptr};
-    double m_zoom{2};
+    double m_zoom{4};
     bool m_keepAudio{true};
     int32_t m_audioCrossfadeMs{0};
     vector<IndexedFrameSample> m_frameIndex{};
