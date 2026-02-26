@@ -1552,6 +1552,26 @@ AAction MainWindow::exitMenuItem_Click(const Control&, const REArgs&){
     Close();
 }
 
+AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& args){
+    co_await showInfoDialogAsync(
+        L"llvc Manual",
+        L"Functions:\n"
+        L"• Load video: Open .mp4/.mov/.avi source footage for timeline editing.\n"
+        L"• Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
+        L"• Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
+        L"• Preview start/pause/stop skipping cut scenes.\n"
+        L"• Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
+        L"• Project files: Save and reopen .llvc projects with timeline state.\n"
+        L"• Export: Render a lossless cut based on your selected ranges (auto-adjusting to proper cut points if necessary).\n\n"
+        L"Usage workflow:\n"
+        L"1) File → Load video (or drag and drop a supported file).\n"
+        L"2) Right-click to place boundary markers around scenes you may want to remove.\n"
+        L"3) Reevaluate cut markers to land on proper RAP frames.\n"
+        L"4) Ctrl+Left-Click scene blocks to toggle which scenes are cut (dark = cut, clear = kept).\n"
+        L"5) Optionally adjust Keep audio and Audio cross-fade settings, then preview playback.\n"
+        L"6) Use File → Save project, then File → Export video to generate the final cut.");
+}
+
 AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
     co_await showInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut\nv0.1 - still in alpha\n\xA9 02'2026 YePhIcK");
 }

@@ -47,6 +47,7 @@
             </controls:MenuBarItem>
 
             <controls:MenuBarItem Title="Help">
+                <MenuFlyoutItem Text="Manual" Click="manualMenuItem_Click"/>
                 <MenuFlyoutItem Text="About" Click="aboutMenuItem_Click"/>
             </controls:MenuBarItem>
         </controls:MenuBar>

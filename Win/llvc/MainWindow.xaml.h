@@ -103,6 +103,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction recentProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction propertiesMenuItem_Click(const Control& sender, const REArgs& args);
     AAction exitMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction manualMenuItem_Click(const Control& sender, const REArgs& args);
     AAction aboutMenuItem_Click(const Control& sender, const REArgs& args);
     AAction optionsMenuItem_Click(const Control& sender, const REArgs& args);
     void window_DragOver(const Control& sender, const DEArgs& args);
