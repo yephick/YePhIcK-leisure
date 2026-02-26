@@ -76,21 +76,32 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                <TextBlock Text="Zoom" VerticalAlignment="Center"/>
-                <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="12" Value="2" SmallChange="0.25" LargeChange="1" ValueChanged="timelineZoomSlider_ValueChanged"/>
-                <CheckBox x:Name="KeepAudioCheckBox" Content="Keep audio" IsEnabled="False" VerticalAlignment="Center" Checked="keepAudioCheckBox_Changed" Unchecked="keepAudioCheckBox_Changed"/>
-                <TextBlock Text="Audio cross-fade:" VerticalAlignment="Center"/>
-                <ComboBox x:Name="AudioCrossfadeComboBox" Width="120" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
-                    <ComboBoxItem Content="0 ms" Tag="0"/>
-                    <ComboBoxItem Content="50 ms" Tag="50"/>
-                    <ComboBoxItem Content="100 ms" Tag="100"/>
-                    <ComboBoxItem Content="250 ms" Tag="250"/>
-                    <ComboBoxItem Content="500 ms" Tag="500"/>
-                    <ComboBoxItem Content="750 ms" Tag="750"/>
-                    <ComboBoxItem Content="1 s" Tag="1000"/>
-                </ComboBox>
-            </StackPanel>
+            <Grid ColumnSpacing="10" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <CheckBox x:Name="KeepAudioCheckBox" Content="Keep audio" IsEnabled="False" VerticalAlignment="Center" Checked="keepAudioCheckBox_Changed" Unchecked="keepAudioCheckBox_Changed"/>
+                    <TextBlock Text="Audio cross-fade:" VerticalAlignment="Center"/>
+                    <ComboBox x:Name="AudioCrossfadeComboBox" Width="120" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
+                        <ComboBoxItem Content="0 ms" Tag="0"/>
+                        <ComboBoxItem Content="50 ms" Tag="50"/>
+                        <ComboBoxItem Content="100 ms" Tag="100"/>
+                        <ComboBoxItem Content="250 ms" Tag="250"/>
+                        <ComboBoxItem Content="500 ms" Tag="500"/>
+                        <ComboBoxItem Content="750 ms" Tag="750"/>
+                        <ComboBoxItem Content="1 s" Tag="1000"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button x:Name="ReevaluateClearCutMarkersButton" Content="⟳" Width="34" IsTabStop="False" Click="reevaluateClearCutMarkersButton_Click" ToolTipService.ToolTip="Reevaluate clear cut markers"/>
+                    <TextBlock Text="Zoom" VerticalAlignment="Center"/>
+                    <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="12" Value="2" SmallChange="0.25" LargeChange="1" ValueChanged="timelineZoomSlider_ValueChanged"/>
+                </StackPanel>
+            </Grid>
 
             <Border Grid.Row="1" BorderThickness="1" BorderBrush="#404040" Background="#111111" CornerRadius="4" Padding="6">
                 <Grid RowSpacing="4">
@@ -118,9 +129,9 @@
         </Grid>
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
-            <Button x:Name="StartButton" Content="Start" IsTabStop="False" Click="startButton_Click"/>
-            <Button x:Name="PauseButton" Content="Pause" IsTabStop="False" Click="pauseButton_Click"/>
-            <Button x:Name="StopButton" Content="Stop" IsTabStop="False" Click="stopButton_Click"/>
+            <Button x:Name="StartButton" Content="▶" IsTabStop="False" Click="startButton_Click" ToolTipService.ToolTip="Start"/>
+            <Button x:Name="PauseButton" Content="⏸" IsTabStop="False" Click="pauseButton_Click" ToolTipService.ToolTip="Pause"/>
+            <Button x:Name="StopButton" Content="⏹" IsTabStop="False" Click="stopButton_Click" ToolTipService.ToolTip="Stop"/>
         </StackPanel>
 
         <Border Grid.Row="4" BorderThickness="1" BorderBrush="#4A4A4A" CornerRadius="4" Background="#141414" Padding="8,6">

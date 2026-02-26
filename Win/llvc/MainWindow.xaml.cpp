@@ -96,6 +96,89 @@ bool isAviPath(const wstring& filePath){
     return _wcsicmp(ext.c_str(), L".avi") == 0;
 }
 
+
+vector<int64_t> collectCleanPointTimes100ns(const wstring& filePath){
+    vector<int64_t> rapTimes;
+
+    if(filePath.empty()){
+        return rapTimes;
+    }
+
+    com_ptr<IMFSourceReader> reader;
+    check_hresult(MFCreateSourceReaderFromURL(filePath.c_str(), nullptr, reader.put()));
+
+    DWORD videoStreamIndex{};
+    bool foundVideo{};
+    for(DWORD streamIndex{};; ++streamIndex){
+        com_ptr<IMFMediaType> nativeType;
+        const auto hr{reader->GetNativeMediaType(streamIndex, 0, nativeType.put())};
+        if(hr == MF_E_NO_MORE_TYPES){
+            break;
+        }
+        if(FAILED(hr) || !nativeType){
+            continue;
+        }
+
+        GUID majorType{};
+        if(SUCCEEDED(nativeType->GetGUID(MF_MT_MAJOR_TYPE, &majorType)) && majorType == MFMediaType_Video){
+            videoStreamIndex = streamIndex;
+            foundVideo = true;
+            break;
+        }
+    }
+
+    if(!foundVideo){
+        return rapTimes;
+    }
+
+    check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
+
+    for(;;){
+        DWORD actualStream{};
+        DWORD flags{};
+        LONGLONG timestamp{};
+        com_ptr<IMFSample> sample;
+        const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+        check_hresult(hr);
+
+        if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+            break;
+        }
+        if(!sample){
+            continue;
+        }
+
+        UINT32 cleanPoint{};
+        if(FAILED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) || cleanPoint == 0){
+            continue;
+        }
+
+        LONGLONG sampleTime{};
+        if(FAILED(sample->GetSampleTime(&sampleTime))){
+            sampleTime = timestamp;
+        }
+
+        rapTimes.push_back(max<int64_t>(0, sampleTime));
+    }
+
+    sort(rapTimes.begin(), rapTimes.end());
+    rapTimes.erase(unique(rapTimes.begin(), rapTimes.end()), rapTimes.end());
+    return rapTimes;
+}
+
+bool isTimeInsideRanges(int64_t time100ns, const vector<pair<int64_t, int64_t>>& ranges){
+    for(const auto& [start100ns, end100ns]: ranges){
+        if(time100ns < start100ns){
+            return false;
+        }
+        if(time100ns < end100ns){
+            return true;
+        }
+    }
+
+    return false;
+}
+
 wstring guidToVideoCodecName(const GUID& subtype){
     if(subtype == MFVideoFormat_H264){
         return L"H.264";
@@ -511,6 +594,85 @@ void MainWindow::stopButton_Click(const Control&, const REArgs&){
         m_player.PlaybackSession().Position(chrono::seconds(0));
         updateTimelineCursorFromPlayback();
     }
+}
+
+
+void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REArgs&){
+    if(!m_prj.videoFile() || m_timelineDurationSeconds <= 0){
+        setStatusMessage(L"Load a video before reevaluating clear cut markers");
+        return;
+    }
+
+    vector<int64_t> rapTimes100ns;
+    try{
+        rapTimes100ns = collectCleanPointTimes100ns(m_prj.videoFile().Path().c_str());
+    }catch(const winrt::hresult_error&){
+        setStatusMessage(L"Could not read RAP markers from the current source");
+        return;
+    }
+
+    if(rapTimes100ns.empty()){
+        setStatusMessage(L"Could not detect RAP markers in the current source");
+        return;
+    }
+
+    const auto originalMarkers{m_prj.frameIndex()};
+    if(originalMarkers.empty()){
+        setStatusMessage(L"No clear cut markers to reevaluate");
+        return;
+    }
+
+    const auto previousCutRanges{m_prj.buildCutRanges100ns(m_timelineDurationSeconds)};
+    vector<IndexedFrameSample> updatedMarkers;
+    updatedMarkers.reserve(originalMarkers.size() * 2);
+
+    auto replacedCount{0u};
+    for(const auto& marker: originalMarkers){
+        if(binary_search(rapTimes100ns.begin(), rapTimes100ns.end(), marker.time100ns)){
+            updatedMarkers.push_back(marker);
+            continue;
+        }
+
+        ++replacedCount;
+        const auto nextIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), marker.time100ns)};
+        if(nextIt != rapTimes100ns.begin()){
+            const auto previousRapTime{*(nextIt - 1)};
+            updatedMarkers.push_back(IndexedFrameSample{.time100ns = previousRapTime, .duration100ns = 0, .cleanPoint = true, .sampleIndex = 0});
+        }
+        if(nextIt != rapTimes100ns.end()){
+            const auto nextRapTime{*nextIt};
+            updatedMarkers.push_back(IndexedFrameSample{.time100ns = nextRapTime, .duration100ns = 0, .cleanPoint = true, .sampleIndex = 0});
+        }
+    }
+
+    sort(updatedMarkers.begin(), updatedMarkers.end(), [](const auto& a, const auto& b){ return a.time100ns < b.time100ns; });
+    updatedMarkers.erase(unique(updatedMarkers.begin(), updatedMarkers.end(), [](const auto& a, const auto& b){ return a.time100ns == b.time100ns; }), updatedMarkers.end());
+
+    m_prj.frameIndex() = std::move(updatedMarkers);
+    m_prj.refreshSelectedMarkers();
+
+    const auto totalDuration100ns{static_cast<int64_t>(m_timelineDurationSeconds * HNS_PER_SECOND)};
+    const auto sceneBoundaries{m_prj.buildSceneBoundaries100ns(totalDuration100ns)};
+    m_prj.cutScenes().clear();
+    for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
+        const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
+        if(isTimeInsideRanges(midpoint, previousCutRanges)){
+            m_prj.cutScenes().push_back(static_cast<uint32_t>(i));
+        }
+    }
+
+    renderTimelineTicks();
+    renderKeyframeTicks();
+    renderCutOverlays();
+    updateWindowTitle();
+
+    wstring status{L"Reevaluated clear cut markers against RAP frames"};
+    if(replacedCount == 0){
+        status += L" (no changes needed)";
+    }else{
+        status += std::format(L" (updated {})", replacedCount);
+    }
+    setStatusMessage(status);
 }
 
 void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&){

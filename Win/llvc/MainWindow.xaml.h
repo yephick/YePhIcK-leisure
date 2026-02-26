@@ -71,6 +71,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void startButton_Click(const Control& sender, const REArgs& args);
     void pauseButton_Click(const Control& sender, const REArgs& args);
     void stopButton_Click(const Control& sender, const REArgs& args);
+    void reevaluateClearCutMarkersButton_Click(const Control& sender, const REArgs& args);
     void timelineZoomSlider_ValueChanged(const Control& sender, const RBVArgs& args);
     void keepAudioCheckBox_Changed(const Control& sender, const REArgs& args);
     void audioCrossfadeComboBox_SelectionChanged(const Control& sender, const Control& args);
