@@ -36,13 +36,17 @@ struct Project final{
     void keepAudio(bool v);
     void audioXfadeMs(int32_t valueMs);
 
-    inline auto& videoFile()    const{ return m_loadedFile; }
-    inline auto  zoom()         const{ return m_zoom; }
-    inline bool  keepAudio()    const{ return m_keepAudio; }
-    inline auto  audioXfadeMs() const{ return m_audioCrossfadeMs; }
-    inline auto& frameIndex()   const{ return m_frameIndex; }
-    inline auto& selKeyFrames() const{ return m_selectedKeyFrames; }
-    inline auto& cutScenes()    const{ return m_cutScenes; }
+    inline auto&       videoFile()      { return m_loadedFile; }
+    inline const auto& videoFile() const{ return m_loadedFile; }
+    inline auto        zoom()     const{ return m_zoom; }
+    inline bool        keepAudio() const{ return m_keepAudio; }
+    inline auto        audioXfadeMs() const{ return m_audioCrossfadeMs; }
+    inline auto&       frameIndex()      { return m_frameIndex; }
+    inline const auto& frameIndex() const{ return m_frameIndex; }
+    inline auto&       selKeyFrames()      { return m_selectedKeyFrames; }
+    inline const auto& selKeyFrames() const{ return m_selectedKeyFrames; }
+    inline auto&       cutScenes()      { return m_cutScenes; }
+    inline const auto& cutScenes() const{ return m_cutScenes; }
 
     vector<IndexedFrameSample> buildRapMarkersFromSelection() const;
     vector<pair<int64_t, int64_t>> buildCutRanges100ns(double tlDurationSeconds) const;
