@@ -44,6 +44,9 @@ struct Project final{
     inline auto& selKeyFrames() const{ return m_selectedKeyFrames; }
     inline auto& cutScenes()    const{ return m_cutScenes; }
 
+    inline auto& frameIndex()        { return m_frameIndex; }
+    inline auto& cutScenes()         { return m_cutScenes; }
+
     vector<IndexedFrameSample> buildRapMarkersFromSelection() const;
     vector<pair<int64_t, int64_t>> buildCutRanges100ns(double tlDurationSeconds) const;
     vector<int64_t> buildSceneBoundaries100ns(int64_t totalDuration100ns) const;
