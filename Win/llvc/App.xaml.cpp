@@ -4,6 +4,7 @@
 
 #include <cwctype>
 #include <string>
+#include <winrt/Windows.Storage.h>
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
