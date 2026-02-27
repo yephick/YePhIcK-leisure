@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -73,6 +74,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void stopButton_Click(const Control& sender, const REArgs& args);
     void reevaluateClearCutMarkersButton_Click(const Control& sender, const REArgs& args);
     void timelineZoomSlider_ValueChanged(const Control& sender, const RBVArgs& args);
+    void timelineZoomSlider_PointerWheelChanged(const Control& sender, const PREArgs& args);
     void keepAudioCheckBox_Changed(const Control& sender, const REArgs& args);
     void audioCrossfadeComboBox_SelectionChanged(const Control& sender, const Control& args);
     void timelineHorizontalScrollBar_ValueChanged(const Control& sender, const RBVArgs& args);
@@ -90,6 +92,8 @@ struct MainWindow: MainWindowT<MainWindow>{
     void rootGrid_PointerReleased(const Control& sender, const PREArgs& args);
     void videoDetailsOpenMarker_Click(const Control& sender, const REArgs& args);
     void videoDetailsCollapseMarker_Click(const Control& sender, const REArgs& args);
+    void cheatSheetOpenMarker_Click(const Control& sender, const REArgs& args);
+    void cheatSheetCollapseMarker_Click(const Control& sender, const REArgs& args);
     AAction newProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction undoMenuItem_Click(const Control& sender, const REArgs& args);
     AAction redoMenuItem_Click(const Control& sender, const REArgs& args);
@@ -106,6 +110,9 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction manualMenuItem_Click(const Control& sender, const REArgs& args);
     AAction aboutMenuItem_Click(const Control& sender, const REArgs& args);
     AAction optionsMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction toggleCutMarkerAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction markSceneCutAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction markSceneKeptAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     void window_DragOver(const Control& sender, const DEArgs& args);
     AAction window_Drop(const Control& sender, const DEArgs& args);
     void onClosed(const Control& sender, const WEArgs& args);
@@ -175,10 +182,15 @@ private:
     void seekTimelineToCanvasX(double pointerX);
     void renderKeyframeTicks();
     void renderCutOverlays();
-    bool toggleSelectedKeyframeAtCanvasX(double pointerX);
-    bool toggleCutBlockAtCanvasX(double pointerX);
+    std::optional<int64_t> timelinePointToTime100ns(double pointerX, double width) const;
+    bool toggleSelectedKeyframeAtTime100ns(int64_t time100ns);
+    bool toggleCutBlockAtTime100ns(int64_t time100ns);
+    bool setCutBlockAtTime100ns(int64_t time100ns, bool cutScene);
+    bool toggleCutMarkerAtCursor();
+    bool markSceneAtCursor(bool cutScene);
     bool trySkipCurrentCutDuringPlayback();
     void stepByFrame(int delta);
+    bool moveCursorToMarker(int direction);
     void ensureTimelineCursorVisible(double cursorLeft);
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);

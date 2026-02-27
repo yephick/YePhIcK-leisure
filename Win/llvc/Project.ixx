@@ -35,30 +35,36 @@ struct Project final{
     void setZoom(double v);
     void keepAudio(bool v);
     void audioXfadeMs(int32_t valueMs);
+    void frameIndex(const vector<IndexedFrameSample>& v);
+    void cutScenes(const vector<uint32_t>& v);
 
-    inline auto&          videoFile()                const{ return m_loadedFile; }
-    inline auto           zoom()                     const{ return m_zoom; }
-    inline bool           keepAudio()                const{ return m_keepAudio; }
-    inline auto           audioXfadeMs()             const{ return m_audioCrossfadeMs; }
-    inline decltype(auto) frameIndex(this auto& self)     { return (self.m_frameIndex); }
-    inline auto&          selKeyFrames()             const{ return m_selectedKeyFrames; }
-    inline decltype(auto) cutScenes(this auto& self)      { return (self.m_cutScenes); }
+    inline auto& videoFile()    const{ return m_loadedFile; }
+    inline auto  zoom()         const{ return m_zoom; }
+    inline bool  keepAudio()    const{ return m_keepAudio; }
+    inline auto  audioXfadeMs() const{ return m_audioCrossfadeMs; }
+    inline auto& frameIndex()   const{ return m_frameIndex; }
+    inline auto& selKeyFrames() const{ return m_selectedKeyFrames; }
+    inline auto& cutScenes()    const{ return m_cutScenes; }
 
     vector<IndexedFrameSample> buildRapMarkersFromSelection() const;
-    vector<pair<int64_t, int64_t>> buildCutRanges100ns(double tlDurationSeconds) const;
-    vector<int64_t> buildSceneBoundaries100ns(int64_t totalDuration100ns) const;
+    vector<pair<int64_t, int64_t>> buildCutRanges100ns() const;
+    vector<int64_t> buildSceneBoundaries100ns() const;
     vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const;
-    int64_t outputDuration100ns(double tlDurationSeconds) const;
+    int64_t outputDuration100ns() const;
     void refreshSelectedMarkers();
     void remapCutScenesAfterMarkerRemoval(uint32_t removePos);
     void remapCutScenesAfterMarkerInsertion(uint32_t insertPos);
-    bool toggleSelectedKeyframeAtCanvasX(double pointerX, double width, double tlDurationSeconds, double fps);
-    bool toggleCutBlockAtCanvasX(double pointerX, double width, double tlDurationSeconds);
+    void timelineDuration100ns(int64_t duration);
+    inline int64_t timelineDuration100ns() const{ return m_timelineDuration100ns; }
+    bool toggleSelectedKeyframeAtTime100ns(int64_t time100ns, double fps);
+    bool toggleCutBlockAtTime100ns(int64_t time100ns);
+    bool setCutBlockAtTime100ns(int64_t time100ns, bool cutScene);
 
 private:
     wstring _buildProjectSnapshot() const;
     wstring _serializeCutMarkers() const;
     static vector<IndexedFrameSample> _parseKeyframeVector(const wstring& text);
+    std::optional<size_t> _sceneIndexAtTime100ns(int64_t time100ns) const;
 
 private:
     // these are persisted on disk
@@ -70,6 +76,7 @@ private:
     vector<uint32_t> m_selectedKeyFrames{};
     vector<uint32_t> m_cutScenes{};
 
+    int64_t m_timelineDuration100ns{0};
     bool m_isDirty{false};
     wstring m_lastSavedProjectSnapshot{}; // must be *after* all the members to reflect proper initial state
 };
@@ -132,6 +139,7 @@ void Project::clearTimeline(){
     m_frameIndex.clear();
     m_selectedKeyFrames.clear();
     m_cutScenes.clear();
+    m_timelineDuration100ns = 0;
 }
 
 Project::AAction Project::open(const SFile& file){
@@ -209,6 +217,16 @@ void Project::audioXfadeMs(int32_t valueMs){
     m_audioCrossfadeMs = v;
 }
 
+void Project::frameIndex(const vector<IndexedFrameSample>& v){
+    m_frameIndex = std::move(v);
+    m_isDirty = true;
+}
+
+void Project::cutScenes(const vector<uint32_t>& v){
+    m_cutScenes = std::move(v);
+    m_isDirty = true;
+}
+
 vector<IndexedFrameSample> Project::buildRapMarkersFromSelection() const{
     vector<IndexedFrameSample> rapMarkers;
     rapMarkers.reserve(m_selectedKeyFrames.size());
@@ -222,10 +240,8 @@ vector<IndexedFrameSample> Project::buildRapMarkersFromSelection() const{
     return rapMarkers;
 }
 
-vector<pair<int64_t, int64_t>> Project::buildCutRanges100ns(double tlDurationSeconds) const{
-    const auto duration100ns{static_cast<int64_t>(tlDurationSeconds * 10'000'000.0)};
-
-    const auto boundaries{buildSceneBoundaries100ns(duration100ns)};
+vector<pair<int64_t, int64_t>> Project::buildCutRanges100ns() const{
+    const auto boundaries{buildSceneBoundaries100ns()};
     if(boundaries.size() < 2){
         return {};
     }
@@ -255,7 +271,8 @@ vector<pair<int64_t, int64_t>> Project::buildCutRanges100ns(double tlDurationSec
     return merged;
 }
 
-vector<int64_t> Project::buildSceneBoundaries100ns(int64_t totalDuration100ns) const{
+vector<int64_t> Project::buildSceneBoundaries100ns() const{
+    const auto totalDuration100ns{m_timelineDuration100ns};
     const auto markers{buildRapMarkersFromSelection()};
     vector<int64_t> boundaries;
     boundaries.reserve(markers.size() + 2);
@@ -276,7 +293,22 @@ vector<int64_t> Project::buildSceneBoundaries100ns(int64_t totalDuration100ns) c
 }
 
 vector<pair<int64_t, int64_t>> Project::buildEffectiveCutRangesWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const{
-    const auto boundaries{buildSceneBoundaries100ns(totalDuration100ns)};
+    const auto markers{buildRapMarkersFromSelection()};
+    vector<int64_t> boundaries;
+    boundaries.reserve(markers.size() + 2);
+    boundaries.push_back(0);
+    for(const auto& marker: markers){
+        boundaries.push_back(clamp<int64_t>(marker.time100ns, 0, totalDuration100ns));
+    }
+    boundaries.push_back(totalDuration100ns);
+    sort(boundaries.begin(), boundaries.end());
+    boundaries.erase(unique(boundaries.begin(), boundaries.end()), boundaries.end());
+    if(boundaries.empty() || boundaries.front() != 0){
+        boundaries.insert(boundaries.begin(), 0);
+    }
+    if(boundaries.back() != totalDuration100ns){
+        boundaries.push_back(totalDuration100ns);
+    }
     if(boundaries.size() < 2){
         return {};
     }
@@ -347,9 +379,9 @@ vector<pair<int64_t, int64_t>> Project::buildEffectiveCutRangesWithRapPreroll(in
     return mergedCuts;
 }
 
-int64_t Project::outputDuration100ns(double tlDurationSeconds) const{
-    const auto sourceDuration100ns{max<int64_t>(0, static_cast<int64_t>(llround(max(0.0, tlDurationSeconds) * 10'000'000.0)))};
-    const auto cutRanges100ns{buildCutRanges100ns(tlDurationSeconds)};
+int64_t Project::outputDuration100ns() const{
+    const auto sourceDuration100ns{m_timelineDuration100ns};
+    const auto cutRanges100ns{buildCutRanges100ns()};
 
     int64_t removedTotal100ns{};
     for(const auto& [start, end]: cutRanges100ns){
@@ -413,20 +445,23 @@ void Project::remapCutScenesAfterMarkerInsertion(uint32_t insertPos){
     m_cutScenes = std::move(updatedCuts);
 }
 
-bool Project::toggleSelectedKeyframeAtCanvasX(double pointerX, double width, double tlDurationSeconds, double fps){
-    if(tlDurationSeconds <= 0 || width <= 0){
+void Project::timelineDuration100ns(int64_t duration){
+    m_timelineDuration100ns = max<int64_t>(0, duration);
+}
+
+bool Project::toggleSelectedKeyframeAtTime100ns(int64_t time100ns, double fps){
+    if(m_timelineDuration100ns <= 0){
         return false;
     }
 
-    constexpr auto hitTolerancePx{4.0};
-    const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (tlDurationSeconds * 10'000'000.0))};
+    constexpr int64_t hitTolerance100ns{50'000};
+    const auto clicked100ns{clamp<int64_t>(time100ns, 0, m_timelineDuration100ns)};
 
     auto nearestIndex{m_frameIndex.size()};
-    auto nearestDistance{hitTolerancePx + 1.0};
+    int64_t nearestDistance{hitTolerance100ns + 1};
     for(size_t i{0}; i < m_frameIndex.size(); ++i){
-        const auto x{clamp((static_cast<double>(m_frameIndex[i].time100ns) / (tlDurationSeconds * 10'000'000.0)) * width, 0.0, width)};
-        const auto distance{fabs(pointerX - x)};
-        if(distance <= hitTolerancePx && distance < nearestDistance){
+        const auto distance{llabs(m_frameIndex[i].time100ns - clicked100ns)};
+        if(distance <= hitTolerance100ns && distance < nearestDistance){
             nearestDistance = distance;
             nearestIndex = i;
         }
@@ -453,15 +488,52 @@ bool Project::toggleSelectedKeyframeAtCanvasX(double pointerX, double width, dou
     return true;
 }
 
-bool Project::toggleCutBlockAtCanvasX(double pointerX, double width, double tlDurationSeconds){
-    if(tlDurationSeconds <= 0 || width <= 0){
+bool Project::toggleCutBlockAtTime100ns(int64_t time100ns){
+    const auto sceneIndex{_sceneIndexAtTime100ns(time100ns)};
+    if(!sceneIndex){
         return false;
     }
 
-    const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (tlDurationSeconds * 10'000'000.0))};
-    const auto boundaries{buildSceneBoundaries100ns(static_cast<int64_t>(tlDurationSeconds * 10'000'000.0))};
-    if(boundaries.size() < 2){
+    const auto it{find(m_cutScenes.begin(), m_cutScenes.end(), *sceneIndex)};
+    if(it == m_cutScenes.end()){
+        m_cutScenes.push_back(static_cast<uint32_t>(*sceneIndex));
+        sort(m_cutScenes.begin(), m_cutScenes.end());
+    }else{
+        m_cutScenes.erase(it);
+    }
+
+    return true;
+}
+
+bool Project::setCutBlockAtTime100ns(int64_t time100ns, bool cutScene){
+    const auto sceneIndex{_sceneIndexAtTime100ns(time100ns)};
+    if(!sceneIndex){
         return false;
+    }
+
+    const auto it{find(m_cutScenes.begin(), m_cutScenes.end(), *sceneIndex)};
+    if(cutScene){
+        if(it == m_cutScenes.end()){
+            m_cutScenes.push_back(static_cast<uint32_t>(*sceneIndex));
+            sort(m_cutScenes.begin(), m_cutScenes.end());
+        }
+    } else if(it != m_cutScenes.end()){
+        m_cutScenes.erase(it);
+    }
+
+    return true;
+}
+
+
+std::optional<size_t> Project::_sceneIndexAtTime100ns(int64_t time100ns) const{
+    if(m_timelineDuration100ns <= 0){
+        return std::nullopt;
+    }
+
+    const auto clicked100ns{clamp<int64_t>(time100ns, 0, m_timelineDuration100ns)};
+    const auto boundaries{buildSceneBoundaries100ns()};
+    if(boundaries.size() < 2){
+        return std::nullopt;
     }
 
     auto sceneIndex{boundaries.size() - 2};
@@ -472,15 +544,7 @@ bool Project::toggleCutBlockAtCanvasX(double pointerX, double width, double tlDu
         }
     }
 
-    const auto it{find(m_cutScenes.begin(), m_cutScenes.end(), sceneIndex)};
-    if(it == m_cutScenes.end()){
-        m_cutScenes.push_back(static_cast<uint32_t>(sceneIndex));
-        sort(m_cutScenes.begin(), m_cutScenes.end());
-    }else{
-        m_cutScenes.erase(it);
-    }
-
-    return true;
+    return sceneIndex;
 }
 
 wstring Project::_buildProjectSnapshot() const{

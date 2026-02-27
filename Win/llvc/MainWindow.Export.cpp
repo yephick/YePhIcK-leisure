@@ -43,8 +43,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     MFLifetime mf{};
 
     const wstring sourcePath{m_prj.videoFile().Path().c_str()};
-    const auto sourceDuration100ns{max<int64_t>(0, static_cast<int64_t>(llround(max(0.0, m_timelineDurationSeconds) * 10'000'000.0)))};
-    const auto outputDuration100ns{m_prj.outputDuration100ns(m_timelineDurationSeconds)};
+    const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
+    const auto outputDuration100ns{m_prj.outputDuration100ns()};
 
     const filesystem::path sourceFsPath{sourcePath};
 

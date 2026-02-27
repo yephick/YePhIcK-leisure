@@ -464,9 +464,9 @@ bool MainWindow::applyUndoRedoState(const UndoRedoState& state, bool fromUndo){
 
     m_isApplyingUndoRedoState = true;
 
-    m_prj.frameIndex() = state.frameIndex;
+    m_prj.frameIndex(state.frameIndex);
     m_prj.refreshSelectedMarkers();
-    m_prj.cutScenes() = state.cutScenes;
+    m_prj.cutScenes(state.cutScenes);
     m_prj.keepAudio(state.keepAudio);
     m_prj.audioXfadeMs(state.audioCrossfadeMs);
 
@@ -719,7 +719,7 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
         return;
     }
 
-    const auto previousCutRanges{m_prj.buildCutRanges100ns(m_timelineDurationSeconds)};
+    const auto previousCutRanges{m_prj.buildCutRanges100ns()};
     const auto beforeState{captureUndoRedoState()};
     const auto hasUndoSnapshot{pushUndoStateIfChanged()};
     vector<IndexedFrameSample> updatedMarkers;
@@ -747,18 +747,18 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
     sort(updatedMarkers.begin(), updatedMarkers.end(), [](const auto& a, const auto& b){ return a.time100ns < b.time100ns; });
     updatedMarkers.erase(unique(updatedMarkers.begin(), updatedMarkers.end(), [](const auto& a, const auto& b){ return a.time100ns == b.time100ns; }), updatedMarkers.end());
 
-    m_prj.frameIndex() = std::move(updatedMarkers);
+    m_prj.frameIndex(std::move(updatedMarkers));
     m_prj.refreshSelectedMarkers();
 
-    const auto totalDuration100ns{static_cast<int64_t>(m_timelineDurationSeconds * HNS_PER_SECOND)};
-    const auto sceneBoundaries{m_prj.buildSceneBoundaries100ns(totalDuration100ns)};
-    m_prj.cutScenes().clear();
+    const auto sceneBoundaries{m_prj.buildSceneBoundaries100ns()};
+    vector<uint32_t> scenes;
     for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
         const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
         if(isTimeInsideRanges(midpoint, previousCutRanges)){
-            m_prj.cutScenes().push_back(static_cast<uint32_t>(i));
+            scenes.push_back(static_cast<uint32_t>(i));
         }
     }
+    m_prj.cutScenes(std::move(scenes));
 
     renderTimelineTicks();
     renderKeyframeTicks();
@@ -784,6 +784,20 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
     }
     updateWindowTitle();
     tryFocusTimelineCanvas(FocusState::Programmatic);
+}
+
+void MainWindow::timelineZoomSlider_PointerWheelChanged(const Control&, const PREArgs& args){
+    const auto point{args.GetCurrentPoint(TimelineZoomSlider())};
+    const auto delta{point.Properties().MouseWheelDelta()};
+    if(delta == 0){
+        return;
+    }
+
+    auto slider{TimelineZoomSlider()};
+    const auto direction{delta > 0 ? 1.0 : -1.0};
+    const auto step{max(0.1, slider.SmallChange())};
+    slider.Value(clamp(slider.Value() + (direction * step), slider.Minimum(), slider.Maximum()));
+    args.Handled(true);
 }
 
 void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
@@ -888,9 +902,19 @@ void MainWindow::timelineCanvas_PointerMoved(const Control&, const PREArgs& e){
     e.Handled(true);
 }
 
-bool MainWindow::toggleSelectedKeyframeAtCanvasX(double pointerX){
+std::optional<int64_t> MainWindow::timelinePointToTime100ns(double pointerX, double width) const{
+    const auto duration100ns{m_prj.timelineDuration100ns()};
+    if(duration100ns <= 0 || width <= 0){
+        return std::nullopt;
+    }
+
+    const auto clampedX{clamp(pointerX, 0.0, width)};
+    return static_cast<int64_t>((clampedX / width) * duration100ns);
+}
+
+bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
     (void)pushUndoStateIfChanged();
-    if(!m_prj.toggleSelectedKeyframeAtCanvasX(pointerX, TimelineTickCanvas().Width(), m_timelineDurationSeconds, m_mediaInfo.frameRate)){
+    if(!m_prj.toggleSelectedKeyframeAtTime100ns(time100ns, m_mediaInfo.frameRate)){
         return false;
     }
 
@@ -905,7 +929,7 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(double pointerX){
 void MainWindow::timelineCanvas_PointerReleased(const Control&, const PREArgs& e){
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
     if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased){
-        if(toggleSelectedKeyframeAtCanvasX(point.Position().X)){
+        if(const auto time100ns{timelinePointToTime100ns(point.Position().X, TimelineCanvas().Width())}; time100ns && toggleSelectedKeyframeAtTime100ns(*time100ns)){
             e.Handled(true);
             return;
         }
@@ -922,7 +946,9 @@ void MainWindow::timelineCanvas_PointerReleased(const Control&, const PREArgs& e
 
     if(!dragged){
         if(isControlModifierActive(e.KeyModifiers())){
-            toggleCutBlockAtCanvasX(point.Position().X);
+            if(const auto time100ns{timelinePointToTime100ns(point.Position().X, TimelineCanvas().Width())}){
+                toggleCutBlockAtTime100ns(*time100ns);
+            }
         }else{
             seekTimelineToCanvasX(point.Position().X);
         }
@@ -951,15 +977,17 @@ void MainWindow::timelineCanvas_Loaded(const Control&, const REArgs&){
 
 void MainWindow::timelineTickCanvas_PointerReleased(const Control&, const PREArgs& e){
     const auto point{e.GetCurrentPoint(TimelineTickCanvas())};
-    if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased && toggleSelectedKeyframeAtCanvasX(point.Position().X)){
-        tryFocusTimelineCanvas(FocusState::Programmatic);
-        e.Handled(true);
-        return;
+    if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased){
+        if(const auto time100ns{timelinePointToTime100ns(point.Position().X, TimelineTickCanvas().Width())}; time100ns && toggleSelectedKeyframeAtTime100ns(*time100ns)){
+            tryFocusTimelineCanvas(FocusState::Programmatic);
+            e.Handled(true);
+            return;
+        }
     }
 
     if(point.Properties().PointerUpdateKind() == PointerUpdateKind::LeftButtonReleased){
         if(isControlModifierActive(e.KeyModifiers())){
-            if(toggleCutBlockAtCanvasX(point.Position().X)){
+            if(const auto time100ns{timelinePointToTime100ns(point.Position().X, TimelineTickCanvas().Width())}; time100ns && toggleCutBlockAtTime100ns(*time100ns)){
                 tryFocusTimelineCanvas(FocusState::Programmatic);
                 e.Handled(true);
                 return;
@@ -972,6 +1000,7 @@ void MainWindow::timelineTickCanvas_PointerReleased(const Control&, const PREArg
 void MainWindow::onNaturalDurationChanged(const MPSession& sender, const Control&){
     const auto duration{sender.NaturalDuration()};
     m_timelineDurationSeconds = max(0.0, duration.count() / 10'000'000.0);
+    m_prj.timelineDuration100ns(max<int64_t>(0, duration.count()));
 
     if(m_prj.videoFile() && m_timelineDurationSeconds > 0){
         const auto weak{get_weak()};
@@ -1157,7 +1186,7 @@ void MainWindow::renderCutOverlays(){
         return;
     }
 
-    const auto cutRanges100ns{m_prj.buildCutRanges100ns(m_timelineDurationSeconds)};
+    const auto cutRanges100ns{m_prj.buildCutRanges100ns()};
     const auto overlayColor {Windows::UI::ColorHelper::FromArgb(180, 0, 0, 0)};
     for(const auto& [startTime100ns, endTime100ns]: cutRanges100ns){
         const auto start{clamp((static_cast<double>(startTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
@@ -1181,15 +1210,40 @@ void MainWindow::renderCutOverlays(){
 }
 
 
-bool MainWindow::toggleCutBlockAtCanvasX(double pointerX){
+bool MainWindow::toggleCutBlockAtTime100ns(int64_t time100ns){
     (void)pushUndoStateIfChanged();
-    if(!m_prj.toggleCutBlockAtCanvasX(pointerX, TimelineCanvas().Width(), m_timelineDurationSeconds)){
+    if(!m_prj.toggleCutBlockAtTime100ns(time100ns)){
         return false;
     }
 
     renderCutOverlays();
     updateWindowTitle();
     return true;
+}
+
+bool MainWindow::setCutBlockAtTime100ns(int64_t time100ns, bool cutScene){
+    (void)pushUndoStateIfChanged();
+    if(!m_prj.setCutBlockAtTime100ns(time100ns, cutScene)){
+        return false;
+    }
+
+    renderCutOverlays();
+    updateWindowTitle();
+    return true;
+}
+
+bool MainWindow::toggleCutMarkerAtCursor(){
+    if(const auto time100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineTickCanvas().Width())}){
+        return toggleSelectedKeyframeAtTime100ns(*time100ns);
+    }
+    return false;
+}
+
+bool MainWindow::markSceneAtCursor(bool cutScene){
+    if(const auto time100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
+        return setCutBlockAtTime100ns(*time100ns, cutScene);
+    }
+    return false;
 }
 
 
@@ -1203,7 +1257,7 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
         return false;
     }
 
-    const auto cutRanges100ns{m_prj.buildCutRanges100ns(m_timelineDurationSeconds)};
+    const auto cutRanges100ns{m_prj.buildCutRanges100ns()};
     const auto now100ns{max<int64_t>(0, m_player.PlaybackSession().Position().count())};
     for(const auto& [start100ns, end100ns]: cutRanges100ns){
         if(now100ns >= start100ns && now100ns < end100ns){
@@ -1253,6 +1307,71 @@ void MainWindow::stepByFrame(int delta){
     const auto target {clamp(current + (direction * frameStep100ns), 0LL, duration100ns)};
     m_player.PlaybackSession().Position(TimeSpan{target});
     updateTimelineCursorFromPlayback();
+}
+
+
+bool MainWindow::moveCursorToMarker(int direction){
+    if(direction == 0){
+        return false;
+    }
+
+    const auto duration100ns{m_prj.timelineDuration100ns()};
+    if(duration100ns <= 0){
+        return false;
+    }
+
+    const auto& markers{m_prj.frameIndex()};
+    if(markers.empty()){
+        return false;
+    }
+
+    int64_t current100ns{};
+    if(m_player){
+        current100ns = max<int64_t>(0, m_player.PlaybackSession().Position().count());
+    }else if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
+        current100ns = *cursor100ns;
+    }
+
+    int64_t target100ns{current100ns};
+    if(direction < 0){
+        auto candidateFound{false};
+        for(const auto& marker: markers){
+            if(marker.time100ns >= current100ns){
+                break;
+            }
+            target100ns = marker.time100ns;
+            candidateFound = true;
+        }
+        if(!candidateFound){
+            return false;
+        }
+    }else{
+        const auto it{find_if(markers.begin(), markers.end(), [current100ns](const auto& marker){
+            return marker.time100ns > current100ns;
+        })};
+        if(it == markers.end()){
+            return false;
+        }
+        target100ns = it->time100ns;
+    }
+
+    if(m_player){
+        m_player.PlaybackSession().Position(TimeSpan{target100ns});
+        updateTimelineCursorFromPlayback();
+        return true;
+    }
+
+    const auto width{TimelineCanvas().Width()};
+    if(width > 0){
+        const auto ratio{clamp(static_cast<double>(target100ns) / duration100ns, 0.0, 1.0)};
+        const auto left{ratio * width};
+        Controls::Canvas::SetLeft(TimelineCursor(), left);
+        ensureTimelineCursorVisible(left);
+        syncTimelineHorizontalScrollBar();
+        return true;
+    }
+
+    return false;
 }
 
 void MainWindow::tryFocusTimelineCanvas(FState focusState){
@@ -1312,6 +1431,11 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
             args.Handled(true);
             return true;
         }
+        if(args.Key() == VirtualKey::M){
+            (void)toggleCutMarkerAtCursor();
+            args.Handled(true);
+            return true;
+        }
     }
 
     if(focusOnMenu || focusInDialog){
@@ -1338,6 +1462,22 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         return true;
     case VirtualKey::Right:
         stepByFrame(1);
+        args.Handled(true);
+        return true;
+    case VirtualKey::Up:
+        (void)moveCursorToMarker(-1);
+        args.Handled(true);
+        return true;
+    case VirtualKey::Down:
+        (void)moveCursorToMarker(1);
+        args.Handled(true);
+        return true;
+    case VirtualKey::Delete:
+        (void)markSceneAtCursor(true);
+        args.Handled(true);
+        return true;
+    case VirtualKey::Insert:
+        (void)markSceneAtCursor(false);
         args.Handled(true);
         return true;
     default:
@@ -1387,6 +1527,17 @@ void MainWindow::videoDetailsOpenMarker_Click(const Control&, const REArgs&){
 
 void MainWindow::videoDetailsCollapseMarker_Click(const Control&, const REArgs&){
     setVideoDetailsPanelExpanded(false);
+}
+
+void MainWindow::cheatSheetOpenMarker_Click(const Control&, const REArgs&){
+    CheatSheetPanel().Visibility(Visibility::Visible);
+    CheatSheetOpenMarker().Visibility(Visibility::Collapsed);
+}
+
+void MainWindow::cheatSheetCollapseMarker_Click(const Control&, const REArgs&){
+    CheatSheetPanel().Visibility(Visibility::Collapsed);
+    CheatSheetOpenMarker().Visibility(Visibility::Visible);
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
 TS MainWindow::secondsToTimeSpan(double seconds){
@@ -1578,6 +1729,21 @@ AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
 
 AAction MainWindow::optionsMenuItem_Click(const Control&, const REArgs&){
     co_await showOptionsDialogAsync();
+}
+
+AAction MainWindow::toggleCutMarkerAtCursorMenuItem_Click(const Control&, const REArgs&){
+    (void)toggleCutMarkerAtCursor();
+    co_return;
+}
+
+AAction MainWindow::markSceneCutAtCursorMenuItem_Click(const Control&, const REArgs&){
+    (void)markSceneAtCursor(true);
+    co_return;
+}
+
+AAction MainWindow::markSceneKeptAtCursorMenuItem_Click(const Control&, const REArgs&){
+    (void)markSceneAtCursor(false);
+    co_return;
 }
 
 AAction MainWindow::pickAndLoadVideoAsync(){
@@ -1868,7 +2034,7 @@ void MainWindow::clearErrorMessage(){
 }
 
 void MainWindow::refreshStatusInfoSection(){
-    const auto outputDuration100ns{m_prj.outputDuration100ns(m_timelineDurationSeconds)};
+    const auto outputDuration100ns{m_prj.outputDuration100ns()};
     wstring text{L"Estimated output: "};
     text += formatTimelineDurationText(outputDuration100ns);
     InfoText().Text(text);
