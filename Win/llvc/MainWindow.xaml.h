@@ -229,6 +229,7 @@ private:
     bool setSeparatePreviewWindowOpen(bool open);
     void onSeparatePreviewWindowClosed(const Control& sender, const WEArgs& args);
     void onSeparatePreviewWindowActivated(const Control& sender, const winrt::Microsoft::UI::Xaml::WindowActivatedEventArgs& args);
+    void onSeparatePreviewWindowKeyDown(const KRArgs& args);
     bool toggleSeparatePreviewFullscreen();
     static TS secondsToTimeSpan(double seconds);
     static bool isRectVisibleOnAnyMonitor(const RECT& rect);

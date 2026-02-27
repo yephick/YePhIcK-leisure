@@ -1534,6 +1534,18 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         detachedPreview.HorizontalAlignment(HorizontalAlignment::Stretch);
         detachedPreview.VerticalAlignment(VerticalAlignment::Stretch);
         detachedPreview.SetMediaPlayer(m_player);
+
+        const auto weakSelf{get_weak()};
+        const auto detachedKeyHandler{[weakSelf](const auto&, const KRArgs& e){
+            if(const auto self{weakSelf.get()}){
+                self->onSeparatePreviewWindowKeyDown(e);
+            }
+        }};
+        detachedPreview.PreviewKeyDown(detachedKeyHandler);
+        detachedPreview.KeyDown(detachedKeyHandler);
+
+        root.PreviewKeyDown(detachedKeyHandler);
+        root.KeyDown(detachedKeyHandler);
         root.Children().Append(detachedPreview);
 
         previewWindow.Content(root);
@@ -1601,6 +1613,18 @@ void MainWindow::onSeparatePreviewWindowActivated(const Control&, const winrt::M
     if(mainHwnd){
         ::SetForegroundWindow(mainHwnd);
         ::SetFocus(mainHwnd);
+    }
+}
+
+void MainWindow::onSeparatePreviewWindowKeyDown(const KRArgs& args){
+    if(handleStorylineKeyDown(args)){
+        Activate();
+        const auto mainHwnd{getWindowHandle()};
+        if(mainHwnd){
+            ::SetForegroundWindow(mainHwnd);
+            ::SetFocus(mainHwnd);
+        }
+        tryFocusTimelineCanvas(FocusState::Programmatic);
     }
 }
 
