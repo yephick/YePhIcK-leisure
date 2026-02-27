@@ -27,7 +27,7 @@
                 <MenuFlyoutItem Text="Close project" Click="closeProjectMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutItem Text="Load video..." Click="loadVideoMenuItem_Click"/>
-                <MenuFlyoutItem Text="Export video...\tF7" Click="exportVideoMenuItem_Click"/>
+                <MenuFlyoutItem Text="Export video... (F7)" Click="exportVideoMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutSubItem x:Name="RecentProjectsMenu" Text="Recent projects"/>
                 <MenuFlyoutSubItem x:Name="RecentVideosMenu" Text="Recent videos"/>
@@ -110,6 +110,7 @@
                             <TextBlock Text="Ctrl+-: zoom out timeline" TextWrapping="Wrap"/>
                             <TextBlock Text="Delete: cut scene" TextWrapping="Wrap"/>
                             <TextBlock Text="Insert: keep scene" TextWrapping="Wrap"/>
+                            <TextBlock Text="F7: export video" TextWrapping="Wrap"/>
                             <TextBlock Text=""/>
                             <TextBlock Text="Timeline click: set cursor"/>
                             <TextBlock Text="Right-click: toggle mark"/>
