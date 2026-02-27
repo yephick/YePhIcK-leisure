@@ -79,10 +79,10 @@
                 </Grid>
             </Border>
             <Button x:Name="CheatSheetOpenMarker" Width="26" Height="64" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0" Padding="0"
-                    Content="❮" Click="cheatSheetOpenMarker_Click" ToolTipService.ToolTip="Show quick actions" IsTabStop="False" Visibility="Collapsed"/>
+                    Content="❮" Click="cheatSheetOpenMarker_Click" ToolTipService.ToolTip="Show quick actions" IsTabStop="False"/>
 
             <Border x:Name="CheatSheetPanel" Width="220" HorizontalAlignment="Right" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
-                    BorderBrush="#707070" BorderThickness="1" Background="#E6101010" IsTabStop="False">
+                    BorderBrush="#707070" BorderThickness="1" Background="#E6101010" IsTabStop="False" Visibility="Collapsed">
                 <Grid IsTabStop="False">
                     <Button x:Name="CheatSheetCollapseMarker" Width="24" HorizontalAlignment="Left" VerticalAlignment="Stretch" Padding="0"
                             Content="❯" Click="cheatSheetCollapseMarker_Click" ToolTipService.ToolTip="Hide quick actions" IsTabStop="False"/>
@@ -90,17 +90,17 @@
                     <ScrollViewer Margin="30,0,0,0" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" IsTabStop="False">
                         <StackPanel Spacing="4" IsTabStop="False">
                             <TextBlock Text="Quick actions" FontWeight="SemiBold"/>
-                            <TextBlock Text="Play pause — Space" TextWrapping="Wrap"/>
-                            <TextBlock Text="Frame back — Left" TextWrapping="Wrap"/>
-                            <TextBlock Text="Frame forward — Right" TextWrapping="Wrap"/>
-                            <TextBlock Text="Toggle cut mark — Ctrl+M" TextWrapping="Wrap"/>
-                            <TextBlock Text="Mark scene cut — Delete" TextWrapping="Wrap"/>
-                            <TextBlock Text="Mark scene kept — Insert" TextWrapping="Wrap"/>
-                            <TextBlock Text="Drag seek"/>
-                            <TextBlock Text="Right-click mark"/>
-                            <TextBlock Text="Ctrl+click scene" TextWrapping="Wrap"/>
-                            <TextBlock Text="Tick seek"/>
-                            <TextBlock Text="Drop video"/>
+                            <TextBlock Text="Play/pause: Space key" TextWrapping="Wrap"/>
+                            <TextBlock Text="Frame back: Left key" TextWrapping="Wrap"/>
+                            <TextBlock Text="Frame forward: Right key" TextWrapping="Wrap"/>
+                            <TextBlock Text="Toggle mark: Ctrl+M" TextWrapping="Wrap"/>
+                            <TextBlock Text="Scene cut: Delete key" TextWrapping="Wrap"/>
+                            <TextBlock Text="Scene kept: Insert key" TextWrapping="Wrap"/>
+                            <TextBlock Text="Seek timeline: drag cursor"/>
+                            <TextBlock Text="Toggle mark: right-click"/>
+                            <TextBlock Text="Toggle scene: Ctrl+click" TextWrapping="Wrap"/>
+                            <TextBlock Text="Seek point: tick click"/>
+                            <TextBlock Text="Load video: file drop"/>
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>
