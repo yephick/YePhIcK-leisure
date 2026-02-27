@@ -1336,6 +1336,9 @@ void MainWindow::stepByFrame(int delta){
     const auto target {clamp(current + (direction * frameStep100ns), 0LL, duration100ns)};
     m_player.PlaybackSession().Position(TimeSpan{target});
     updateTimelineCursorFromPlayback();
+    const auto cursorLeft{Controls::Canvas::GetLeft(TimelineCursor())};
+    ensureTimelineCursorVisible(cursorLeft);
+    syncTimelineHorizontalScrollBar();
 }
 
 
@@ -1387,6 +1390,9 @@ bool MainWindow::moveCursorToMarker(int direction){
     if(m_player){
         m_player.PlaybackSession().Position(TimeSpan{target100ns});
         updateTimelineCursorFromPlayback();
+        const auto cursorLeft{Controls::Canvas::GetLeft(TimelineCursor())};
+        ensureTimelineCursorVisible(cursorLeft);
+        syncTimelineHorizontalScrollBar();
         return true;
     }
 
