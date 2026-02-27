@@ -865,7 +865,7 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
     if(m_prj.videoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }
-    //ensureCurrentTimelineCursorVisible(); XXX: for some reason this line causes a terminating exception
+    ensureCurrentTimelineCursorVisible();
     updateWindowTitle();
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
@@ -1185,6 +1185,10 @@ void MainWindow::seekTimelineToCanvasX(double pointerX){
 
 void MainWindow::ensureTimelineCursorVisible(double cursorLeft){
     const auto scrollViewer{TimelineScrollViewer()};
+    if(!scrollViewer || !TimelineCanvas()){
+        return;
+    }
+
     const auto currentOffset{scrollViewer.HorizontalOffset()};
     const auto viewportWidth{scrollViewer.ViewportWidth()};
 
@@ -1207,6 +1211,10 @@ void MainWindow::ensureTimelineCursorVisible(double cursorLeft){
 }
 
 void MainWindow::ensureCurrentTimelineCursorVisible(){
+    if(!TimelineCursor() || !TimelineScrollViewer() || !TimelineCanvas()){
+        return;
+    }
+
     const auto cursorLeft{Controls::Canvas::GetLeft(TimelineCursor())};
     ensureTimelineCursorVisible(cursorLeft);
     syncTimelineHorizontalScrollBar();
