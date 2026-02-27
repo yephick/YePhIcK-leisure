@@ -147,6 +147,14 @@ private:
     winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
     bool m_isSeparatePreviewWindowOpen{false};
     bool m_isSeparatePreviewFullscreen{false};
+    bool m_restorePreviewDetachedOnStartup{false};
+    bool m_hasSeparatePreviewPlacement{false};
+    bool m_separatePreviewWasMaximized{false};
+    int32_t m_separatePreviewLeft{0};
+    int32_t m_separatePreviewTop{0};
+    int32_t m_separatePreviewWidthDips{960};
+    int32_t m_separatePreviewHeightDips{540};
+    int32_t m_separatePreviewDpi{96};
     RECT m_separatePreviewRestoreRect{0, 0, 0, 0};
     LONG_PTR m_separatePreviewRestoreStyle{0};
     LONG_PTR m_separatePreviewRestoreExStyle{0};
@@ -232,6 +240,8 @@ private:
     void onSeparatePreviewWindowClosed(const Control& sender, const WEArgs& args);
     void onSeparatePreviewWindowKeyDown(const KRArgs& args);
     bool toggleSeparatePreviewFullscreen();
+    void saveSeparatePreviewPlacement(HWND previewHwnd);
+    void restoreSeparatePreviewPlacement(HWND previewHwnd);
     static TS secondsToTimeSpan(double seconds);
     static bool isRectVisibleOnAnyMonitor(const RECT& rect);
 };
