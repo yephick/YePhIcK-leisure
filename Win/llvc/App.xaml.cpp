@@ -81,7 +81,7 @@ void App::tryHandleLaunchArguments(const hstring& arguments){
     }
 
     if(const auto mainWindow{window.try_as<llvc::MainWindow>()}){
-        (void)mainWindow.openProjectFromPathAsync(hstring(maybePath));
+        (void)mainWindow.OpenProjectPath(hstring(maybePath));
     }
 }
 
@@ -89,7 +89,7 @@ void App::tryHandleLaunchArguments(const hstring& arguments){
 /// Invoked when the application is launched.
 /// </summary>
 /// <param name="e">Details about the launch request and process.</param>
-void App::OnLaunched(LaunchActivatedEventArgs const& e){
+void App::OnLaunched(Microsoft::UI::Xaml::LaunchActivatedEventArgs const& e){
     ensureMainWindow();
     window.Activate();
     tryHandleLaunchArguments(e.Arguments());
@@ -109,7 +109,7 @@ void App::OnActivated(IActivatedEventArgs const& e){
             const auto files{fileArgs.Files()};
             if(files.Size() > 0){
                 if(const auto file{files.GetAt(0).try_as<Windows::Storage::StorageFile>()}){
-                    (void)mainWindow.openProjectFromActivationFileAsync(file);
+                    (void)mainWindow.OpenProjectPath(file.Path());
                 }
             }
         }
@@ -117,7 +117,7 @@ void App::OnActivated(IActivatedEventArgs const& e){
     }
 
     if(e.Kind() == ActivationKind::Launch){
-        if(const auto launchArgs{e.try_as<LaunchActivatedEventArgs>()}){
+        if(const auto launchArgs{e.try_as<Windows::ApplicationModel::Activation::LaunchActivatedEventArgs>()}){
             tryHandleLaunchArguments(launchArgs.Arguments());
         }
     }

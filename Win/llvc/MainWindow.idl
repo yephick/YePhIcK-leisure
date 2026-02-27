@@ -4,5 +4,6 @@
     runtimeclass MainWindow : Microsoft.UI.Xaml.Window
     {
         MainWindow();
+        Windows.Foundation.IAsyncAction OpenProjectPath(String path);
     }
 }

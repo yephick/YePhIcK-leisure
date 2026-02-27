@@ -2281,7 +2281,7 @@ IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){
     co_return false;
 }
 
-AAction MainWindow::openProjectFromPathAsync(const hstring& path){
+AAction MainWindow::OpenProjectPath(const hstring& path){
     if(path.empty()){
         co_return;
     }
