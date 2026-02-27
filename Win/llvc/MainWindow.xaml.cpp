@@ -1574,6 +1574,14 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         previewWindow.Activate();
         root.Focus(FocusState::Programmatic);
 
+        Activate();
+        const auto weakThis{get_weak()};
+        DispatcherQueue().TryEnqueue([weakThis]{
+            if(const auto self{weakThis.get()}){
+                self->tryFocusTimelineCanvas(FocusState::Programmatic);
+            }
+        });
+
         m_separatePreviewClosedRevoker = previewWindow.Closed(auto_revoke, {this, &MainWindow::onSeparatePreviewWindowClosed});
         m_separatePreviewWindow = previewWindow;
         m_isSeparatePreviewWindowOpen = true;
