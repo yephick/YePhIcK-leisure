@@ -1591,7 +1591,7 @@ void MainWindow::onSeparatePreviewWindowClosed(const Control&, const WEArgs&){
     setStatusMessage(L"Preview restored to main window");
 }
 
-void MainWindow::onSeparatePreviewWindowActivated(const winrt::Microsoft::UI::Xaml::Window&, const winrt::Microsoft::UI::Xaml::WindowActivatedEventArgs& args){
+void MainWindow::onSeparatePreviewWindowActivated(const Control&, const winrt::Microsoft::UI::Xaml::WindowActivatedEventArgs& args){
     if(args.WindowActivationState() == winrt::Microsoft::UI::Xaml::WindowActivationState::Deactivated){
         return;
     }

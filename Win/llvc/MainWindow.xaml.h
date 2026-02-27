@@ -228,7 +228,7 @@ private:
     bool sourceHasAudio() const;
     bool setSeparatePreviewWindowOpen(bool open);
     void onSeparatePreviewWindowClosed(const Control& sender, const WEArgs& args);
-    void onSeparatePreviewWindowActivated(const winrt::Microsoft::UI::Xaml::Window& sender, const winrt::Microsoft::UI::Xaml::WindowActivatedEventArgs& args);
+    void onSeparatePreviewWindowActivated(const Control& sender, const winrt::Microsoft::UI::Xaml::WindowActivatedEventArgs& args);
     bool toggleSeparatePreviewFullscreen();
     static TS secondsToTimeSpan(double seconds);
     static bool isRectVisibleOnAnyMonitor(const RECT& rect);
