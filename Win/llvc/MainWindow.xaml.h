@@ -59,7 +59,6 @@ struct MainWindow: MainWindowT<MainWindow>{
     using KRArgs = winrt::Microsoft::UI::Xaml::Input::KeyRoutedEventArgs;
     using DEArgs = winrt::Microsoft::UI::Xaml::DragEventArgs;
     using WEArgs = winrt::Microsoft::UI::Xaml::WindowEventArgs;
-    using WAVArgs = winrt::Microsoft::UI::Xaml::WindowActivatedEventArgs;
     using MPSession = winrt::Windows::Media::Playback::MediaPlaybackSession;
     using MP = winrt::Windows::Media::Playback::MediaPlayer;
     using SFile = winrt::Windows::Storage::StorageFile;
@@ -111,17 +110,12 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction manualMenuItem_Click(const Control& sender, const REArgs& args);
     AAction aboutMenuItem_Click(const Control& sender, const REArgs& args);
     AAction optionsMenuItem_Click(const Control& sender, const REArgs& args);
-    void separatePreviewWindowMenuItem_Click(const Control& sender, const REArgs& args);
-    void toggleSeparatePreviewFullscreenMenuItem_Click(const Control& sender, const REArgs& args);
-    void zoomInTimelineMenuItem_Click(const Control& sender, const REArgs& args);
-    void zoomOutTimelineMenuItem_Click(const Control& sender, const REArgs& args);
     AAction toggleCutMarkerAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     AAction markSceneCutAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     AAction markSceneKeptAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     void window_DragOver(const Control& sender, const DEArgs& args);
     AAction window_Drop(const Control& sender, const DEArgs& args);
     void onClosed(const Control& sender, const WEArgs& args);
-    void onWindowActivated(const Control& sender, const WAVArgs& args);
     void onNaturalDurationChanged(const MPSession& sender, const Control& args);
     void onPositionTimerTick(const Control& sender, const Control& args);
 
@@ -146,22 +140,6 @@ private:
     double m_timelineDragStartX{0};
     double m_timelineDragStartOffset{0};
     bool m_isApplyingUndoRedoState{false};
-    winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
-    bool m_isSeparatePreviewWindowOpen{false};
-    bool m_isSeparatePreviewFullscreen{false};
-    bool m_restorePreviewDetachedOnStartup{false};
-    bool m_hasSeparatePreviewPlacement{false};
-    bool m_restorePreviewFullscreenOnStartup{false};
-    int32_t m_separatePreviewLeft{0};
-    int32_t m_separatePreviewTop{0};
-    int32_t m_separatePreviewWidthDips{960};
-    int32_t m_separatePreviewHeightDips{540};
-    int32_t m_separatePreviewDpi{96};
-    RECT m_separatePreviewRestoreRect{0, 0, 0, 0};
-    LONG_PTR m_separatePreviewRestoreStyle{0};
-    LONG_PTR m_separatePreviewRestoreExStyle{0};
-    winrt::Microsoft::UI::Xaml::Window m_separatePreviewWindow{nullptr};
-    winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_separatePreviewClosedRevoker{};
     ::llvc::Project m_prj{};
     ::llvc::Timeline m_tl{};
 
@@ -239,14 +217,8 @@ private:
     static wstring formatTimelineDurationText(int64_t duration100ns);
     static wstring formatDateTimeText(const winrt::Windows::Foundation::DateTime& value);
     bool sourceHasAudio() const;
-    bool setSeparatePreviewWindowOpen(bool open);
-    void onSeparatePreviewWindowClosed(const Control& sender, const WEArgs& args);
-    void onSeparatePreviewWindowKeyDown(const KRArgs& args);
-    bool toggleSeparatePreviewFullscreen();
-    void adjustTimelineZoomBy(int delta);
-    void saveSeparatePreviewPlacement(HWND previewHwnd);
-    void restoreSeparatePreviewPlacement(HWND previewHwnd);
     static TS secondsToTimeSpan(double seconds);
+    static bool isRectVisibleOnAnyMonitor(const RECT& rect);
 };
 
 }

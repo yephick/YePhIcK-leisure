@@ -41,18 +41,9 @@
                 <MenuFlyoutItem Text="Undo	Ctrl+Z" Click="undoMenuItem_Click"/>
                 <MenuFlyoutItem Text="Redo	Ctrl+Y" Click="redoMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
-                <MenuFlyoutItem Text="Reevaluate clear cut markers	Ctrl+R" Click="reevaluateClearCutMarkersButton_Click"/>
-                <MenuFlyoutSeparator/>
                 <MenuFlyoutItem Text="Toggle cut mark	Ctrl+M" Click="toggleCutMarkerAtCursorMenuItem_Click"/>
                 <MenuFlyoutItem Text="Mark scene cut	Delete" Click="markSceneCutAtCursorMenuItem_Click"/>
                 <MenuFlyoutItem Text="Mark scene kept	Insert" Click="markSceneKeptAtCursorMenuItem_Click"/>
-            </controls:MenuBarItem>
-            <controls:MenuBarItem Title="View">
-                <MenuFlyoutItem Text="Zoom in timeline	Ctrl+Plus" Click="zoomInTimelineMenuItem_Click"/>
-                <MenuFlyoutItem Text="Zoom out timeline	Ctrl+Minus" Click="zoomOutTimelineMenuItem_Click"/>
-                <MenuFlyoutSeparator/>
-                <MenuFlyoutItem x:Name="SeparatePreviewWindowMenuItem" Text="Preview in separate window" Click="separatePreviewWindowMenuItem_Click"/>
-                <MenuFlyoutItem Text="Toggle preview full-screen	F11" Click="toggleSeparatePreviewFullscreenMenuItem_Click"/>
             </controls:MenuBarItem>
 
             <controls:MenuBarItem Title="Tools">
@@ -106,8 +97,6 @@
                             <TextBlock Text="Up Arrow: prev. marker" TextWrapping="Wrap"/>
                             <TextBlock Text="Down Arrow: next marker" TextWrapping="Wrap"/>
                             <TextBlock Text="Ctrl+M: toggle cut mark" TextWrapping="Wrap"/>
-                            <TextBlock Text="Ctrl+Plus: zoom in timeline" TextWrapping="Wrap"/>
-                            <TextBlock Text="Ctrl+Minus: zoom out timeline" TextWrapping="Wrap"/>
                             <TextBlock Text="Delete: cut scene" TextWrapping="Wrap"/>
                             <TextBlock Text="Insert: keep scene" TextWrapping="Wrap"/>
                             <TextBlock Text=""/>
