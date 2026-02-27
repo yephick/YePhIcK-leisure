@@ -1543,12 +1543,25 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         detachedPreview.PreviewKeyDown(detachedKeyHandler);
         detachedPreview.KeyDown(detachedKeyHandler);
 
+        root.IsTabStop(true);
         root.PreviewKeyDown(detachedKeyHandler);
         root.KeyDown(detachedKeyHandler);
+
+        RoutedEventHandler tunnelKeys{[weakSelf](const IInspectable&, const RoutedEventArgs& e){
+            if(const auto self{weakSelf.get()}){
+                if(const auto keyArgs{e.try_as<KRArgs>()}){
+                    self->onSeparatePreviewWindowKeyDown(keyArgs);
+                }
+            }
+        }};
+        root.AddHandler(UIElement::PreviewKeyDownEvent(), tunnelKeys, true);
+        root.AddHandler(UIElement::KeyDownEvent(), tunnelKeys, true);
+
         root.Children().Append(detachedPreview);
 
         previewWindow.Content(root);
         previewWindow.Activate();
+        root.Focus(FocusState::Programmatic);
 
         m_separatePreviewClosedRevoker = previewWindow.Closed(auto_revoke, {this, &MainWindow::onSeparatePreviewWindowClosed});
         m_separatePreviewWindow = previewWindow;
