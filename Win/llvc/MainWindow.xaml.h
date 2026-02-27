@@ -214,6 +214,7 @@ private:
     void stepByFrame(int delta);
     bool moveCursorToMarker(int direction);
     void ensureTimelineCursorVisible(double cursorLeft);
+    void ensureCurrentTimelineCursorVisible();
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
     UndoRedoState captureUndoRedoState() const;
