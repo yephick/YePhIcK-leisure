@@ -81,8 +81,22 @@ void App::tryHandleLaunchArguments(const hstring& arguments){
         return;
     }
 
+    dispatchProjectOpenPath(hstring(maybePath));
+}
+
+void App::dispatchProjectOpenPath(const hstring& projectPath){
+    if(projectPath.empty()){
+        return;
+    }
+
+    if(!m_lastActivationProjectPath.empty() && _wcsicmp(projectPath.c_str(), m_lastActivationProjectPath.c_str()) == 0){
+        return;
+    }
+
+    m_lastActivationProjectPath = projectPath;
+
     if(const auto mainWindow{window.try_as<llvc::MainWindow>()}){
-        (void)mainWindow.OpenProjectPath(hstring(maybePath));
+        (void)mainWindow.OpenProjectPath(projectPath);
     }
 }
 
@@ -100,17 +114,12 @@ void App::OnActivated(IActivatedEventArgs const& e){
     ensureMainWindow();
     window.Activate();
 
-    const auto mainWindow{window.try_as<llvc::MainWindow>()};
-    if(!mainWindow){
-        return;
-    }
-
     if(e.Kind() == ActivationKind::File){
         if(const auto fileArgs{e.try_as<FileActivatedEventArgs>()}){
             const auto files{fileArgs.Files()};
             if(files.Size() > 0){
                 if(const auto file{files.GetAt(0).try_as<Windows::Storage::StorageFile>()}){
-                    (void)mainWindow.OpenProjectFile(file);
+                    dispatchProjectOpenPath(file.Path());
                 }
             }
         }

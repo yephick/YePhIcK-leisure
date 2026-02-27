@@ -2294,10 +2294,6 @@ AAction MainWindow::OpenProjectPath(const hstring& path){
     }
 }
 
-AAction MainWindow::OpenProjectFile(const SFile& file){
-    co_await openProjectFromActivationFileAsync(file);
-}
-
 AAction MainWindow::openProjectFromActivationFileAsync(const SFile& file){
     if(!file){
         co_return;

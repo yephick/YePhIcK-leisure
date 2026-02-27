@@ -13,8 +13,10 @@ struct App: AppT<App>{
 private:
     void ensureMainWindow();
     void tryHandleLaunchArguments(const winrt::hstring& arguments);
+    void dispatchProjectOpenPath(const winrt::hstring& projectPath);
 
     winrt::Microsoft::UI::Xaml::Window window{ nullptr };
+    winrt::hstring m_lastActivationProjectPath{};
 };
 
 }

@@ -5,6 +5,5 @@
     {
         MainWindow();
         Windows.Foundation.IAsyncAction OpenProjectPath(String path);
-        Windows.Foundation.IAsyncAction OpenProjectFile(Windows.Storage.StorageFile file);
     }
 }

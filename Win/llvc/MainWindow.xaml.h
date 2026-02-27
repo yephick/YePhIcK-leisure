@@ -130,7 +130,6 @@ struct MainWindow: MainWindowT<MainWindow>{
     bool isExportInProgressForClosePrompt() const;
     void requestExportCancel();
     AAction OpenProjectPath(const hstring& path);
-    AAction OpenProjectFile(const SFile& file);
 
 private:
     MP m_player{nullptr};
