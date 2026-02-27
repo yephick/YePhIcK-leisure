@@ -496,13 +496,15 @@ void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, D
     tailBuffer.reserve(fadeFrames * audioChannels);
     uint64_t writtenFrames{};
 
-    auto appendChunk = [&](vector<float>& chunkAudio){
+    auto appendChunk = [&](vector<float>& chunkAudio, bool crossfadeAtBoundary){
         if(chunkAudio.empty()){
             return;
         }
 
-        if(!tailBuffer.empty()){
+        if(!tailBuffer.empty() && crossfadeAtBoundary && fadeFrames > 0){
             appendCrossfadedAudioSegment(tailBuffer, chunkAudio, audioChannels, fadeFrames);
+        }else if(!tailBuffer.empty()){
+            tailBuffer.insert(tailBuffer.end(), chunkAudio.begin(), chunkAudio.end());
         }else{
             tailBuffer = move(chunkAudio);
         }
@@ -528,6 +530,8 @@ void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, D
         if(keepEnd <= keepStart){
             continue;
         }
+
+        auto firstChunkInKeepRange{true};
 
         PROPVARIANT pos{.vt = VT_I8, .hVal = {.QuadPart = keepStart}};
         check_hresult(audioReader->SetCurrentPosition(GUID_NULL, pos));
@@ -584,7 +588,8 @@ void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, D
                 const auto* src{reinterpret_cast<const float*>(bytes)};
                 const auto* begin{src + (trimStartFrames * audioChannels)};
                 vector<float> chunkAudio(begin, begin + (keepFrames * audioChannels));
-                appendChunk(chunkAudio);
+                appendChunk(chunkAudio, firstChunkInKeepRange);
+                firstChunkInKeepRange = false;
             }
 
             contiguous->Unlock();
