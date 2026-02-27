@@ -397,7 +397,7 @@ constexpr auto S_SEPARATE_PREVIEW_T{L"SeparatePreviewTop"};
 constexpr auto S_SEPARATE_PREVIEW_W{L"SeparatePreviewWidth"};
 constexpr auto S_SEPARATE_PREVIEW_H{L"SeparatePreviewHeight"};
 constexpr auto S_SEPARATE_PREVIEW_DPI{L"SeparatePreviewDpi"};
-constexpr auto S_SEPARATE_PREVIEW_MAX{L"SeparatePreviewMaximized"};
+constexpr auto S_SEPARATE_PREVIEW_FULLSCREEN{L"SeparatePreviewFullscreen"};
 
 constexpr auto P_FILE_PATH{L"file_path"};
 constexpr auto P_STORYLINE_ZOOM{L"storyline_zoom"};
@@ -650,9 +650,11 @@ void MainWindow::loadAppSettings(){
         m_separatePreviewWidthDips = max<int32_t>(320, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_W)));
         m_separatePreviewHeightDips = max<int32_t>(200, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_H)));
         m_separatePreviewDpi = values.HasKey(S_SEPARATE_PREVIEW_DPI) ? max<int32_t>(96, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_DPI))) : 96;
-        m_separatePreviewWasMaximized = values.HasKey(S_SEPARATE_PREVIEW_MAX) && unbox_value<bool>(values.Lookup(S_SEPARATE_PREVIEW_MAX));
         m_hasSeparatePreviewPlacement = true;
     }
+
+    m_restorePreviewFullscreenOnStartup = values.HasKey(S_SEPARATE_PREVIEW_FULLSCREEN)
+        && unbox_value<bool>(values.Lookup(S_SEPARATE_PREVIEW_FULLSCREEN));
 }
 
 void MainWindow::saveAppSettings() const{
@@ -662,6 +664,7 @@ void MainWindow::saveAppSettings() const{
     values.Insert(S_RECENT_VIDEOS, box_value(hstring(joinRecentItems(m_recentVideos))));
     values.Insert(S_RECENT_PROJECTS, box_value(hstring(joinRecentItems(m_recentProjects))));
     values.Insert(S_SEPARATE_PREVIEW_DETACHED, box_value(m_restorePreviewDetachedOnStartup));
+    values.Insert(S_SEPARATE_PREVIEW_FULLSCREEN, box_value(m_restorePreviewFullscreenOnStartup));
 
     if(m_hasSeparatePreviewPlacement){
         values.Insert(S_SEPARATE_PREVIEW_L, box_value(m_separatePreviewLeft));
@@ -669,7 +672,6 @@ void MainWindow::saveAppSettings() const{
         values.Insert(S_SEPARATE_PREVIEW_W, box_value(m_separatePreviewWidthDips));
         values.Insert(S_SEPARATE_PREVIEW_H, box_value(m_separatePreviewHeightDips));
         values.Insert(S_SEPARATE_PREVIEW_DPI, box_value(m_separatePreviewDpi));
-        values.Insert(S_SEPARATE_PREVIEW_MAX, box_value(m_separatePreviewWasMaximized));
     }
 }
 
@@ -707,6 +709,7 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
     m_mainWindowActivatedRevoker.revoke();
 
     m_restorePreviewDetachedOnStartup = m_isSeparatePreviewWindowOpen;
+    m_restorePreviewFullscreenOnStartup = m_isSeparatePreviewWindowOpen && m_isSeparatePreviewFullscreen;
 
     if(m_separatePreviewWindow){
         HWND previewHwnd{};
@@ -1634,6 +1637,11 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         m_isSeparatePreviewFullscreen = false;
         m_restorePreviewDetachedOnStartup = true;
         PreviewPlayer().SetMediaPlayer(nullptr);
+
+        if(m_restorePreviewFullscreenOnStartup){
+            (void)toggleSeparatePreviewFullscreen();
+        }
+
         SeparatePreviewWindowMenuItem().IsChecked(true);
         setStatusMessage(L"Preview opened in separate window");
         return true;
@@ -1693,12 +1701,8 @@ void MainWindow::saveSeparatePreviewPlacement(HWND previewHwnd){
         return;
     }
 
-    WINDOWPLACEMENT placement{.length = sizeof(placement)};
-    if(::GetWindowPlacement(previewHwnd, &placement) && placement.showCmd == SW_SHOWMAXIMIZED){
-        m_separatePreviewWasMaximized = true;
-        bounds = placement.rcNormalPosition;
-    }else{
-        m_separatePreviewWasMaximized = false;
+    if(m_isSeparatePreviewFullscreen && (m_separatePreviewRestoreRect.right > m_separatePreviewRestoreRect.left) && (m_separatePreviewRestoreRect.bottom > m_separatePreviewRestoreRect.top)){
+        bounds = m_separatePreviewRestoreRect;
     }
 
     const auto dpi{::GetDpiForWindow(previewHwnd)};
@@ -1742,9 +1746,6 @@ void MainWindow::restoreSeparatePreviewPlacement(HWND previewHwnd){
         desiredRect.bottom - desiredRect.top,
         SWP_NOACTIVATE | SWP_NOZORDER);
 
-    if(m_separatePreviewWasMaximized){
-        ::ShowWindow(previewHwnd, SW_MAXIMIZE);
-    }
 }
 
 bool MainWindow::toggleSeparatePreviewFullscreen(){
@@ -1791,6 +1792,7 @@ bool MainWindow::toggleSeparatePreviewFullscreen(){
             SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
         m_isSeparatePreviewFullscreen = true;
+        m_restorePreviewFullscreenOnStartup = true;
         setStatusMessage(L"Separate preview: full-screen on");
         return true;
     }
@@ -1807,6 +1809,7 @@ bool MainWindow::toggleSeparatePreviewFullscreen(){
         SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
     m_isSeparatePreviewFullscreen = false;
+    m_restorePreviewFullscreenOnStartup = false;
     setStatusMessage(L"Separate preview: full-screen off");
     return true;
 }

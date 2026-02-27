@@ -149,7 +149,7 @@ private:
     bool m_isSeparatePreviewFullscreen{false};
     bool m_restorePreviewDetachedOnStartup{false};
     bool m_hasSeparatePreviewPlacement{false};
-    bool m_separatePreviewWasMaximized{false};
+    bool m_restorePreviewFullscreenOnStartup{false};
     int32_t m_separatePreviewLeft{0};
     int32_t m_separatePreviewTop{0};
     int32_t m_separatePreviewWidthDips{960};
