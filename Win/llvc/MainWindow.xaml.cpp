@@ -90,40 +90,6 @@ namespace{
 
 constexpr int64_t HNS_PER_SECOND{10'000'000LL};
 
-
-template<typename T>
-optional<T> tryReadSetting(Windows::Foundation::Collections::IMap<hstring, IInspectable>& values, const wchar_t* key){
-    if(!values.HasKey(key)){
-        return nullopt;
-    }
-
-    try{
-        return unbox_value<T>(values.Lookup(key));
-    }catch(const winrt::hresult_error&){
-        values.Remove(key);
-        return nullopt;
-    }
-}
-
-optional<bool> tryReadBoolSetting(Windows::Foundation::Collections::IMap<hstring, IInspectable>& values, const wchar_t* key){
-    if(const auto asBool{tryReadSetting<bool>(values, key)}){
-        return asBool;
-    }
-    if(const auto asInt{tryReadSetting<int32_t>(values, key)}){
-        return *asInt != 0;
-    }
-    if(const auto asText{tryReadSetting<hstring>(values, key)}){
-        const auto text{to_hstring(trim(asText->c_str()))};
-        if(_wcsicmp(text.c_str(), L"true") == 0 || _wcsicmp(text.c_str(), L"1") == 0){
-            return true;
-        }
-        if(_wcsicmp(text.c_str(), L"false") == 0 || _wcsicmp(text.c_str(), L"0") == 0){
-            return false;
-        }
-    }
-    return nullopt;
-}
-
 bool isAviPath(const wstring& filePath){
     if(filePath.size() < 4){
         return false;
@@ -593,22 +559,18 @@ HWND MainWindow::getWindowHandle() const{
 
 void MainWindow::restoreWindowPlacement(){
     const auto localSettings{ApplicationData::Current().LocalSettings()};
-    auto values{localSettings.Values()};
+    const auto values{localSettings.Values()};
 
-    const auto left{tryReadSetting<int32_t>(values, W_POS_L)};
-    const auto top{tryReadSetting<int32_t>(values, W_POS_T)};
-    const auto widthDips{tryReadSetting<int32_t>(values, W_POS_W)};
-    const auto heightDips{tryReadSetting<int32_t>(values, W_POS_H)};
-    if(!left || !top || !widthDips || !heightDips){
+    if(!values.HasKey(W_POS_L) || !values.HasKey(W_POS_T) || !values.HasKey(W_POS_W) || !values.HasKey(W_POS_H)){
         return;
     }
 
     ::llvc::WindowPlacementState state{};
-    state.left = *left;
-    state.top = *top;
-    state.widthDips = *widthDips;
-    state.heightDips = *heightDips;
-    state.dpi = tryReadSetting<int32_t>(values, W_POS_DPI).value_or(96);
+    state.left = unbox_value<int32_t>(values.Lookup(W_POS_L));
+    state.top = unbox_value<int32_t>(values.Lookup(W_POS_T));
+    state.widthDips = unbox_value<int32_t>(values.Lookup(W_POS_W));
+    state.heightDips = unbox_value<int32_t>(values.Lookup(W_POS_H));
+    state.dpi = values.HasKey(W_POS_DPI) ? unbox_value<int32_t>(values.Lookup(W_POS_DPI)) : 96;
 
     const auto hwnd{getWindowHandle()};
     if(!applyWindowPlacement(hwnd, state, hwnd, false)){
@@ -621,23 +583,25 @@ void MainWindow::restoreWindowPlacement(){
 }
 
 void MainWindow::loadAppSettings(){
-    auto values{ApplicationData::Current().LocalSettings().Values()};
+    const auto values{ApplicationData::Current().LocalSettings().Values()};
 
     m_maxRecentVideos = S_DEFAULT_MAX_RECENT;
     m_maxRecentProjects = S_DEFAULT_MAX_RECENT;
 
-    if(const auto parsed{tryReadSetting<int32_t>(values, S_MAX_RECENT_VIDEOS)}){
-        m_maxRecentVideos = static_cast<uint32_t>(clamp(*parsed, 1, 20));
+    if(values.HasKey(S_MAX_RECENT_VIDEOS)){
+        const auto parsed{unbox_value<int32_t>(values.Lookup(S_MAX_RECENT_VIDEOS))};
+        m_maxRecentVideos = static_cast<uint32_t>(clamp(parsed, 1, 20));
     }
-    if(const auto parsed{tryReadSetting<int32_t>(values, S_MAX_RECENT_PROJECTS)}){
-        m_maxRecentProjects = static_cast<uint32_t>(clamp(*parsed, 1, 20));
+    if(values.HasKey(S_MAX_RECENT_PROJECTS)){
+        const auto parsed{unbox_value<int32_t>(values.Lookup(S_MAX_RECENT_PROJECTS))};
+        m_maxRecentProjects = static_cast<uint32_t>(clamp(parsed, 1, 20));
     }
 
-    if(const auto recentVideosText{tryReadSetting<hstring>(values, S_RECENT_VIDEOS)}){
-        m_recentVideos = splitRecentItems(recentVideosText->c_str());
+    if(values.HasKey(S_RECENT_VIDEOS)){
+        m_recentVideos = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_VIDEOS)).c_str());
     }
-    if(const auto recentProjectsText{tryReadSetting<hstring>(values, S_RECENT_PROJECTS)}){
-        m_recentProjects = splitRecentItems(recentProjectsText->c_str());
+    if(values.HasKey(S_RECENT_PROJECTS)){
+        m_recentProjects = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
     }
     if(m_recentVideos.size() > m_maxRecentVideos){
         m_recentVideos.resize(m_maxRecentVideos);
@@ -646,26 +610,24 @@ void MainWindow::loadAppSettings(){
         m_recentProjects.resize(m_maxRecentProjects);
     }
 
-    m_restorePreviewDetachedOnStartup = tryReadBoolSetting(values, S_SEPARATE_PREVIEW_DETACHED).value_or(false);
+    m_restorePreviewDetachedOnStartup = values.HasKey(S_SEPARATE_PREVIEW_DETACHED)
+        && unbox_value<bool>(values.Lookup(S_SEPARATE_PREVIEW_DETACHED));
 
-    const auto previewLeft{tryReadSetting<int32_t>(values, S_SEPARATE_PREVIEW_L)};
-    const auto previewTop{tryReadSetting<int32_t>(values, S_SEPARATE_PREVIEW_T)};
-    const auto previewWidthDips{tryReadSetting<int32_t>(values, S_SEPARATE_PREVIEW_W)};
-    const auto previewHeightDips{tryReadSetting<int32_t>(values, S_SEPARATE_PREVIEW_H)};
-    if(previewLeft && previewTop && previewWidthDips && previewHeightDips){
-        m_separatePreviewLeft = *previewLeft;
-        m_separatePreviewTop = *previewTop;
-        m_separatePreviewWidthDips = max<int32_t>(320, *previewWidthDips);
-        m_separatePreviewHeightDips = max<int32_t>(200, *previewHeightDips);
-        m_separatePreviewDpi = max<int32_t>(96, tryReadSetting<int32_t>(values, S_SEPARATE_PREVIEW_DPI).value_or(96));
+    if(values.HasKey(S_SEPARATE_PREVIEW_L) && values.HasKey(S_SEPARATE_PREVIEW_T) && values.HasKey(S_SEPARATE_PREVIEW_W) && values.HasKey(S_SEPARATE_PREVIEW_H)){
+        m_separatePreviewLeft = unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_L));
+        m_separatePreviewTop = unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_T));
+        m_separatePreviewWidthDips = max<int32_t>(320, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_W)));
+        m_separatePreviewHeightDips = max<int32_t>(200, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_H)));
+        m_separatePreviewDpi = values.HasKey(S_SEPARATE_PREVIEW_DPI) ? max<int32_t>(96, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_DPI))) : 96;
         m_hasSeparatePreviewPlacement = true;
     }
 
-    m_restorePreviewFullscreenOnStartup = tryReadBoolSetting(values, S_SEPARATE_PREVIEW_FULLSCREEN).value_or(false);
+    m_restorePreviewFullscreenOnStartup = values.HasKey(S_SEPARATE_PREVIEW_FULLSCREEN)
+        && unbox_value<bool>(values.Lookup(S_SEPARATE_PREVIEW_FULLSCREEN));
 }
 
 void MainWindow::saveAppSettings() const{
-    auto values{ApplicationData::Current().LocalSettings().Values()};
+    const auto values{ApplicationData::Current().LocalSettings().Values()};
     values.Insert(S_MAX_RECENT_VIDEOS, box_value(static_cast<int32_t>(m_maxRecentVideos)));
     values.Insert(S_MAX_RECENT_PROJECTS, box_value(static_cast<int32_t>(m_maxRecentProjects)));
     values.Insert(S_RECENT_VIDEOS, box_value(hstring(joinRecentItems(m_recentVideos))));
@@ -690,7 +652,7 @@ void MainWindow::saveWindowPlacement() const{
     }
 
     const auto localSettings{ApplicationData::Current().LocalSettings()};
-    auto values{localSettings.Values()};
+    const auto values{localSettings.Values()};
     values.Insert(W_POS_L, box_value(captured->left));
     values.Insert(W_POS_T, box_value(captured->top));
     values.Insert(W_POS_W, box_value(captured->widthDips));
