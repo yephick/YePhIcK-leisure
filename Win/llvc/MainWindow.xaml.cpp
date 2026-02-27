@@ -1465,12 +1465,12 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
             args.Handled(true);
             return true;
         }
-        if(args.Key() == VirtualKey::Add || args.Key() == VirtualKey::OemPlus){
+        if(args.Key() == VirtualKey::Add || args.Key() == static_cast<VirtualKey>(187)){
             adjustTimelineZoomBy(1);
             args.Handled(true);
             return true;
         }
-        if(args.Key() == VirtualKey::Subtract || args.Key() == VirtualKey::OemMinus){
+        if(args.Key() == VirtualKey::Subtract || args.Key() == static_cast<VirtualKey>(189)){
             adjustTimelineZoomBy(-1);
             args.Handled(true);
             return true;
