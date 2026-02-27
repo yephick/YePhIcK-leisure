@@ -1309,6 +1309,71 @@ void MainWindow::stepByFrame(int delta){
     updateTimelineCursorFromPlayback();
 }
 
+
+bool MainWindow::moveCursorToMarker(int direction){
+    if(direction == 0){
+        return false;
+    }
+
+    const auto duration100ns{m_prj.timelineDuration100ns()};
+    if(duration100ns <= 0){
+        return false;
+    }
+
+    const auto markers{m_prj.buildRapMarkersFromSelection()};
+    if(markers.empty()){
+        return false;
+    }
+
+    int64_t current100ns{};
+    if(m_player){
+        current100ns = max<int64_t>(0, m_player.PlaybackSession().Position().count());
+    }else if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
+        current100ns = *cursor100ns;
+    }
+
+    int64_t target100ns{current100ns};
+    if(direction < 0){
+        auto candidateFound{false};
+        for(const auto& marker: markers){
+            if(marker.time100ns >= current100ns){
+                break;
+            }
+            target100ns = marker.time100ns;
+            candidateFound = true;
+        }
+        if(!candidateFound){
+            return false;
+        }
+    }else{
+        const auto it{find_if(markers.begin(), markers.end(), [current100ns](const auto& marker){
+            return marker.time100ns > current100ns;
+        })};
+        if(it == markers.end()){
+            return false;
+        }
+        target100ns = it->time100ns;
+    }
+
+    if(m_player){
+        m_player.PlaybackSession().Position(TimeSpan{target100ns});
+        updateTimelineCursorFromPlayback();
+        return true;
+    }
+
+    const auto width{TimelineCanvas().Width()};
+    if(width > 0){
+        const auto ratio{clamp(static_cast<double>(target100ns) / duration100ns, 0.0, 1.0)};
+        const auto left{ratio * width};
+        Controls::Canvas::SetLeft(TimelineCursor(), left);
+        ensureTimelineCursorVisible(left);
+        syncTimelineHorizontalScrollBar();
+        return true;
+    }
+
+    return false;
+}
+
 void MainWindow::tryFocusTimelineCanvas(FState focusState){
     const auto canvas{TimelineCanvas()};
     if(canvas && canvas.XamlRoot()){
@@ -1397,6 +1462,14 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         return true;
     case VirtualKey::Right:
         stepByFrame(1);
+        args.Handled(true);
+        return true;
+    case VirtualKey::Up:
+        (void)moveCursorToMarker(-1);
+        args.Handled(true);
+        return true;
+    case VirtualKey::Down:
+        (void)moveCursorToMarker(1);
         args.Handled(true);
         return true;
     case VirtualKey::Delete:

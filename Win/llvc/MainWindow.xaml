@@ -93,6 +93,8 @@
                             <TextBlock Text="Spacebar - play/pause video" TextWrapping="Wrap"/>
                             <TextBlock Text="Left Arrow - previous frame" TextWrapping="Wrap"/>
                             <TextBlock Text="Right Arrow - next frame" TextWrapping="Wrap"/>
+                            <TextBlock Text="Up Arrow - previous marker" TextWrapping="Wrap"/>
+                            <TextBlock Text="Down Arrow - next marker" TextWrapping="Wrap"/>
                             <TextBlock Text="Ctrl+M - toggle cut mark" TextWrapping="Wrap"/>
                             <TextBlock Text="Delete - mark scene cut" TextWrapping="Wrap"/>
                             <TextBlock Text="Insert - mark scene kept" TextWrapping="Wrap"/>

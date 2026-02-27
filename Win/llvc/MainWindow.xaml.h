@@ -190,6 +190,7 @@ private:
     bool markSceneAtCursor(bool cutScene);
     bool trySkipCurrentCutDuringPlayback();
     void stepByFrame(int delta);
+    bool moveCursorToMarker(int direction);
     void ensureTimelineCursorVisible(double cursorLeft);
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
