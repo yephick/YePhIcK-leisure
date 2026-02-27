@@ -1547,14 +1547,6 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         root.PreviewKeyDown(detachedKeyHandler);
         root.KeyDown(detachedKeyHandler);
 
-        Input::KeyEventHandler tunnelKeys{[weakSelf](const IInspectable&, const KRArgs& e){
-            if(const auto self{weakSelf.get()}){
-                self->onSeparatePreviewWindowKeyDown(e);
-            }
-        }};
-        root.AddHandler(UIElement::PreviewKeyDownEvent(), tunnelKeys.as<IInspectable>(), true);
-        root.AddHandler(UIElement::KeyDownEvent(), tunnelKeys.as<IInspectable>(), true);
-
         root.Children().Append(detachedPreview);
 
         previewWindow.Content(root);
