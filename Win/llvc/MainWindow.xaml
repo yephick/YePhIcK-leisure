@@ -99,7 +99,7 @@
                             <TextBlock Text="Drag cursor - seek timeline"/>
                             <TextBlock Text="Right-click - toggle mark"/>
                             <TextBlock Text="Ctrl+click - toggle scene" TextWrapping="Wrap"/>
-                            <TextBlock Text="Tick click - seek point"/>
+                            <TextBlock Text="Timeline ruler click - seek point"/>
                             <TextBlock Text="File drop - load video"/>
                         </StackPanel>
                     </ScrollViewer>

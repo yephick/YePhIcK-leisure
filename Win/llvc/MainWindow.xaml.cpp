@@ -719,7 +719,7 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
         return;
     }
 
-    const auto previousCutRanges{m_prj.buildCutRanges100ns(m_timelineDurationSeconds)};
+    const auto previousCutRanges{m_prj.buildCutRanges100ns()};
     const auto beforeState{captureUndoRedoState()};
     const auto hasUndoSnapshot{pushUndoStateIfChanged()};
     vector<IndexedFrameSample> updatedMarkers;
@@ -750,8 +750,8 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
     m_prj.frameIndex() = std::move(updatedMarkers);
     m_prj.refreshSelectedMarkers();
 
-    const auto totalDuration100ns{static_cast<int64_t>(m_timelineDurationSeconds * HNS_PER_SECOND)};
-    const auto sceneBoundaries{m_prj.buildSceneBoundaries100ns(totalDuration100ns)};
+    const auto totalDuration100ns{m_prj.timelineDuration100ns()};
+    const auto sceneBoundaries{m_prj.buildSceneBoundaries100ns()};
     m_prj.cutScenes().clear();
     for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
         const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
@@ -902,20 +902,19 @@ void MainWindow::timelineCanvas_PointerMoved(const Control&, const PREArgs& e){
     e.Handled(true);
 }
 
-optional<int64_t> MainWindow::timelinePointToTime100ns(double pointerX, double width) const{
-    if(m_timelineDurationSeconds <= 0 || width <= 0){
-        return nullopt;
+std::optional<int64_t> MainWindow::timelinePointToTime100ns(double pointerX, double width) const{
+    const auto duration100ns{m_prj.timelineDuration100ns()};
+    if(duration100ns <= 0 || width <= 0){
+        return std::nullopt;
     }
 
-    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
     const auto clampedX{clamp(pointerX, 0.0, width)};
     return static_cast<int64_t>((clampedX / width) * duration100ns);
 }
 
 bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
     (void)pushUndoStateIfChanged();
-    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
-    if(!m_prj.toggleSelectedKeyframeAtTime100ns(time100ns, duration100ns, m_mediaInfo.frameRate)){
+    if(!m_prj.toggleSelectedKeyframeAtTime100ns(time100ns, m_mediaInfo.frameRate)){
         return false;
     }
 
@@ -1001,6 +1000,7 @@ void MainWindow::timelineTickCanvas_PointerReleased(const Control&, const PREArg
 void MainWindow::onNaturalDurationChanged(const MPSession& sender, const Control&){
     const auto duration{sender.NaturalDuration()};
     m_timelineDurationSeconds = max(0.0, duration.count() / 10'000'000.0);
+    m_prj.timelineDuration100ns(max<int64_t>(0, duration.count()));
 
     if(m_prj.videoFile() && m_timelineDurationSeconds > 0){
         const auto weak{get_weak()};
@@ -1186,7 +1186,7 @@ void MainWindow::renderCutOverlays(){
         return;
     }
 
-    const auto cutRanges100ns{m_prj.buildCutRanges100ns(m_timelineDurationSeconds)};
+    const auto cutRanges100ns{m_prj.buildCutRanges100ns()};
     const auto overlayColor {Windows::UI::ColorHelper::FromArgb(180, 0, 0, 0)};
     for(const auto& [startTime100ns, endTime100ns]: cutRanges100ns){
         const auto start{clamp((static_cast<double>(startTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
@@ -1212,8 +1212,7 @@ void MainWindow::renderCutOverlays(){
 
 bool MainWindow::toggleCutBlockAtTime100ns(int64_t time100ns){
     (void)pushUndoStateIfChanged();
-    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
-    if(!m_prj.toggleCutBlockAtTime100ns(time100ns, duration100ns)){
+    if(!m_prj.toggleCutBlockAtTime100ns(time100ns)){
         return false;
     }
 
@@ -1224,8 +1223,7 @@ bool MainWindow::toggleCutBlockAtTime100ns(int64_t time100ns){
 
 bool MainWindow::setCutBlockAtTime100ns(int64_t time100ns, bool cutScene){
     (void)pushUndoStateIfChanged();
-    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
-    if(!m_prj.setCutBlockAtTime100ns(time100ns, duration100ns, cutScene)){
+    if(!m_prj.setCutBlockAtTime100ns(time100ns, cutScene)){
         return false;
     }
 
@@ -1259,7 +1257,7 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
         return false;
     }
 
-    const auto cutRanges100ns{m_prj.buildCutRanges100ns(m_timelineDurationSeconds)};
+    const auto cutRanges100ns{m_prj.buildCutRanges100ns()};
     const auto now100ns{max<int64_t>(0, m_player.PlaybackSession().Position().count())};
     for(const auto& [start100ns, end100ns]: cutRanges100ns){
         if(now100ns >= start100ns && now100ns < end100ns){
@@ -1963,7 +1961,7 @@ void MainWindow::clearErrorMessage(){
 }
 
 void MainWindow::refreshStatusInfoSection(){
-    const auto outputDuration100ns{m_prj.outputDuration100ns(m_timelineDurationSeconds)};
+    const auto outputDuration100ns{m_prj.outputDuration100ns()};
     wstring text{L"Estimated output: "};
     text += formatTimelineDurationText(outputDuration100ns);
     InfoText().Text(text);
