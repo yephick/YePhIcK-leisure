@@ -113,7 +113,7 @@ std::optional<bool> tryReadBoolSetting(Windows::Foundation::Collections::IProper
         return *asInt != 0;
     }
     if(const auto asText{tryReadSetting<hstring>(values, key)}){
-        const auto text{trim(asText->c_str())};
+        const auto text{to_hstring(trim(asText->c_str()))};
         if(_wcsicmp(text.c_str(), L"true") == 0 || _wcsicmp(text.c_str(), L"1") == 0){
             return true;
         }
