@@ -144,6 +144,8 @@
                         <ComboBoxItem Content="500 ms" Tag="500"/>
                         <ComboBoxItem Content="750 ms" Tag="750"/>
                         <ComboBoxItem Content="1 s" Tag="1000"/>
+                        <ComboBoxItem Content="2 s" Tag="2000"/>
+                        <ComboBoxItem Content="5 s" Tag="5000"/>
                     </ComboBox>
                 </StackPanel>
 
