@@ -48,14 +48,15 @@ uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUI
 bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID& subtype, uint32_t nalLengthFieldSize, bool allowInconclusive);
 bool isContainerSyncSample(const com_ptr<IMFSample>& sample);
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex);
+com_ptr<IMFMediaType> chooseBestNativeVideoMediaTypeForSubtypes(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex, const vector<GUID>& allowedSubtypes);
 com_ptr<IMFMediaType> createPcmFloatAudioType(uint32_t sampleRate, uint32_t channels);
 com_ptr<IMFMediaType> createAacOutputType(uint32_t sampleRate, uint32_t channels);
 vector<float> decodeAudioRangeToFloat(const com_ptr<IMFSourceReader>& reader, DWORD audioStreamIndex, int64_t rangeStart100ns, int64_t rangeEnd100ns, uint32_t channels, uint32_t sampleRate);
 
 wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow, bool mp4Only);
 void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>& segmentAudio, uint32_t audioChannels, size_t fadeFrames);
-vector<float> buildMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs);
-void writePcmAudioToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, const vector<float>& mixedAudio, uint32_t audioChannels, uint32_t audioSampleRate);
+void writePcmAudioFramesToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, const vector<float>& audioFrames, uint32_t audioChannels, uint32_t audioSampleRate, uint64_t& writtenFrames);
+void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs);
 VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback);
 void applyExportFileMetadata(const std::wstring& sourcePath, const std::wstring& outputPath, const std::wstring& exportComment);
 
@@ -215,6 +216,10 @@ bool isContainerSyncSample(const com_ptr<IMFSample>& sample){
 }
 
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex){
+    return chooseBestNativeVideoMediaTypeForSubtypes(reader, streamIndex, {});
+}
+
+com_ptr<IMFMediaType> chooseBestNativeVideoMediaTypeForSubtypes(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex, const vector<GUID>& allowedSubtypes){
     com_ptr<IMFMediaType> bestType;
     double bestFps{};
     uint32_t bestWidth{};
@@ -229,8 +234,13 @@ com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(const com_ptr<IMFSourceRead
         check_hresult(hr);
 
         GUID major{GUID_NULL};
+        GUID subtype{GUID_NULL};
         check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+        check_hresult(type->GetGUID(MF_MT_SUBTYPE, &subtype));
         if(major != MFMediaType_Video){
+            continue;
+        }
+        if(!allowedSubtypes.empty() && ranges::find(allowedSubtypes, subtype) == allowedSubtypes.end()){
             continue;
         }
 
@@ -429,8 +439,16 @@ void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>
     }
 
     for(size_t frame{0}; frame < overlapFrames; ++frame){
-        const auto fadeOut{static_cast<float>(overlapFrames - frame) / static_cast<float>(overlapFrames)};
-        const auto fadeIn{static_cast<float>(frame + 1) / static_cast<float>(overlapFrames)};
+        float fadeOut{};
+        float fadeIn{};
+        if(overlapFrames == 1){
+            fadeOut = 0.0f;
+            fadeIn = 1.0f;
+        }else{
+            const auto t{static_cast<float>(frame) / static_cast<float>(overlapFrames - 1)};
+            fadeOut = cosf(t * static_cast<float>(numbers::pi_v<double> * 0.5));
+            fadeIn = sinf(t * static_cast<float>(numbers::pi_v<double> * 0.5));
+        }
         for(uint32_t ch{0}; ch < audioChannels; ++ch){
             const auto dstIndex{(mixedFrames - overlapFrames + frame) * audioChannels + ch};
             const auto srcIndex{frame * audioChannels + ch};
@@ -441,49 +459,139 @@ void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>
     mixedAudio.insert(mixedAudio.end(), segmentAudio.begin() + static_cast<std::ptrdiff_t>(overlapFrames * audioChannels), segmentAudio.end());
 }
 
-vector<float> buildMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs){
-    vector<float> mixedAudio;
-    const auto fadeMs{crossfadeMs > 0 ? crossfadeMs : 100};
-    const auto fadeFrames{static_cast<size_t>((static_cast<int64_t>(audioSampleRate) * fadeMs) / 1000)};
-
-    for(const auto& [keepStart, keepEnd] : keepRanges100ns){
-        auto segmentAudio{decodeAudioRangeToFloat(audioReader, audioStreamIndex, keepStart, keepEnd, audioChannels, audioSampleRate)};
-        appendCrossfadedAudioSegment(mixedAudio, segmentAudio, audioChannels, fadeFrames);
+void writePcmAudioFramesToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, const vector<float>& audioFrames, uint32_t audioChannels, uint32_t audioSampleRate, uint64_t& writtenFrames){
+    if(audioFrames.empty()){
+        return;
     }
 
-    return mixedAudio;
+    const auto framesToWrite{audioFrames.size() / audioChannels};
+    const auto bytesToWrite{static_cast<DWORD>(audioFrames.size() * sizeof(float))};
+
+    com_ptr<IMFSample> audioSample;
+    check_hresult(MFCreateSample(audioSample.put()));
+    com_ptr<IMFMediaBuffer> audioBuffer;
+    check_hresult(MFCreateMemoryBuffer(bytesToWrite, audioBuffer.put()));
+
+    BYTE* audioBytes{};
+    DWORD audioMaxLen{};
+    DWORD audioCurLen{};
+    check_hresult(audioBuffer->Lock(&audioBytes, &audioMaxLen, &audioCurLen));
+    memcpy(audioBytes, audioFrames.data(), bytesToWrite);
+    check_hresult(audioBuffer->Unlock());
+    check_hresult(audioBuffer->SetCurrentLength(bytesToWrite));
+    check_hresult(audioSample->AddBuffer(audioBuffer.get()));
+
+    const auto sampleTime100ns{static_cast<LONGLONG>((writtenFrames * 10'000'000ULL) / audioSampleRate)};
+    const auto sampleDuration100ns{static_cast<LONGLONG>((framesToWrite * 10'000'000ULL) / audioSampleRate)};
+    check_hresult(audioSample->SetSampleTime(sampleTime100ns));
+    check_hresult(audioSample->SetSampleDuration(sampleDuration100ns));
+    check_hresult(writer->WriteSample(writerAudioStreamIndex, audioSample.get()));
+
+    writtenFrames += framesToWrite;
 }
 
-void writePcmAudioToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, const vector<float>& mixedAudio, uint32_t audioChannels, uint32_t audioSampleRate){
-    const size_t chunkFrames{1024};
-    size_t frameOffset{};
-    const auto totalFrames{mixedAudio.size() / audioChannels};
-    while(frameOffset < totalFrames){
-        const auto framesToWrite{min(chunkFrames, totalFrames - frameOffset)};
-        const auto bytesToWrite{static_cast<DWORD>(framesToWrite * audioChannels * sizeof(float))};
+void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs){
+    const auto fadeFrames{crossfadeMs <= 0 ? size_t{0} : static_cast<size_t>((static_cast<int64_t>(audioSampleRate) * crossfadeMs) / 1000)};
+    vector<float> tailBuffer;
+    tailBuffer.reserve(fadeFrames * audioChannels);
+    uint64_t writtenFrames{};
 
-        com_ptr<IMFSample> audioSample;
-        check_hresult(MFCreateSample(audioSample.put()));
-        com_ptr<IMFMediaBuffer> audioBuffer;
-        check_hresult(MFCreateMemoryBuffer(bytesToWrite, audioBuffer.put()));
+    auto appendChunk = [&](vector<float>& chunkAudio){
+        if(chunkAudio.empty()){
+            return;
+        }
 
-        BYTE* audioBytes{};
-        DWORD audioMaxLen{};
-        DWORD audioCurLen{};
-        check_hresult(audioBuffer->Lock(&audioBytes, &audioMaxLen, &audioCurLen));
-        memcpy(audioBytes, mixedAudio.data() + (frameOffset * audioChannels), bytesToWrite);
-        check_hresult(audioBuffer->Unlock());
-        check_hresult(audioBuffer->SetCurrentLength(bytesToWrite));
-        check_hresult(audioSample->AddBuffer(audioBuffer.get()));
+        if(!tailBuffer.empty()){
+            appendCrossfadedAudioSegment(tailBuffer, chunkAudio, audioChannels, fadeFrames);
+        }else{
+            tailBuffer = move(chunkAudio);
+        }
 
-        const auto sampleTime100ns{static_cast<LONGLONG>((frameOffset * 10'000'000LL) / audioSampleRate)};
-        const auto sampleDuration100ns{static_cast<LONGLONG>((framesToWrite * 10'000'000LL) / audioSampleRate)};
-        check_hresult(audioSample->SetSampleTime(sampleTime100ns));
-        check_hresult(audioSample->SetSampleDuration(sampleDuration100ns));
-        check_hresult(writer->WriteSample(writerAudioStreamIndex, audioSample.get()));
+        if(fadeFrames == 0){
+            writePcmAudioFramesToWriter(writer, writerAudioStreamIndex, tailBuffer, audioChannels, audioSampleRate, writtenFrames);
+            tailBuffer.clear();
+            return;
+        }
 
-        frameOffset += framesToWrite;
+        const auto tailFrames{tailBuffer.size() / audioChannels};
+        if(tailFrames > fadeFrames){
+            const auto flushFrames{tailFrames - fadeFrames};
+            vector<float> flushAudio;
+            flushAudio.reserve(flushFrames * audioChannels);
+            flushAudio.insert(flushAudio.end(), tailBuffer.begin(), tailBuffer.begin() + static_cast<std::ptrdiff_t>(flushFrames * audioChannels));
+            writePcmAudioFramesToWriter(writer, writerAudioStreamIndex, flushAudio, audioChannels, audioSampleRate, writtenFrames);
+            tailBuffer.erase(tailBuffer.begin(), tailBuffer.begin() + static_cast<std::ptrdiff_t>(flushFrames * audioChannels));
+        }
+    };
+
+    for(const auto& [keepStart, keepEnd] : keepRanges100ns){
+        if(keepEnd <= keepStart){
+            continue;
+        }
+
+        PROPVARIANT pos{.vt = VT_I8, .hVal = {.QuadPart = keepStart}};
+        check_hresult(audioReader->SetCurrentPosition(GUID_NULL, pos));
+        PropVariantClear(&pos);
+
+        for(;;){
+            DWORD actualStream{};
+            DWORD flags{};
+            LONGLONG timestamp{};
+            com_ptr<IMFSample> sample;
+            check_hresult(audioReader->ReadSample(audioStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put()));
+            if((flags & MF_SOURCE_READERF_STREAMTICK) && timestamp >= keepEnd){
+                break;
+            }
+            if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+                break;
+            }
+            if(!sample){
+                continue;
+            }
+
+            LONGLONG sampleStart100ns{};
+            if(FAILED(sample->GetSampleTime(&sampleStart100ns))){
+                sampleStart100ns = timestamp;
+            }
+            LONGLONG sampleDuration100ns{};
+            if(FAILED(sample->GetSampleDuration(&sampleDuration100ns)) || sampleDuration100ns <= 0){
+                continue;
+            }
+
+            const auto sampleEnd100ns{sampleStart100ns + sampleDuration100ns};
+            if(sampleEnd100ns <= keepStart){
+                continue;
+            }
+            if(sampleStart100ns >= keepEnd){
+                break;
+            }
+
+            com_ptr<IMFMediaBuffer> contiguous;
+            check_hresult(sample->ConvertToContiguousBuffer(contiguous.put()));
+            BYTE* bytes{};
+            DWORD maxLen{};
+            DWORD curLen{};
+            check_hresult(contiguous->Lock(&bytes, &maxLen, &curLen));
+
+            const auto totalFrames{static_cast<int64_t>(curLen / (audioChannels * sizeof(float)))};
+            const auto trimStart100ns{max<int64_t>(0, keepStart - sampleStart100ns)};
+            const auto trimEnd100ns{max<int64_t>(0, sampleEnd100ns - keepEnd)};
+            const auto trimStartFrames{min<int64_t>(totalFrames, (trimStart100ns * audioSampleRate) / 10'000'000)};
+            const auto trimEndFrames{min<int64_t>(totalFrames - trimStartFrames, (trimEnd100ns * audioSampleRate) / 10'000'000)};
+            const auto keepFrames{max<int64_t>(0, totalFrames - trimStartFrames - trimEndFrames)};
+
+            if(keepFrames > 0){
+                const auto* src{reinterpret_cast<const float*>(bytes)};
+                const auto* begin{src + (trimStartFrames * audioChannels)};
+                vector<float> chunkAudio(begin, begin + (keepFrames * audioChannels));
+                appendChunk(chunkAudio);
+            }
+
+            contiguous->Unlock();
+        }
     }
+
+    writePcmAudioFramesToWriter(writer, writerAudioStreamIndex, tailBuffer, audioChannels, audioSampleRate, writtenFrames);
 }
 
 VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback){

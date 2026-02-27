@@ -2465,6 +2465,10 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     uint32_t allSamplesIndependent{};
     uint32_t maxKeyFrameSpacing{};
     const auto sourceIsAvi{isAviPath(filePath)};
+    wstring lowerPath{filePath};
+    transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::towlower);
+    const auto sourceIsMp4{lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mp4"};
+    const auto sourceIsMov{lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mov"};
 
     for(DWORD streamIndex{0};; ++streamIndex){
         com_ptr<IMFMediaType> type;
@@ -2534,13 +2538,17 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     }
 
     if(videoStreamIndex != invalidStreamIndex){
-        if(auto bestVideoType{chooseBestNativeVideoMediaType(reader, videoStreamIndex)}){
-            if(sourceIsAvi){
-                bestVideoType = aviNativeH264Type;
-            }
+        vector<GUID> allowedVideoSubtypes;
+        if(sourceIsMp4 || sourceIsMov){
+            allowedVideoSubtypes = {MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_H265};
+        }
+
+        if(auto bestVideoType{sourceIsAvi ? aviNativeH264Type : chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, allowedVideoSubtypes)}){
             (void)reader->SetCurrentMediaType(videoStreamIndex, nullptr, bestVideoType.get());
 
             MFGetAttributeSize(bestVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
+
+            check_hresult(bestVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
             MFGetAttributeRatio(bestVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
             (void)bestVideoType->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
             if(SUCCEEDED(bestVideoType->GetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, &allSamplesIndependent))){
@@ -2549,6 +2557,9 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
             if(SUCCEEDED(bestVideoType->GetUINT32(MF_MT_MAX_KEYFRAME_SPACING, &maxKeyFrameSpacing))){
                 result.maxKeyFrameSpacing = to_wstring(maxKeyFrameSpacing) + L" frames";
             }
+        }else if(sourceIsMp4 || sourceIsMov){
+            result.errorMessage = L"No stream-copy video media type found. Require H.264 or HEVC in MP4/MOV.";
+            return result;
         }
     }
 
@@ -2569,13 +2580,11 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         return result;
     }
 
-    wstring lowerPath{filePath};
-    transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::towlower);
-    if(lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mp4"){
+    if(sourceIsMp4){
         result.container = L"MP4";
-    }else if(lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mov"){
+    }else if(sourceIsMov){
         result.container = L"MOV";
-    }else if(lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".avi"){
+    }else if(sourceIsAvi){
         result.container = L"AVI";
     }else{
         result.errorMessage = L"Container not supported. Only MP4, MOV, and AVI (H.264 only) are allowed";

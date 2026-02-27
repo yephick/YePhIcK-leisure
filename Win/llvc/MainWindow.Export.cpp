@@ -120,7 +120,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
         check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
-        auto sourceVideoType{chooseBestNativeVideoMediaType(reader, videoStreamIndex)};
+        const vector<GUID> streamCopySubtypes{MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_H265};
+        auto sourceVideoType{chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, streamCopySubtypes)};
         if(sourceIsAvi){
             sourceVideoType = nullptr;
             for(DWORD mediaTypeIndex{};; ++mediaTypeIndex){
@@ -142,7 +143,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
         }
         if(!sourceVideoType){
-            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No native video media type found");
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require H.264 or HEVC)");
         }
         check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, sourceVideoType.get()));
 
@@ -163,7 +164,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                     ? sourceVideoType->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, sequenceHeader.data(), sequenceHeaderSize, &bytesWritten)
                     : E_FAIL};
             if(FAILED(seqReadHr) || bytesWritten == 0){
-                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"This AVI cannot be stream-copied to MP4 on this system (missing H.264 mux support)");
+                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI H.264 stream lacks codec configuration (SPS/PPS). Convert to MP4 first.");
             }
         }
 
@@ -280,7 +281,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         const auto writerConfigHr{configureWriter()};
         if(FAILED(writerConfigHr)){
             if(sourceIsAvi){
-                throw hresult_error(writerConfigHr, L"This AVI cannot be stream-copied to MP4 on this system (missing H.264 mux support).");
+                throw hresult_error(writerConfigHr, L"System cannot mux H.264 into MP4 via Media Foundation.");
             }
             check_hresult(writerConfigHr);
         }
@@ -315,8 +316,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
 
             const auto keepRanges100ns{invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
-            const auto mixedAudio{buildMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, audioChannels, audioSampleRate, m_prj.audioXfadeMs())};
-            writePcmAudioToWriter(writer, writerAudioStreamIndex, mixedAudio, audioChannels, audioSampleRate);
+            writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer, writerAudioStreamIndex, audioChannels, audioSampleRate, m_prj.audioXfadeMs());
         }
 
         check_hresult(writer->Finalize());
