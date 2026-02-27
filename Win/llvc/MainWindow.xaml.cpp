@@ -920,6 +920,10 @@ void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const C
 }
 
 void MainWindow::audioVolumeSlider_ValueChanged(const Control&, const RBVArgs& args){
+    if(!m_player){
+        return;
+    }
+
     if(m_isApplyingUndoRedoState){
         return;
     }
@@ -2407,6 +2411,10 @@ void MainWindow::clearErrorMessage(){
 }
 
 void MainWindow::refreshStatusInfoSection(){
+    if(!InfoText()){
+        return;
+    }
+
     const auto outputDuration100ns{m_prj.outputDuration100ns()};
     wstring text{L"Estimated output: "};
     text += formatTimelineDurationText(outputDuration100ns);
