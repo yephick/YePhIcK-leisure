@@ -149,7 +149,6 @@ private:
     LONG_PTR m_separatePreviewRestoreExStyle{0};
     winrt::Microsoft::UI::Xaml::Window m_separatePreviewWindow{nullptr};
     winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_separatePreviewClosedRevoker{};
-    winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_separatePreviewActivatedRevoker{};
     ::llvc::Project m_prj{};
     ::llvc::Timeline m_tl{};
 
@@ -228,7 +227,6 @@ private:
     bool sourceHasAudio() const;
     bool setSeparatePreviewWindowOpen(bool open);
     void onSeparatePreviewWindowClosed(const Control& sender, const WEArgs& args);
-    void onSeparatePreviewWindowActivated(const Control& sender, const winrt::Microsoft::UI::Xaml::WindowActivatedEventArgs& args);
     void onSeparatePreviewWindowKeyDown(const KRArgs& args);
     bool toggleSeparatePreviewFullscreen();
     static TS secondsToTimeSpan(double seconds);
