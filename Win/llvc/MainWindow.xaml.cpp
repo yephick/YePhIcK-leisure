@@ -671,6 +671,7 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
 
     if(m_separatePreviewWindow){
         m_separatePreviewClosedRevoker.revoke();
+        m_separatePreviewActivatedRevoker.revoke();
         m_separatePreviewWindow.Close();
         m_separatePreviewWindow = nullptr;
     }
@@ -1538,8 +1539,24 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         previewWindow.Content(root);
         previewWindow.Activate();
 
+        HWND previewHwnd{};
+        check_hresult(previewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd));
+        if(previewHwnd){
+            const auto exStyle{::GetWindowLongPtrW(previewHwnd, GWL_EXSTYLE)};
+            ::SetWindowLongPtrW(previewHwnd, GWL_EXSTYLE, exStyle | WS_EX_NOACTIVATE);
+            ::SetWindowPos(previewHwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+        }
+
         m_separatePreviewClosedRevoker = previewWindow.Closed(auto_revoke, {this, &MainWindow::onSeparatePreviewWindowClosed});
+        m_separatePreviewActivatedRevoker = previewWindow.Activated(auto_revoke, {this, &MainWindow::onSeparatePreviewWindowActivated});
         m_separatePreviewWindow = previewWindow;
+
+        Activate();
+        const auto mainHwnd{getWindowHandle()};
+        if(mainHwnd){
+            ::SetForegroundWindow(mainHwnd);
+            ::SetFocus(mainHwnd);
+        }
         m_isSeparatePreviewWindowOpen = true;
         m_isSeparatePreviewFullscreen = false;
         PreviewPlayer().SetMediaPlayer(nullptr);
@@ -1550,6 +1567,7 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
 
     if(m_separatePreviewWindow){
         m_separatePreviewClosedRevoker.revoke();
+        m_separatePreviewActivatedRevoker.revoke();
         m_separatePreviewWindow.Close();
         m_separatePreviewWindow = nullptr;
     }
@@ -1564,12 +1582,26 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
 
 void MainWindow::onSeparatePreviewWindowClosed(const Control&, const WEArgs&){
     m_separatePreviewClosedRevoker.revoke();
+    m_separatePreviewActivatedRevoker.revoke();
     m_separatePreviewWindow = nullptr;
     m_isSeparatePreviewWindowOpen = false;
     m_isSeparatePreviewFullscreen = false;
     PreviewPlayer().SetMediaPlayer(m_player);
     SeparatePreviewWindowMenuItem().IsChecked(false);
     setStatusMessage(L"Preview restored to main window");
+}
+
+void MainWindow::onSeparatePreviewWindowActivated(const winrt::Microsoft::UI::Xaml::Window&, const winrt::Microsoft::UI::Xaml::WindowActivatedEventArgs& args){
+    if(args.WindowActivationState() == winrt::Microsoft::UI::Xaml::WindowActivationState::Deactivated){
+        return;
+    }
+
+    Activate();
+    const auto mainHwnd{getWindowHandle()};
+    if(mainHwnd){
+        ::SetForegroundWindow(mainHwnd);
+        ::SetFocus(mainHwnd);
+    }
 }
 
 bool MainWindow::toggleSeparatePreviewFullscreen(){
