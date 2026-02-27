@@ -197,12 +197,12 @@ void Project::videoFile(const SFile& f){
 }
 
 void Project::setZoom(double v){
-    m_isDirty = (m_isDirty && m_zoom != v);
+    m_isDirty = (m_isDirty || m_zoom != v);
     m_zoom = v;
 }
 
 void Project::keepAudio(bool v){
-    m_isDirty = (m_isDirty && m_keepAudio != v);
+    m_isDirty = (m_isDirty || m_keepAudio != v);
     m_keepAudio = v;
 }
 
@@ -213,7 +213,7 @@ void Project::audioXfadeMs(int32_t valueMs){
         return abs(a - valueMs) < abs(b - valueMs);
     })};
     const auto v{nearest == AUDIO_CROSSFADE_PRESETS_MS.end() ? 0 : *nearest};
-    m_isDirty = (m_isDirty && m_audioCrossfadeMs != v);
+    m_isDirty = (m_isDirty || m_audioCrossfadeMs != v);
     m_audioCrossfadeMs = v;
 }
 
@@ -398,7 +398,7 @@ void Project::refreshSelectedMarkers(){
         m_selectedKeyFrames.push_back(i);
     }
     const auto neq{sav != m_selectedKeyFrames};
-    m_isDirty = (m_isDirty && neq);
+    m_isDirty = (m_isDirty || neq);
 }
 
 void Project::remapCutScenesAfterMarkerRemoval(uint32_t removePos){
