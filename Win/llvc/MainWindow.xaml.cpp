@@ -1719,11 +1719,28 @@ void MainWindow::restoreSeparatePreviewPlacement(HWND previewHwnd){
     const auto width{dipsToPixels(m_separatePreviewWidthDips, currentDpi)};
     const auto height{dipsToPixels(m_separatePreviewHeightDips, currentDpi)};
     RECT desiredRect{m_separatePreviewLeft, m_separatePreviewTop, m_separatePreviewLeft + width, m_separatePreviewTop + height};
+
     if(!isRectVisibleOnAnyMonitor(desiredRect)){
-        return;
+        MONITORINFO monitorInfo{.cbSize = sizeof(monitorInfo)};
+        const auto mainMonitor{::MonitorFromWindow(getWindowHandle(), MONITOR_DEFAULTTONEAREST)};
+        if(mainMonitor && ::GetMonitorInfoW(mainMonitor, &monitorInfo)){
+            const auto fallbackWidth{min(width, static_cast<int32_t>(monitorInfo.rcWork.right - monitorInfo.rcWork.left))};
+            const auto fallbackHeight{min(height, static_cast<int32_t>(monitorInfo.rcWork.bottom - monitorInfo.rcWork.top))};
+            desiredRect.left = monitorInfo.rcWork.left;
+            desiredRect.top = monitorInfo.rcWork.top;
+            desiredRect.right = desiredRect.left + fallbackWidth;
+            desiredRect.bottom = desiredRect.top + fallbackHeight;
+        }
     }
 
-    ::SetWindowPos(previewHwnd, nullptr, desiredRect.left, desiredRect.top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
+    ::SetWindowPos(
+        previewHwnd,
+        nullptr,
+        desiredRect.left,
+        desiredRect.top,
+        desiredRect.right - desiredRect.left,
+        desiredRect.bottom - desiredRect.top,
+        SWP_NOACTIVATE | SWP_NOZORDER);
 
     if(m_separatePreviewWasMaximized){
         ::ShowWindow(previewHwnd, SW_MAXIMIZE);
