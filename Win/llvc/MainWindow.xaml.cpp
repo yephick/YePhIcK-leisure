@@ -723,6 +723,8 @@ bool MainWindow::isExportInProgressForClosePrompt() const{
 
 void MainWindow::requestExportCancel(){
     m_cancelExportRequested = true;
+    setStatusMessage(L"Canceling export...");
+    setOperationInProgress(false);
 }
 
 void MainWindow::onWindowActivated(const Control&, const WAVArgs& args){
@@ -2410,6 +2412,7 @@ void MainWindow::cancelExportButton_Click(const Control&, const REArgs&){
 
     m_cancelExportRequested = true;
     setStatusMessage(L"Canceling export...");
+    setOperationInProgress(false);
 }
 
 AAction MainWindow::showOptionsDialogAsync(){
