@@ -110,6 +110,8 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction manualMenuItem_Click(const Control& sender, const REArgs& args);
     AAction aboutMenuItem_Click(const Control& sender, const REArgs& args);
     AAction optionsMenuItem_Click(const Control& sender, const REArgs& args);
+    void separatePreviewWindowMenuItem_Click(const Control& sender, const REArgs& args);
+    void toggleSeparatePreviewFullscreenMenuItem_Click(const Control& sender, const REArgs& args);
     AAction toggleCutMarkerAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     AAction markSceneCutAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     AAction markSceneKeptAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
@@ -140,6 +142,10 @@ private:
     double m_timelineDragStartX{0};
     double m_timelineDragStartOffset{0};
     bool m_isApplyingUndoRedoState{false};
+    bool m_isSeparatePreviewWindowOpen{false};
+    bool m_isSeparatePreviewFullscreen{false};
+    winrt::Microsoft::UI::Xaml::Window m_separatePreviewWindow{nullptr};
+    winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_separatePreviewClosedRevoker{};
     ::llvc::Project m_prj{};
     ::llvc::Timeline m_tl{};
 
@@ -216,6 +222,9 @@ private:
     static wstring formatTimelineDurationText(int64_t duration100ns);
     static wstring formatDateTimeText(const winrt::Windows::Foundation::DateTime& value);
     bool sourceHasAudio() const;
+    bool setSeparatePreviewWindowOpen(bool open);
+    void onSeparatePreviewWindowClosed(const Control& sender, const WEArgs& args);
+    bool toggleSeparatePreviewFullscreen();
     static TS secondsToTimeSpan(double seconds);
     static bool isRectVisibleOnAnyMonitor(const RECT& rect);
 };

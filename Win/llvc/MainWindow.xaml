@@ -47,6 +47,9 @@
             </controls:MenuBarItem>
 
             <controls:MenuBarItem Title="Tools">
+                <ToggleMenuFlyoutItem x:Name="SeparatePreviewWindowMenuItem" Text="Preview in separate window" Click="separatePreviewWindowMenuItem_Click"/>
+                <MenuFlyoutItem Text="Toggle preview full-screen\tF11" Click="toggleSeparatePreviewFullscreenMenuItem_Click"/>
+                <MenuFlyoutSeparator/>
                 <MenuFlyoutItem Text="Options" Click="optionsMenuItem_Click"/>
             </controls:MenuBarItem>
 

@@ -27,6 +27,7 @@
 #include <mfreadwrite.h>
 
 #include <microsoft.ui.xaml.window.h>
+#include <Microsoft.UI.Interop.h>
 #include <propkey.h>
 #include <propsys.h>
 #include <propvarutil.h>
@@ -36,6 +37,7 @@
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Microsoft.UI.Xaml.Shapes.h>
+#include <winrt/Microsoft.UI.Windowing.h>
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
@@ -57,6 +59,7 @@ using namespace Microsoft::UI::Xaml;
 using namespace Microsoft::UI::Input;
 using namespace Microsoft::UI::Xaml::Controls;
 using namespace Microsoft::UI::Xaml::Input;
+using namespace Microsoft::UI::Windowing;
 using namespace Windows::Foundation;
 using namespace Windows::Media::Playback;
 using namespace Windows::Storage;
@@ -668,6 +671,13 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
     }
 
     m_naturalDurationChangedRevoker.revoke();
+
+    if(m_separatePreviewWindow){
+        m_separatePreviewClosedRevoker.revoke();
+        m_separatePreviewWindow.Close();
+        m_separatePreviewWindow = nullptr;
+    }
+
     saveWindowPlacement();
     saveAppSettings();
 }
@@ -1480,6 +1490,10 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         (void)markSceneAtCursor(false);
         args.Handled(true);
         return true;
+    case VirtualKey::F11:
+        (void)toggleSeparatePreviewFullscreen();
+        args.Handled(true);
+        return true;
     default:
         return false;
     }
@@ -1491,6 +1505,99 @@ void MainWindow::window_PreviewKeyDown(const Control&, const KRArgs& args){
 
 void MainWindow::window_KeyDown(const Control&, const KRArgs& args){
     (void)handleStorylineKeyDown(args);
+}
+
+void MainWindow::separatePreviewWindowMenuItem_Click(const Control&, const REArgs&){
+    const auto targetOpen{!m_isSeparatePreviewWindowOpen};
+    if(!setSeparatePreviewWindowOpen(targetOpen)){
+        SeparatePreviewWindowMenuItem().IsChecked(m_isSeparatePreviewWindowOpen);
+    }
+}
+
+void MainWindow::toggleSeparatePreviewFullscreenMenuItem_Click(const Control&, const REArgs&){
+    (void)toggleSeparatePreviewFullscreen();
+}
+
+bool MainWindow::setSeparatePreviewWindowOpen(bool open){
+    if(open == m_isSeparatePreviewWindowOpen){
+        SeparatePreviewWindowMenuItem().IsChecked(open);
+        return true;
+    }
+
+    if(open){
+        auto previewWindow{Window()};
+        previewWindow.Title(L"llvc - Video preview");
+
+        Controls::Grid root{};
+        root.Background(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0xFF, 0x08, 0x08, 0x08)));
+
+        Controls::MediaPlayerElement detachedPreview{};
+        detachedPreview.AreTransportControlsEnabled(true);
+        detachedPreview.HorizontalAlignment(HorizontalAlignment::Stretch);
+        detachedPreview.VerticalAlignment(VerticalAlignment::Stretch);
+        detachedPreview.SetMediaPlayer(m_player);
+        root.Children().Append(detachedPreview);
+
+        previewWindow.Content(root);
+        previewWindow.Activate();
+
+        m_separatePreviewClosedRevoker = previewWindow.Closed(auto_revoke, {this, &MainWindow::onSeparatePreviewWindowClosed});
+        m_separatePreviewWindow = previewWindow;
+        m_isSeparatePreviewWindowOpen = true;
+        m_isSeparatePreviewFullscreen = false;
+        PreviewPlayer().SetMediaPlayer(nullptr);
+        SeparatePreviewWindowMenuItem().IsChecked(true);
+        setStatusMessage(L"Preview opened in separate window");
+        return true;
+    }
+
+    if(m_separatePreviewWindow){
+        m_separatePreviewClosedRevoker.revoke();
+        m_separatePreviewWindow.Close();
+        m_separatePreviewWindow = nullptr;
+    }
+
+    PreviewPlayer().SetMediaPlayer(m_player);
+    m_isSeparatePreviewWindowOpen = false;
+    m_isSeparatePreviewFullscreen = false;
+    SeparatePreviewWindowMenuItem().IsChecked(false);
+    setStatusMessage(L"Preview restored to main window");
+    return true;
+}
+
+void MainWindow::onSeparatePreviewWindowClosed(const Control&, const WEArgs&){
+    m_separatePreviewClosedRevoker.revoke();
+    m_separatePreviewWindow = nullptr;
+    m_isSeparatePreviewWindowOpen = false;
+    m_isSeparatePreviewFullscreen = false;
+    PreviewPlayer().SetMediaPlayer(m_player);
+    SeparatePreviewWindowMenuItem().IsChecked(false);
+    setStatusMessage(L"Preview restored to main window");
+}
+
+bool MainWindow::toggleSeparatePreviewFullscreen(){
+    if(!m_isSeparatePreviewWindowOpen || !m_separatePreviewWindow){
+        setStatusMessage(L"Open the separate preview window first");
+        return false;
+    }
+
+    HWND previewHwnd{};
+    check_hresult(m_separatePreviewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd));
+    if(!previewHwnd){
+        setErrorMessage(L"Could not resolve preview window handle");
+        return false;
+    }
+
+    const auto previewAppWindow{AppWindow::GetFromWindowId(GetWindowIdFromWindow(previewHwnd))};
+    if(!previewAppWindow){
+        setErrorMessage(L"Could not control preview window presenter");
+        return false;
+    }
+
+    m_isSeparatePreviewFullscreen = !m_isSeparatePreviewFullscreen;
+    previewAppWindow.SetPresenter(m_isSeparatePreviewFullscreen ? AppWindowPresenterKind::FullScreen : AppWindowPresenterKind::Default);
+    setStatusMessage(m_isSeparatePreviewFullscreen ? L"Separate preview: full-screen on" : L"Separate preview: full-screen off");
+    return true;
 }
 
 void MainWindow::rootGrid_PointerReleased(const Control&, const PREArgs& args){
@@ -1711,6 +1818,7 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
         L"• Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
         L"• Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
         L"• Preview start/pause/stop skipping cut scenes.\n"
+        L"• Preview window: Tools → Preview in separate window opens a movable second window; use F11 to toggle full-screen.\n"
         L"• Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
         L"• Project files: Save and reopen .llvc projects with timeline state.\n"
         L"• Export: Render a lossless cut based on your selected ranges (auto-adjusting to proper cut points if necessary).\n\n"
