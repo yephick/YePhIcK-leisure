@@ -47,6 +47,7 @@
 #include <winrt/Windows.System.h>
 
 import llvc.Export;
+import llvc.Utils;
 
 #pragma comment(lib, "Shell32.lib")
 
@@ -76,6 +77,7 @@ using SCArgs = MainWindow::SCArgs;
 using KRArgs = MainWindow::KRArgs;
 using DEArgs = MainWindow::DEArgs;
 using WEArgs = MainWindow::WEArgs;
+using WAVArgs = MainWindow::WAVArgs;
 using MPSession = MainWindow::MPSession;
 using SFile = MainWindow::SFile;
 using FState = MainWindow::FState;
@@ -87,6 +89,40 @@ constexpr auto W_POS_L{L"WindowLeft"};
 namespace{
 
 constexpr int64_t HNS_PER_SECOND{10'000'000LL};
+
+
+template<typename T>
+std::optional<T> tryReadSetting(Windows::Foundation::Collections::IPropertySet& values, const wchar_t* key){
+    if(!values.HasKey(key)){
+        return std::nullopt;
+    }
+
+    try{
+        return unbox_value<T>(values.Lookup(key));
+    }catch(const winrt::hresult_error&){
+        values.Remove(key);
+        return std::nullopt;
+    }
+}
+
+std::optional<bool> tryReadBoolSetting(Windows::Foundation::Collections::IPropertySet& values, const wchar_t* key){
+    if(const auto asBool{tryReadSetting<bool>(values, key)}){
+        return asBool;
+    }
+    if(const auto asInt{tryReadSetting<int32_t>(values, key)}){
+        return *asInt != 0;
+    }
+    if(const auto asText{tryReadSetting<hstring>(values, key)}){
+        const auto text{trim(asText->c_str())};
+        if(_wcsicmp(text.c_str(), L"true") == 0 || _wcsicmp(text.c_str(), L"1") == 0){
+            return true;
+        }
+        if(_wcsicmp(text.c_str(), L"false") == 0 || _wcsicmp(text.c_str(), L"0") == 0){
+            return false;
+        }
+    }
+    return std::nullopt;
+}
 
 bool isAviPath(const wstring& filePath){
     if(filePath.size() < 4){
@@ -390,6 +426,13 @@ constexpr auto S_RECENT_PROJECTS{L"RecentProjects"};
 constexpr auto S_MAX_RECENT_VIDEOS{L"MaxRecentVideos"};
 constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
 constexpr auto S_DEFAULT_MAX_RECENT{5};
+constexpr auto S_SEPARATE_PREVIEW_DETACHED{L"SeparatePreviewDetached"};
+constexpr auto S_SEPARATE_PREVIEW_L{L"SeparatePreviewLeft"};
+constexpr auto S_SEPARATE_PREVIEW_T{L"SeparatePreviewTop"};
+constexpr auto S_SEPARATE_PREVIEW_W{L"SeparatePreviewWidth"};
+constexpr auto S_SEPARATE_PREVIEW_H{L"SeparatePreviewHeight"};
+constexpr auto S_SEPARATE_PREVIEW_DPI{L"SeparatePreviewDpi"};
+constexpr auto S_SEPARATE_PREVIEW_FULLSCREEN{L"SeparatePreviewFullscreen"};
 
 constexpr auto P_FILE_PATH{L"file_path"};
 constexpr auto P_STORYLINE_ZOOM{L"storyline_zoom"};
@@ -529,10 +572,15 @@ MainWindow::MainWindow(){
     restoreWindowPlacement();
     loadAppSettings();
     Closed({this, &MainWindow::onClosed});
+    m_mainWindowActivatedRevoker = Activated(auto_revoke, {this, &MainWindow::onWindowActivated});
     refreshRecentVideosMenu();
     refreshRecentProjectsMenu();
     updateWindowTitle();
     refreshStatusInfoSection();
+
+    if(m_restorePreviewDetachedOnStartup){
+        (void)setSeparatePreviewWindowOpen(true);
+    }
 }
 
 HWND MainWindow::getWindowHandle() const{
@@ -543,83 +591,53 @@ HWND MainWindow::getWindowHandle() const{
 }
 
 
-auto pixelsToDips(int32_t pixelValue, uint32_t dpi){
-    return static_cast<int32_t>(lround((pixelValue * 96.0) / (dpi == 0 ? 96 : dpi)));
-}
-
-auto dipsToPixels(int32_t dipValue, uint32_t dpi){
-    return static_cast<int32_t>(lround((dipValue * (dpi == 0 ? 96U : dpi)) / 96));
-}
-
-bool MainWindow::isRectVisibleOnAnyMonitor(const RECT& rect){
-    const auto monitor{::MonitorFromRect(&rect, MONITOR_DEFAULTTONULL)};
-    if(!monitor){
-        return false;
-    }
-
-    MONITORINFO monitorInfo{.cbSize = sizeof(monitorInfo)};
-    if(!::GetMonitorInfoW(monitor, &monitorInfo)){
-        return false;
-    }
-
-    RECT intersection{};
-    return ::IntersectRect(&intersection, &rect, &monitorInfo.rcWork) != FALSE;
-}
-
 void MainWindow::restoreWindowPlacement(){
     const auto localSettings{ApplicationData::Current().LocalSettings()};
-    const auto values{localSettings.Values()};
+    auto values{localSettings.Values()};
 
-    if(!values.HasKey(W_POS_L) || !values.HasKey(W_POS_T) || !values.HasKey(W_POS_W) || !values.HasKey(W_POS_H)){
+    const auto left{tryReadSetting<int32_t>(values, W_POS_L)};
+    const auto top{tryReadSetting<int32_t>(values, W_POS_T)};
+    const auto widthDips{tryReadSetting<int32_t>(values, W_POS_W)};
+    const auto heightDips{tryReadSetting<int32_t>(values, W_POS_H)};
+    if(!left || !top || !widthDips || !heightDips){
         return;
     }
 
-    const auto left{unbox_value<int32_t>(values.Lookup(W_POS_L))};
-    const auto top{unbox_value<int32_t>(values.Lookup(W_POS_T))};
+    ::llvc::WindowPlacementState state{};
+    state.left = *left;
+    state.top = *top;
+    state.widthDips = *widthDips;
+    state.heightDips = *heightDips;
+    state.dpi = tryReadSetting<int32_t>(values, W_POS_DPI).value_or(96);
 
     const auto hwnd{getWindowHandle()};
-
-    SetWindowPos(hwnd, nullptr, left, top, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
-
-    const auto currentDpi{::GetDpiForWindow(hwnd)};
-    const auto hasDpiData{values.HasKey(W_POS_DPI)};
-    const auto storedWidth{unbox_value<int32_t>(values.Lookup(W_POS_W))};
-    const auto storedHeight{unbox_value<int32_t>(values.Lookup(W_POS_H))};
-    const auto width{hasDpiData ? dipsToPixels(storedWidth, currentDpi) : storedWidth};
-    const auto height{hasDpiData ? dipsToPixels(storedHeight, currentDpi) : storedHeight};
-
-    if(!isRectVisibleOnAnyMonitor(RECT{left, top, left + width, top + height})){
+    if(!applyWindowPlacement(hwnd, state, hwnd, false)){
         values.Remove(W_POS_L);
         values.Remove(W_POS_T);
         values.Remove(W_POS_W);
         values.Remove(W_POS_H);
         values.Remove(W_POS_DPI);
-        return;
     }
-
-    SetWindowPos(hwnd, nullptr, left, top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
 void MainWindow::loadAppSettings(){
-    const auto values{ApplicationData::Current().LocalSettings().Values()};
+    auto values{ApplicationData::Current().LocalSettings().Values()};
 
     m_maxRecentVideos = S_DEFAULT_MAX_RECENT;
     m_maxRecentProjects = S_DEFAULT_MAX_RECENT;
 
-    if(values.HasKey(S_MAX_RECENT_VIDEOS)){
-        const auto parsed{unbox_value<int32_t>(values.Lookup(S_MAX_RECENT_VIDEOS))};
-        m_maxRecentVideos = static_cast<uint32_t>(clamp(parsed, 1, 20));
+    if(const auto parsed{tryReadSetting<int32_t>(values, S_MAX_RECENT_VIDEOS)}){
+        m_maxRecentVideos = static_cast<uint32_t>(clamp(*parsed, 1, 20));
     }
-    if(values.HasKey(S_MAX_RECENT_PROJECTS)){
-        const auto parsed{unbox_value<int32_t>(values.Lookup(S_MAX_RECENT_PROJECTS))};
-        m_maxRecentProjects = static_cast<uint32_t>(clamp(parsed, 1, 20));
+    if(const auto parsed{tryReadSetting<int32_t>(values, S_MAX_RECENT_PROJECTS)}){
+        m_maxRecentProjects = static_cast<uint32_t>(clamp(*parsed, 1, 20));
     }
 
-    if(values.HasKey(S_RECENT_VIDEOS)){
-        m_recentVideos = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_VIDEOS)).c_str());
+    if(const auto recentVideosText{tryReadSetting<hstring>(values, S_RECENT_VIDEOS)}){
+        m_recentVideos = splitRecentItems(recentVideosText->c_str());
     }
-    if(values.HasKey(S_RECENT_PROJECTS)){
-        m_recentProjects = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
+    if(const auto recentProjectsText{tryReadSetting<hstring>(values, S_RECENT_PROJECTS)}){
+        m_recentProjects = splitRecentItems(recentProjectsText->c_str());
     }
     if(m_recentVideos.size() > m_maxRecentVideos){
         m_recentVideos.resize(m_maxRecentVideos);
@@ -627,37 +645,57 @@ void MainWindow::loadAppSettings(){
     if(m_recentProjects.size() > m_maxRecentProjects){
         m_recentProjects.resize(m_maxRecentProjects);
     }
+
+    m_restorePreviewDetachedOnStartup = tryReadBoolSetting(values, S_SEPARATE_PREVIEW_DETACHED).value_or(false);
+
+    const auto previewLeft{tryReadSetting<int32_t>(values, S_SEPARATE_PREVIEW_L)};
+    const auto previewTop{tryReadSetting<int32_t>(values, S_SEPARATE_PREVIEW_T)};
+    const auto previewWidthDips{tryReadSetting<int32_t>(values, S_SEPARATE_PREVIEW_W)};
+    const auto previewHeightDips{tryReadSetting<int32_t>(values, S_SEPARATE_PREVIEW_H)};
+    if(previewLeft && previewTop && previewWidthDips && previewHeightDips){
+        m_separatePreviewLeft = *previewLeft;
+        m_separatePreviewTop = *previewTop;
+        m_separatePreviewWidthDips = max<int32_t>(320, *previewWidthDips);
+        m_separatePreviewHeightDips = max<int32_t>(200, *previewHeightDips);
+        m_separatePreviewDpi = max<int32_t>(96, tryReadSetting<int32_t>(values, S_SEPARATE_PREVIEW_DPI).value_or(96));
+        m_hasSeparatePreviewPlacement = true;
+    }
+
+    m_restorePreviewFullscreenOnStartup = tryReadBoolSetting(values, S_SEPARATE_PREVIEW_FULLSCREEN).value_or(false);
 }
 
 void MainWindow::saveAppSettings() const{
-    const auto values{ApplicationData::Current().LocalSettings().Values()};
+    auto values{ApplicationData::Current().LocalSettings().Values()};
     values.Insert(S_MAX_RECENT_VIDEOS, box_value(static_cast<int32_t>(m_maxRecentVideos)));
     values.Insert(S_MAX_RECENT_PROJECTS, box_value(static_cast<int32_t>(m_maxRecentProjects)));
     values.Insert(S_RECENT_VIDEOS, box_value(hstring(joinRecentItems(m_recentVideos))));
     values.Insert(S_RECENT_PROJECTS, box_value(hstring(joinRecentItems(m_recentProjects))));
+    values.Insert(S_SEPARATE_PREVIEW_DETACHED, box_value(m_restorePreviewDetachedOnStartup));
+    values.Insert(S_SEPARATE_PREVIEW_FULLSCREEN, box_value(m_restorePreviewFullscreenOnStartup));
+
+    if(m_hasSeparatePreviewPlacement){
+        values.Insert(S_SEPARATE_PREVIEW_L, box_value(m_separatePreviewLeft));
+        values.Insert(S_SEPARATE_PREVIEW_T, box_value(m_separatePreviewTop));
+        values.Insert(S_SEPARATE_PREVIEW_W, box_value(m_separatePreviewWidthDips));
+        values.Insert(S_SEPARATE_PREVIEW_H, box_value(m_separatePreviewHeightDips));
+        values.Insert(S_SEPARATE_PREVIEW_DPI, box_value(m_separatePreviewDpi));
+    }
 }
 
 void MainWindow::saveWindowPlacement() const{
     const auto hwnd{getWindowHandle()};
-
-    RECT bounds{};
-    if(!GetWindowRect(hwnd, &bounds)){
+    const auto captured{::llvc::captureWindowPlacement(hwnd)};
+    if(!captured){
         return;
     }
 
-    WINDOWPLACEMENT placement{.length = sizeof(placement)};
-    if(GetWindowPlacement(hwnd, &placement) && placement.showCmd == SW_SHOWMAXIMIZED){
-        bounds = placement.rcNormalPosition;
-    }
-
     const auto localSettings{ApplicationData::Current().LocalSettings()};
-    const auto values{localSettings.Values()};
-    const auto dpi{::GetDpiForWindow(hwnd)};
-    values.Insert(W_POS_L, box_value(static_cast<int32_t>(bounds.left)));
-    values.Insert(W_POS_T, box_value(static_cast<int32_t>(bounds.top)));
-    values.Insert(W_POS_W, box_value(pixelsToDips(static_cast<int32_t>(bounds.right - bounds.left), dpi)));
-    values.Insert(W_POS_H, box_value(pixelsToDips(static_cast<int32_t>(bounds.bottom - bounds.top), dpi)));
-    values.Insert(W_POS_DPI, box_value(static_cast<int32_t>(dpi)));
+    auto values{localSettings.Values()};
+    values.Insert(W_POS_L, box_value(captured->left));
+    values.Insert(W_POS_T, box_value(captured->top));
+    values.Insert(W_POS_W, box_value(captured->widthDips));
+    values.Insert(W_POS_H, box_value(captured->heightDips));
+    values.Insert(W_POS_DPI, box_value(captured->dpi));
 }
 
 void MainWindow::onClosed(const Control&, const WEArgs&){
@@ -668,8 +706,37 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
     }
 
     m_naturalDurationChangedRevoker.revoke();
+    m_mainWindowActivatedRevoker.revoke();
+
+    m_restorePreviewDetachedOnStartup = m_isSeparatePreviewWindowOpen;
+    m_restorePreviewFullscreenOnStartup = m_isSeparatePreviewWindowOpen && m_isSeparatePreviewFullscreen;
+
+    if(m_separatePreviewWindow){
+        HWND previewHwnd{};
+        if(SUCCEEDED(m_separatePreviewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd)) && previewHwnd){
+            saveSeparatePreviewPlacement(previewHwnd);
+        }
+
+        m_separatePreviewClosedRevoker.revoke();
+        m_separatePreviewWindow.Close();
+        m_separatePreviewWindow = nullptr;
+    }
+
     saveWindowPlacement();
     saveAppSettings();
+}
+
+void MainWindow::onWindowActivated(const Control&, const WAVArgs& args){
+    if(args.WindowActivationState() == WindowActivationState::Deactivated){
+        return;
+    }
+
+    const auto weakThis{get_weak()};
+    DispatcherQueue().TryEnqueue([weakThis]{
+        if(const auto self{weakThis.get()}){
+            self->tryFocusTimelineCanvas(FocusState::Programmatic);
+        }
+    });
 }
 
 void MainWindow::startButton_Click(const Control&, const REArgs&){
@@ -1445,6 +1512,21 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
             args.Handled(true);
             return true;
         }
+        if(args.Key() == VirtualKey::Add || args.Key() == static_cast<VirtualKey>(187)){
+            adjustTimelineZoomBy(1);
+            args.Handled(true);
+            return true;
+        }
+        if(args.Key() == VirtualKey::Subtract || args.Key() == static_cast<VirtualKey>(189)){
+            adjustTimelineZoomBy(-1);
+            args.Handled(true);
+            return true;
+        }
+        if(args.Key() == VirtualKey::R){
+            reevaluateClearCutMarkersButton_Click(nullptr, {});
+            args.Handled(true);
+            return true;
+        }
     }
 
     if(focusOnMenu || focusInDialog){
@@ -1489,6 +1571,10 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         (void)markSceneAtCursor(false);
         args.Handled(true);
         return true;
+    case VirtualKey::F11:
+        (void)toggleSeparatePreviewFullscreen();
+        args.Handled(true);
+        return true;
     default:
         return false;
     }
@@ -1500,6 +1586,246 @@ void MainWindow::window_PreviewKeyDown(const Control&, const KRArgs& args){
 
 void MainWindow::window_KeyDown(const Control&, const KRArgs& args){
     (void)handleStorylineKeyDown(args);
+}
+
+void MainWindow::separatePreviewWindowMenuItem_Click(const Control&, const REArgs&){
+    const auto targetOpen{!m_isSeparatePreviewWindowOpen};
+    if(!setSeparatePreviewWindowOpen(targetOpen)){
+    }
+}
+
+void MainWindow::toggleSeparatePreviewFullscreenMenuItem_Click(const Control&, const REArgs&){
+    (void)toggleSeparatePreviewFullscreen();
+}
+
+void MainWindow::zoomInTimelineMenuItem_Click(const Control&, const REArgs&){
+    adjustTimelineZoomBy(1);
+}
+
+void MainWindow::zoomOutTimelineMenuItem_Click(const Control&, const REArgs&){
+    adjustTimelineZoomBy(-1);
+}
+
+void MainWindow::adjustTimelineZoomBy(int delta){
+    auto slider{TimelineZoomSlider()};
+    if(!slider){
+        return;
+    }
+
+    const auto target{clamp(slider.Value() + delta, slider.Minimum(), slider.Maximum())};
+    slider.Value(target);
+}
+
+bool MainWindow::setSeparatePreviewWindowOpen(bool open){
+    if(open == m_isSeparatePreviewWindowOpen){
+        return true;
+    }
+
+    if(open){
+        auto previewWindow{Window()};
+        previewWindow.Title(L"llvc - Video preview");
+
+        Controls::Grid root{};
+        root.Background(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0xFF, 0x08, 0x08, 0x08)));
+
+        Controls::MediaPlayerElement detachedPreview{};
+        detachedPreview.AreTransportControlsEnabled(true);
+        detachedPreview.HorizontalAlignment(HorizontalAlignment::Stretch);
+        detachedPreview.VerticalAlignment(VerticalAlignment::Stretch);
+        detachedPreview.SetMediaPlayer(m_player);
+
+        const auto weakSelf{get_weak()};
+        const auto detachedKeyHandler{[weakSelf](const auto&, const KRArgs& e){
+            if(const auto self{weakSelf.get()}){
+                self->onSeparatePreviewWindowKeyDown(e);
+            }
+        }};
+        detachedPreview.PreviewKeyDown(detachedKeyHandler);
+        detachedPreview.KeyDown(detachedKeyHandler);
+
+        root.IsTabStop(true);
+        root.PreviewKeyDown(detachedKeyHandler);
+        root.KeyDown(detachedKeyHandler);
+
+        root.Children().Append(detachedPreview);
+
+        previewWindow.Content(root);
+        previewWindow.Activate();
+        root.Focus(FocusState::Programmatic);
+
+        HWND previewHwnd{};
+        if(SUCCEEDED(previewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd)) && previewHwnd){
+            restoreSeparatePreviewPlacement(previewHwnd);
+        }
+
+        Activate();
+        const auto weakThis{get_weak()};
+        DispatcherQueue().TryEnqueue([weakThis]{
+            if(const auto self{weakThis.get()}){
+                self->tryFocusTimelineCanvas(FocusState::Programmatic);
+            }
+        });
+
+        m_separatePreviewClosedRevoker = previewWindow.Closed(auto_revoke, {this, &MainWindow::onSeparatePreviewWindowClosed});
+        m_separatePreviewWindow = previewWindow;
+        m_isSeparatePreviewWindowOpen = true;
+        m_isSeparatePreviewFullscreen = false;
+        m_restorePreviewDetachedOnStartup = true;
+        PreviewPlayer().SetMediaPlayer(nullptr);
+
+        if(m_restorePreviewFullscreenOnStartup){
+            (void)toggleSeparatePreviewFullscreen();
+        }
+
+        setStatusMessage(L"Preview opened in separate window");
+        return true;
+    }
+
+    if(m_separatePreviewWindow){
+        HWND previewHwnd{};
+        if(SUCCEEDED(m_separatePreviewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd)) && previewHwnd){
+            saveSeparatePreviewPlacement(previewHwnd);
+        }
+
+        m_separatePreviewClosedRevoker.revoke();
+        m_separatePreviewWindow.Close();
+        m_separatePreviewWindow = nullptr;
+    }
+
+    PreviewPlayer().SetMediaPlayer(m_player);
+    m_isSeparatePreviewWindowOpen = false;
+    m_isSeparatePreviewFullscreen = false;
+    m_restorePreviewDetachedOnStartup = false;
+    setStatusMessage(L"Preview restored to main window");
+    return true;
+}
+
+void MainWindow::onSeparatePreviewWindowClosed(const Control&, const WEArgs&){
+    if(m_separatePreviewWindow){
+        HWND previewHwnd{};
+        if(SUCCEEDED(m_separatePreviewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd)) && previewHwnd){
+            saveSeparatePreviewPlacement(previewHwnd);
+        }
+    }
+
+    m_separatePreviewClosedRevoker.revoke();
+    m_separatePreviewWindow = nullptr;
+    m_isSeparatePreviewWindowOpen = false;
+    m_isSeparatePreviewFullscreen = false;
+    if(!m_isClosing){
+        m_restorePreviewDetachedOnStartup = false;
+    }
+    PreviewPlayer().SetMediaPlayer(m_player);
+    setStatusMessage(L"Preview restored to main window");
+}
+
+void MainWindow::onSeparatePreviewWindowKeyDown(const KRArgs& args){
+    (void)handleStorylineKeyDown(args);
+}
+
+void MainWindow::saveSeparatePreviewPlacement(HWND previewHwnd){
+    if(!previewHwnd){
+        return;
+    }
+
+    RECT bounds{};
+    if(!::GetWindowRect(previewHwnd, &bounds)){
+        return;
+    }
+
+    if(m_isSeparatePreviewFullscreen && (m_separatePreviewRestoreRect.right > m_separatePreviewRestoreRect.left) && (m_separatePreviewRestoreRect.bottom > m_separatePreviewRestoreRect.top)){
+        bounds = m_separatePreviewRestoreRect;
+    }
+
+    const auto dpi{::GetDpiForWindow(previewHwnd)};
+    m_separatePreviewLeft = static_cast<int32_t>(bounds.left);
+    m_separatePreviewTop = static_cast<int32_t>(bounds.top);
+    m_separatePreviewWidthDips = pixelsToDips(static_cast<int32_t>(bounds.right - bounds.left), dpi);
+    m_separatePreviewHeightDips = pixelsToDips(static_cast<int32_t>(bounds.bottom - bounds.top), dpi);
+    m_separatePreviewDpi = static_cast<int32_t>(dpi);
+    m_hasSeparatePreviewPlacement = true;
+}
+
+void MainWindow::restoreSeparatePreviewPlacement(HWND previewHwnd){
+    if(!previewHwnd || !m_hasSeparatePreviewPlacement){
+        return;
+    }
+
+    ::llvc::WindowPlacementState state{};
+    state.left = m_separatePreviewLeft;
+    state.top = m_separatePreviewTop;
+    state.widthDips = m_separatePreviewWidthDips;
+    state.heightDips = m_separatePreviewHeightDips;
+    state.dpi = m_separatePreviewDpi;
+
+    (void)applyWindowPlacement(previewHwnd, state, getWindowHandle(), false);
+
+}
+
+bool MainWindow::toggleSeparatePreviewFullscreen(){
+    if(!m_isSeparatePreviewWindowOpen || !m_separatePreviewWindow){
+        setStatusMessage(L"Open the separate preview window first");
+        return false;
+    }
+
+    HWND previewHwnd{};
+    check_hresult(m_separatePreviewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd));
+    if(!previewHwnd){
+        setErrorMessage(L"Could not resolve preview window handle");
+        return false;
+    }
+
+    if(!m_isSeparatePreviewFullscreen){
+        RECT currentRect{};
+        if(!::GetWindowRect(previewHwnd, &currentRect)){
+            setErrorMessage(L"Could not read preview window bounds");
+            return false;
+        }
+
+        m_separatePreviewRestoreRect = currentRect;
+        m_separatePreviewRestoreStyle = ::GetWindowLongPtrW(previewHwnd, GWL_STYLE);
+        m_separatePreviewRestoreExStyle = ::GetWindowLongPtrW(previewHwnd, GWL_EXSTYLE);
+
+        const auto fullscreenStyle{m_separatePreviewRestoreStyle & ~(WS_OVERLAPPEDWINDOW)};
+        ::SetWindowLongPtrW(previewHwnd, GWL_STYLE, fullscreenStyle);
+
+        MONITORINFO monitorInfo{.cbSize = sizeof(monitorInfo)};
+        const auto monitor{::MonitorFromWindow(previewHwnd, MONITOR_DEFAULTTONEAREST)};
+        if(!monitor || !::GetMonitorInfoW(monitor, &monitorInfo)){
+            setErrorMessage(L"Could not resolve preview monitor bounds");
+            return false;
+        }
+
+        ::SetWindowPos(
+            previewHwnd,
+            HWND_TOP,
+            monitorInfo.rcMonitor.left,
+            monitorInfo.rcMonitor.top,
+            monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left,
+            monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+
+        m_isSeparatePreviewFullscreen = true;
+        m_restorePreviewFullscreenOnStartup = true;
+        setStatusMessage(L"Separate preview: full-screen on");
+        return true;
+    }
+
+    ::SetWindowLongPtrW(previewHwnd, GWL_STYLE, m_separatePreviewRestoreStyle);
+    ::SetWindowLongPtrW(previewHwnd, GWL_EXSTYLE, m_separatePreviewRestoreExStyle);
+    ::SetWindowPos(
+        previewHwnd,
+        HWND_NOTOPMOST,
+        m_separatePreviewRestoreRect.left,
+        m_separatePreviewRestoreRect.top,
+        m_separatePreviewRestoreRect.right - m_separatePreviewRestoreRect.left,
+        m_separatePreviewRestoreRect.bottom - m_separatePreviewRestoreRect.top,
+        SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+
+    m_isSeparatePreviewFullscreen = false;
+    m_restorePreviewFullscreenOnStartup = false;
+    setStatusMessage(L"Separate preview: full-screen off");
+    return true;
 }
 
 void MainWindow::rootGrid_PointerReleased(const Control&, const PREArgs& args){
@@ -1720,6 +2046,7 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
         L"• Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
         L"• Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
         L"• Preview start/pause/stop skipping cut scenes.\n"
+        L"• Preview window: Tools → Preview in separate window opens a movable second window; use F11 to toggle full-screen.\n"
         L"• Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
         L"• Project files: Save and reopen .llvc projects with timeline state.\n"
         L"• Export: Render a lossless cut based on your selected ranges (auto-adjusting to proper cut points if necessary).\n\n"
