@@ -1320,7 +1320,7 @@ bool MainWindow::moveCursorToMarker(int direction){
         return false;
     }
 
-    const auto markers{m_prj.buildRapMarkersFromSelection()};
+    const auto& markers{m_prj.frameIndex()};
     if(markers.empty()){
         return false;
     }
