@@ -129,6 +129,8 @@ struct MainWindow: MainWindowT<MainWindow>{
     void cancelExportButton_Click(const Control& sender, const REArgs& args);
     bool isExportInProgressForClosePrompt() const;
     void requestExportCancel();
+    AAction openProjectFromPathAsync(const hstring& path);
+    AAction openProjectFromActivationFileAsync(const SFile& file);
 
 private:
     MP m_player{nullptr};
