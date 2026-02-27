@@ -56,8 +56,8 @@ vector<float> decodeAudioRangeToFloat(const com_ptr<IMFSourceReader>& reader, DW
 wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow, bool mp4Only);
 void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>& segmentAudio, uint32_t audioChannels, size_t fadeFrames);
 void writePcmAudioFramesToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, const vector<float>& audioFrames, uint32_t audioChannels, uint32_t audioSampleRate, uint64_t& writtenFrames);
-void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs);
-VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback);
+void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs, const function<bool()>& shouldCancel = {});
+VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel = {});
 void applyExportFileMetadata(const std::wstring& sourcePath, const std::wstring& outputPath, const std::wstring& exportComment);
 
 }
@@ -490,7 +490,7 @@ void writePcmAudioFramesToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD wri
     writtenFrames += framesToWrite;
 }
 
-void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs){
+void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs, const function<bool()>& shouldCancel){
     const auto fadeFrames{crossfadeMs <= 0 ? size_t{0} : static_cast<size_t>((static_cast<int64_t>(audioSampleRate) * crossfadeMs) / 1000)};
     vector<float> tailBuffer;
     tailBuffer.reserve(fadeFrames * audioChannels);
@@ -529,6 +529,9 @@ void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, D
     };
 
     for(const auto& [keepStart, keepEnd] : keepRanges100ns){
+        if(shouldCancel && shouldCancel()){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+        }
         if(keepEnd <= keepStart){
             continue;
         }
@@ -545,6 +548,9 @@ void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, D
         PropVariantClear(&pos);
 
         for(;;){
+            if(shouldCancel && shouldCancel()){
+                throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+            }
             DWORD actualStream{};
             DWORD flags{};
             LONGLONG timestamp{};
@@ -622,7 +628,7 @@ void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, D
     writePcmAudioFramesToWriter(writer, writerAudioStreamIndex, tailBuffer, audioChannels, audioSampleRate, writtenFrames);
 }
 
-VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback){
+VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel){
     auto waitingForCleanPoint{false};
     auto markDiscontinuityOnNextWrittenSample{false};
     auto dtsPtsShift100ns{static_cast<int64_t>(0)};
@@ -635,6 +641,9 @@ VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reade
     }
 
     for(;;){
+        if(shouldCancel && shouldCancel()){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+        }
         DWORD actualStream{};
         DWORD flags{};
         LONGLONG timestamp{};

@@ -137,7 +137,7 @@
                     <CheckBox x:Name="KeepAudioCheckBox" Content="Keep audio" IsEnabled="False" VerticalAlignment="Center" Checked="keepAudioCheckBox_Changed" Unchecked="keepAudioCheckBox_Changed"/>
                     <TextBlock Text="Audio cross-fade:" VerticalAlignment="Center"/>
                     <ComboBox x:Name="AudioCrossfadeComboBox" Width="120" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
-                        <ComboBoxItem Content="0 ms" Tag="0"/>
+                        <ComboBoxItem Content="None (0 ms)" Tag="0"/>
                         <ComboBoxItem Content="50 ms" Tag="50"/>
                         <ComboBoxItem Content="100 ms" Tag="100"/>
                         <ComboBoxItem Content="250 ms" Tag="250"/>
@@ -193,6 +193,7 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <Grid Grid.Column="0" RowSpacing="2" VerticalAlignment="Center">
@@ -207,6 +208,7 @@
 
                 <TextBlock x:Name="InfoText" Grid.Column="1" Margin="0,0,10,0" Text="Estimated output: --:--.---" VerticalAlignment="Center" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"/>
                 <ProgressBar x:Name="OperationProgressBar" Grid.Column="2" Width="170" Height="16" Minimum="0" Maximum="100" Value="0" Visibility="Collapsed" HorizontalAlignment="Right"/>
+                <Button x:Name="CancelExportButton" Grid.Column="3" Margin="8,0,0,0" Content="Cancel" Click="cancelExportButton_Click" Visibility="Collapsed" IsEnabled="False"/>
             </Grid>
         </Border>
     </Grid>

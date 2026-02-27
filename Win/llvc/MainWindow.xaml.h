@@ -3,6 +3,7 @@
 #include "MainWindow.g.h"
 
 #include <cstdint>
+#include <atomic>
 #include <functional>
 #include <optional>
 #include <string>
@@ -124,6 +125,9 @@ struct MainWindow: MainWindowT<MainWindow>{
     void onWindowActivated(const Control& sender, const WAVArgs& args);
     void onNaturalDurationChanged(const MPSession& sender, const Control& args);
     void onPositionTimerTick(const Control& sender, const Control& args);
+    void cancelExportButton_Click(const Control& sender, const REArgs& args);
+    bool isExportInProgressForClosePrompt() const;
+    void requestExportCancel();
 
 private:
     MP m_player{nullptr};
@@ -139,6 +143,7 @@ private:
     hstring m_projectPath{};
     bool m_isClosing{false};
     bool m_isExportInProgress{false};
+    std::atomic_bool m_cancelExportRequested{false};
     bool m_resumeTimelineRenderAfterExport{false};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};

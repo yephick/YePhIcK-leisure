@@ -26,6 +26,8 @@
 #include <mfobjects.h>
 #include <mfreadwrite.h>
 
+#include <commctrl.h>
+
 #include <microsoft.ui.xaml.window.h>
 #include <propkey.h>
 #include <propsys.h>
@@ -50,6 +52,7 @@ import llvc.Export;
 import llvc.Utils;
 
 #pragma comment(lib, "Shell32.lib")
+#pragma comment(lib, "Comctl32.lib")
 
 using namespace std;
 using namespace winrt;
@@ -87,6 +90,27 @@ using TS = MainWindow::TS;
 constexpr auto W_POS_L{L"WindowLeft"};
 
 namespace{
+
+LRESULT CALLBACK MainWindowSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR refData){
+    auto* self{reinterpret_cast<MainWindow*>(refData)};
+    if(!self){
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }
+
+    if(msg == WM_CLOSE && self->isExportInProgressForClosePrompt()){
+        const auto choice{MessageBoxW(hwnd,
+            L"An export is still in progress. Cancel export and close the app?",
+            L"Export in progress",
+            MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2)};
+        if(choice != IDYES){
+            return 0;
+        }
+
+        self->requestExportCancel();
+    }
+
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
 
 constexpr int64_t HNS_PER_SECOND{10'000'000LL};
 
@@ -536,6 +560,8 @@ MainWindow::MainWindow(){
     setVideoDetailsPanelExpanded(false);
 
     restoreWindowPlacement();
+    const auto hwnd{getWindowHandle()};
+    SetWindowSubclass(hwnd, MainWindowSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
     loadAppSettings();
     Closed({this, &MainWindow::onClosed});
     m_mainWindowActivatedRevoker = Activated(auto_revoke, {this, &MainWindow::onWindowActivated});
@@ -663,6 +689,9 @@ void MainWindow::saveWindowPlacement() const{
 void MainWindow::onClosed(const Control&, const WEArgs&){
     m_isClosing = true;
 
+    const auto hwnd{getWindowHandle()};
+    RemoveWindowSubclass(hwnd, MainWindowSubclassProc, 1);
+
     if(m_positionTimer){
         m_positionTimer.Stop();
     }
@@ -686,6 +715,14 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
 
     saveWindowPlacement();
     saveAppSettings();
+}
+
+bool MainWindow::isExportInProgressForClosePrompt() const{
+    return m_isExportInProgress;
+}
+
+void MainWindow::requestExportCancel(){
+    m_cancelExportRequested = true;
 }
 
 void MainWindow::onWindowActivated(const Control&, const WAVArgs& args){
@@ -2357,11 +2394,22 @@ void MainWindow::setOperationInProgress(bool active, bool indeterminate){
         OperationProgressBar().IsIndeterminate(false);
     }
     OperationProgressBar().Visibility(active ? Visibility::Visible : Visibility::Collapsed);
+    CancelExportButton().Visibility((active && m_isExportInProgress) ? Visibility::Visible : Visibility::Collapsed);
+    CancelExportButton().IsEnabled(active && m_isExportInProgress);
 }
 
 void MainWindow::setOperationProgress(double percent){
     OperationProgressBar().IsIndeterminate(false);
     OperationProgressBar().Value(clamp(percent, 0.0, 100.0));
+}
+
+void MainWindow::cancelExportButton_Click(const Control&, const REArgs&){
+    if(!m_isExportInProgress){
+        return;
+    }
+
+    m_cancelExportRequested = true;
+    setStatusMessage(L"Canceling export...");
 }
 
 AAction MainWindow::showOptionsDialogAsync(){
