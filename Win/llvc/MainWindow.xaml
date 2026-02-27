@@ -51,7 +51,7 @@
                 <MenuFlyoutItem Text="Zoom in timeline	Ctrl+Plus" Click="zoomInTimelineMenuItem_Click"/>
                 <MenuFlyoutItem Text="Zoom out timeline	Ctrl+Minus" Click="zoomOutTimelineMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
-                <MenuFlyoutItem x:Name="SeparatePreviewWindowMenuItem" Text="Preview in separate window" Click="separatePreviewWindowMenuItem_Click"/>
+                <ToggleMenuFlyoutItem x:Name="SeparatePreviewWindowMenuItem" Text="Preview in separate window" Click="separatePreviewWindowMenuItem_Click"/>
                 <MenuFlyoutItem Text="Toggle preview full-screen	F11" Click="toggleSeparatePreviewFullscreenMenuItem_Click"/>
             </controls:MenuBarItem>
 

@@ -1591,6 +1591,7 @@ void MainWindow::window_KeyDown(const Control&, const KRArgs& args){
 void MainWindow::separatePreviewWindowMenuItem_Click(const Control&, const REArgs&){
     const auto targetOpen{!m_isSeparatePreviewWindowOpen};
     if(!setSeparatePreviewWindowOpen(targetOpen)){
+        SeparatePreviewWindowMenuItem().IsChecked(m_isSeparatePreviewWindowOpen);
     }
 }
 
@@ -1618,6 +1619,7 @@ void MainWindow::adjustTimelineZoomBy(int delta){
 
 bool MainWindow::setSeparatePreviewWindowOpen(bool open){
     if(open == m_isSeparatePreviewWindowOpen){
+        SeparatePreviewWindowMenuItem().IsChecked(open);
         return true;
     }
 
@@ -1677,6 +1679,7 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
             (void)toggleSeparatePreviewFullscreen();
         }
 
+        SeparatePreviewWindowMenuItem().IsChecked(true);
         setStatusMessage(L"Preview opened in separate window");
         return true;
     }
@@ -1696,6 +1699,7 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
     m_isSeparatePreviewWindowOpen = false;
     m_isSeparatePreviewFullscreen = false;
     m_restorePreviewDetachedOnStartup = false;
+    SeparatePreviewWindowMenuItem().IsChecked(false);
     setStatusMessage(L"Preview restored to main window");
     return true;
 }
@@ -1716,6 +1720,7 @@ void MainWindow::onSeparatePreviewWindowClosed(const Control&, const WEArgs&){
         m_restorePreviewDetachedOnStartup = false;
     }
     PreviewPlayer().SetMediaPlayer(m_player);
+    SeparatePreviewWindowMenuItem().IsChecked(false);
     setStatusMessage(L"Preview restored to main window");
 }
 
