@@ -47,6 +47,7 @@
 #include <winrt/Windows.System.h>
 
 import llvc.Export;
+import llvc.Utils;
 
 #pragma comment(lib, "Shell32.lib")
 
@@ -556,29 +557,6 @@ HWND MainWindow::getWindowHandle() const{
 }
 
 
-auto pixelsToDips(int32_t pixelValue, uint32_t dpi){
-    return static_cast<int32_t>(lround((pixelValue * 96.0) / (dpi == 0 ? 96 : dpi)));
-}
-
-auto dipsToPixels(int32_t dipValue, uint32_t dpi){
-    return static_cast<int32_t>(lround((dipValue * (dpi == 0 ? 96U : dpi)) / 96));
-}
-
-bool MainWindow::isRectVisibleOnAnyMonitor(const RECT& rect){
-    const auto monitor{::MonitorFromRect(&rect, MONITOR_DEFAULTTONULL)};
-    if(!monitor){
-        return false;
-    }
-
-    MONITORINFO monitorInfo{.cbSize = sizeof(monitorInfo)};
-    if(!::GetMonitorInfoW(monitor, &monitorInfo)){
-        return false;
-    }
-
-    RECT intersection{};
-    return ::IntersectRect(&intersection, &rect, &monitorInfo.rcWork) != FALSE;
-}
-
 void MainWindow::restoreWindowPlacement(){
     const auto localSettings{ApplicationData::Current().LocalSettings()};
     const auto values{localSettings.Values()};
@@ -587,30 +565,21 @@ void MainWindow::restoreWindowPlacement(){
         return;
     }
 
-    const auto left{unbox_value<int32_t>(values.Lookup(W_POS_L))};
-    const auto top{unbox_value<int32_t>(values.Lookup(W_POS_T))};
+    ::llvc::WindowPlacementState state{};
+    state.left = unbox_value<int32_t>(values.Lookup(W_POS_L));
+    state.top = unbox_value<int32_t>(values.Lookup(W_POS_T));
+    state.widthDips = unbox_value<int32_t>(values.Lookup(W_POS_W));
+    state.heightDips = unbox_value<int32_t>(values.Lookup(W_POS_H));
+    state.dpi = values.HasKey(W_POS_DPI) ? unbox_value<int32_t>(values.Lookup(W_POS_DPI)) : 96;
 
     const auto hwnd{getWindowHandle()};
-
-    SetWindowPos(hwnd, nullptr, left, top, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
-
-    const auto currentDpi{::GetDpiForWindow(hwnd)};
-    const auto hasDpiData{values.HasKey(W_POS_DPI)};
-    const auto storedWidth{unbox_value<int32_t>(values.Lookup(W_POS_W))};
-    const auto storedHeight{unbox_value<int32_t>(values.Lookup(W_POS_H))};
-    const auto width{hasDpiData ? dipsToPixels(storedWidth, currentDpi) : storedWidth};
-    const auto height{hasDpiData ? dipsToPixels(storedHeight, currentDpi) : storedHeight};
-
-    if(!isRectVisibleOnAnyMonitor(RECT{left, top, left + width, top + height})){
+    if(!applyWindowPlacement(hwnd, state, hwnd, false)){
         values.Remove(W_POS_L);
         values.Remove(W_POS_T);
         values.Remove(W_POS_W);
         values.Remove(W_POS_H);
         values.Remove(W_POS_DPI);
-        return;
     }
-
-    SetWindowPos(hwnd, nullptr, left, top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
 void MainWindow::loadAppSettings(){
@@ -677,25 +646,18 @@ void MainWindow::saveAppSettings() const{
 
 void MainWindow::saveWindowPlacement() const{
     const auto hwnd{getWindowHandle()};
-
-    RECT bounds{};
-    if(!GetWindowRect(hwnd, &bounds)){
+    const auto captured{::llvc::captureWindowPlacement(hwnd)};
+    if(!captured){
         return;
-    }
-
-    WINDOWPLACEMENT placement{.length = sizeof(placement)};
-    if(GetWindowPlacement(hwnd, &placement) && placement.showCmd == SW_SHOWMAXIMIZED){
-        bounds = placement.rcNormalPosition;
     }
 
     const auto localSettings{ApplicationData::Current().LocalSettings()};
     const auto values{localSettings.Values()};
-    const auto dpi{::GetDpiForWindow(hwnd)};
-    values.Insert(W_POS_L, box_value(static_cast<int32_t>(bounds.left)));
-    values.Insert(W_POS_T, box_value(static_cast<int32_t>(bounds.top)));
-    values.Insert(W_POS_W, box_value(pixelsToDips(static_cast<int32_t>(bounds.right - bounds.left), dpi)));
-    values.Insert(W_POS_H, box_value(pixelsToDips(static_cast<int32_t>(bounds.bottom - bounds.top), dpi)));
-    values.Insert(W_POS_DPI, box_value(static_cast<int32_t>(dpi)));
+    values.Insert(W_POS_L, box_value(captured->left));
+    values.Insert(W_POS_T, box_value(captured->top));
+    values.Insert(W_POS_W, box_value(captured->widthDips));
+    values.Insert(W_POS_H, box_value(captured->heightDips));
+    values.Insert(W_POS_DPI, box_value(captured->dpi));
 }
 
 void MainWindow::onClosed(const Control&, const WEArgs&){
@@ -1719,32 +1681,14 @@ void MainWindow::restoreSeparatePreviewPlacement(HWND previewHwnd){
         return;
     }
 
-    const auto currentDpi{::GetDpiForWindow(previewHwnd)};
-    const auto width{dipsToPixels(m_separatePreviewWidthDips, currentDpi)};
-    const auto height{dipsToPixels(m_separatePreviewHeightDips, currentDpi)};
-    RECT desiredRect{m_separatePreviewLeft, m_separatePreviewTop, m_separatePreviewLeft + width, m_separatePreviewTop + height};
+    ::llvc::WindowPlacementState state{};
+    state.left = m_separatePreviewLeft;
+    state.top = m_separatePreviewTop;
+    state.widthDips = m_separatePreviewWidthDips;
+    state.heightDips = m_separatePreviewHeightDips;
+    state.dpi = m_separatePreviewDpi;
 
-    if(!isRectVisibleOnAnyMonitor(desiredRect)){
-        MONITORINFO monitorInfo{.cbSize = sizeof(monitorInfo)};
-        const auto mainMonitor{::MonitorFromWindow(getWindowHandle(), MONITOR_DEFAULTTONEAREST)};
-        if(mainMonitor && ::GetMonitorInfoW(mainMonitor, &monitorInfo)){
-            const auto fallbackWidth{min(width, static_cast<int32_t>(monitorInfo.rcWork.right - monitorInfo.rcWork.left))};
-            const auto fallbackHeight{min(height, static_cast<int32_t>(monitorInfo.rcWork.bottom - monitorInfo.rcWork.top))};
-            desiredRect.left = monitorInfo.rcWork.left;
-            desiredRect.top = monitorInfo.rcWork.top;
-            desiredRect.right = desiredRect.left + fallbackWidth;
-            desiredRect.bottom = desiredRect.top + fallbackHeight;
-        }
-    }
-
-    ::SetWindowPos(
-        previewHwnd,
-        nullptr,
-        desiredRect.left,
-        desiredRect.top,
-        desiredRect.right - desiredRect.left,
-        desiredRect.bottom - desiredRect.top,
-        SWP_NOACTIVATE | SWP_NOZORDER);
+    (void)applyWindowPlacement(previewHwnd, state, getWindowHandle(), false);
 
 }
 

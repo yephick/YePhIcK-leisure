@@ -243,7 +243,6 @@ private:
     void saveSeparatePreviewPlacement(HWND previewHwnd);
     void restoreSeparatePreviewPlacement(HWND previewHwnd);
     static TS secondsToTimeSpan(double seconds);
-    static bool isRectVisibleOnAnyMonitor(const RECT& rect);
 };
 
 }
