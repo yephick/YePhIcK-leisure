@@ -68,8 +68,9 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     const auto sourceIsAvi{isAviSourcePath(sourcePath)};
     const auto defaultExt{sourceIsAvi ? L".mp4" : (_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4")};
 
-    const auto cutBlockCount{m_prj.cutRanges100ns().size()};
-    const auto keptBlockCount{invertCutRanges100ns(m_prj.cutRanges100ns(), sourceDuration100ns).size()};
+    const auto summaryCutRanges100ns{m_prj.buildCutRanges100ns()};
+    const auto cutBlockCount{summaryCutRanges100ns.size()};
+    const auto keptBlockCount{invertCutRanges100ns(summaryCutRanges100ns, sourceDuration100ns).size()};
     const auto keepAudioRequested{m_prj.keepAudio() && sourceHasAudio() && !m_mediaInfo.audioDisabledForThisSource};
     const auto crossfadeSummary{keepAudioRequested ? (to_wstring(m_prj.audioXfadeMs()) + L" ms") : wstring{L"n/a (audio removed)"}};
     const auto containerSummary{sourceIsAvi ? L"MP4" : (_wcsicmp(defaultExt, L".mov") == 0 ? L"MOV" : L"MP4")};
