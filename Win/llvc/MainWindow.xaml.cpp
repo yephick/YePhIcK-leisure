@@ -444,8 +444,21 @@ bool isControlModifierActive(VirtualKeyModifiers modifiers){
     return (ctrlState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down;
 }
 
+wstring audioVolumeGlyph(bool keepAudio, int32_t volumePct){
+    if(!keepAudio || volumePct <= 0){
+        return L"\xD83D\xDD07"; // U+1F507
+    }
+    if(volumePct < 75){
+        return L"\xD83D\xDD08"; // U+1F508
+    }
+    if(volumePct > 100){
+        return L"\xD83D\xDD0A"; // U+1F50A
+    }
+    return L"\xD83D\xDD09"; // U+1F509
+}
+
 bool MainWindow::isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const{
-    if(a.keepAudio != b.keepAudio || a.audioCrossfadeMs != b.audioCrossfadeMs || a.cutScenes != b.cutScenes || a.frameIndex.size() != b.frameIndex.size()){
+    if(a.keepAudio != b.keepAudio || a.audioCrossfadeMs != b.audioCrossfadeMs || a.audioVolumePct != b.audioVolumePct || a.cutScenes != b.cutScenes || a.frameIndex.size() != b.frameIndex.size()){
         return false;
     }
 
@@ -466,6 +479,7 @@ MainWindow::UndoRedoState MainWindow::captureUndoRedoState() const{
         .cutScenes = m_prj.cutScenes(),
         .keepAudio = m_prj.keepAudio(),
         .audioCrossfadeMs = m_prj.audioXfadeMs(),
+        .audioVolumePct = m_prj.audioVolumePct(),
     };
 }
 
@@ -502,6 +516,7 @@ bool MainWindow::applyUndoRedoState(const UndoRedoState& state, bool fromUndo){
     m_prj.cutScenes(state.cutScenes);
     m_prj.keepAudio(state.keepAudio);
     m_prj.audioXfadeMs(state.audioCrossfadeMs);
+    m_prj.audioVolumePct(state.audioVolumePct);
 
     syncAudioCrossfadeComboSelection();
     updateAudioUiAndPlaybackState();
@@ -900,6 +915,18 @@ void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const C
     }
 
     syncAudioCrossfadeComboSelection();
+    updateWindowTitle();
+    refreshStatusInfoSection();
+}
+
+void MainWindow::audioVolumeSlider_ValueChanged(const Control&, const RBVArgs& args){
+    if(m_isApplyingUndoRedoState){
+        return;
+    }
+
+    (void)pushUndoStateIfChanged();
+    m_prj.audioVolumePct(static_cast<int32_t>(lround(args.NewValue())));
+    updateAudioUiAndPlaybackState();
     updateWindowTitle();
     refreshStatusInfoSection();
 }
@@ -2838,6 +2865,7 @@ void MainWindow::applyAudioSettingsToPlayer(){
 
     const auto allowAudio{sourceHasAudio() && m_prj.keepAudio()};
     m_player.IsMuted(!allowAudio);
+    m_player.Volume(allowAudio ? clamp(m_prj.audioVolumePct() / 100.0, 0.0, 1.0) : 0.0);
 }
 
 void MainWindow::updateAudioUiAndPlaybackState(){
@@ -2858,6 +2886,9 @@ void MainWindow::updateAudioUiAndPlaybackState(){
     KeepAudioCheckBox().IsEnabled(hasAudio && !audioHardDisabled);
     KeepAudioCheckBox().IsChecked(box_value(hasAudio && !audioHardDisabled && m_prj.keepAudio()).as<IReference<bool>>());
     AudioCrossfadeComboBox().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
+    AudioVolumeSlider().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
+    AudioVolumeSlider().Value(static_cast<double>(m_prj.audioVolumePct()));
+    AudioVolumeIconText().Text(audioVolumeGlyph(hasAudio && !audioHardDisabled && m_prj.keepAudio(), m_prj.audioVolumePct()));
     m_isApplyingUndoRedoState = previousGuard;
     applyAudioSettingsToPlayer();
 }

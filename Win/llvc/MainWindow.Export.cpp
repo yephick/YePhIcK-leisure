@@ -73,6 +73,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     const auto keptBlockCount{invertCutRanges100ns(summaryCutRanges100ns, sourceDuration100ns).size()};
     const auto keepAudioRequested{m_prj.keepAudio() && sourceHasAudio() && !m_mediaInfo.audioDisabledForThisSource};
     const auto crossfadeSummary{keepAudioRequested ? (to_wstring(m_prj.audioXfadeMs()) + L" ms") : wstring{L"n/a (audio removed)"}};
+    const auto volumeSummary{keepAudioRequested ? (to_wstring(m_prj.audioVolumePct()) + L"%") : wstring{L"n/a (audio removed)"}};
     const auto containerSummary{sourceIsAvi ? L"MP4" : (_wcsicmp(defaultExt, L".mov") == 0 ? L"MOV" : L"MP4")};
 
     Controls::ContentDialog exportSummaryDialog{};
@@ -84,6 +85,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         L"\nKept blocks: " + to_wstring(keptBlockCount) +
         L"\nAudio: " + wstring{keepAudioRequested ? L"kept" : L"removed"} +
         L"\nCrossfade: " + crossfadeSummary +
+        L"\nVolume: " + volumeSummary +
         L"\nOutput container: " + containerSummary));
     exportSummaryDialog.PrimaryButtonText(L"Continue");
     exportSummaryDialog.CloseButtonText(L"Cancel");
@@ -348,7 +350,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
 
             const auto keepRanges100ns{invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
-            writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer, writerAudioStreamIndex, audioChannels, audioSampleRate, m_prj.audioXfadeMs(), [self = get_weak()](){
+            writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer, writerAudioStreamIndex, audioChannels, audioSampleRate, m_prj.audioXfadeMs(), m_prj.audioVolumePct() / 100.0f, [self = get_weak()](){
                 if(const auto strong = self.get()){
                     return strong->m_cancelExportRequested.load();
                 }

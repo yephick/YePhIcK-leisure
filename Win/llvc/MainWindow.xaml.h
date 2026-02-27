@@ -79,6 +79,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void timelineZoomSlider_PointerWheelChanged(const Control& sender, const PREArgs& args);
     void keepAudioCheckBox_Changed(const Control& sender, const REArgs& args);
     void audioCrossfadeComboBox_SelectionChanged(const Control& sender, const Control& args);
+    void audioVolumeSlider_ValueChanged(const Control& sender, const RBVArgs& args);
     void timelineHorizontalScrollBar_ValueChanged(const Control& sender, const RBVArgs& args);
     void timelineScrollViewer_ViewChanged(const Control& sender, const SVVCArgs& args);
     void timelineScrollViewer_SizeChanged(const Control& sender, const SCArgs& args);
@@ -175,6 +176,7 @@ private:
         vector<uint32_t> cutScenes{};
         bool keepAudio{true};
         int32_t audioCrossfadeMs{0};
+        int32_t audioVolumePct{100};
     };
     vector<UndoRedoState> m_undoStack{};
     vector<UndoRedoState> m_redoStack{};

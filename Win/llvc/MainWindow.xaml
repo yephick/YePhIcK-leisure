@@ -147,6 +147,8 @@
                         <ComboBoxItem Content="2 s" Tag="2000"/>
                         <ComboBoxItem Content="5 s" Tag="5000"/>
                     </ComboBox>
+                    <TextBlock x:Name="AudioVolumeIconText" Text="🔉" VerticalAlignment="Center"/>
+                    <Slider x:Name="AudioVolumeSlider" Width="120" IsEnabled="False" Minimum="0" Maximum="150" SmallChange="5" LargeChange="5" StepFrequency="5" Value="100" ValueChanged="audioVolumeSlider_ValueChanged"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" VerticalAlignment="Center">
