@@ -24,6 +24,7 @@ namespace winrt::llvc::implementation{
 using namespace std;
 using namespace winrt;
 using namespace ::llvc;
+namespace Controls = winrt::Microsoft::UI::Xaml::Controls;
 
 using Control = MainWindow::Control;
 using REArgs = MainWindow::REArgs;
@@ -67,12 +68,38 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     const auto sourceIsAvi{isAviSourcePath(sourcePath)};
     const auto defaultExt{sourceIsAvi ? L".mp4" : (_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4")};
 
+    const auto summaryCutRanges100ns{m_prj.buildCutRanges100ns()};
+    const auto cutBlockCount{summaryCutRanges100ns.size()};
+    const auto keptBlockCount{invertCutRanges100ns(summaryCutRanges100ns, sourceDuration100ns).size()};
+    const auto keepAudioRequested{m_prj.keepAudio() && sourceHasAudio() && !m_mediaInfo.audioDisabledForThisSource};
+    const auto crossfadeSummary{keepAudioRequested ? (to_wstring(m_prj.audioXfadeMs()) + L" ms") : wstring{L"n/a (audio removed)"}};
+    const auto volumeSummary{keepAudioRequested ? (to_wstring(m_prj.audioVolumePct()) + L"%") : wstring{L"n/a (audio removed)"}};
+    const auto containerSummary{sourceIsAvi ? L"MP4" : (_wcsicmp(defaultExt, L".mov") == 0 ? L"MOV" : L"MP4")};
+
+    Controls::ContentDialog exportSummaryDialog{};
+    exportSummaryDialog.XamlRoot(Content().XamlRoot());
+    exportSummaryDialog.Title(box_value(L"Confirm export settings"));
+    exportSummaryDialog.Content(box_value(
+        L"Output duration: " + formatTimelineDurationText(outputDuration100ns) +
+        L"\nCut blocks: " + to_wstring(cutBlockCount) +
+        L"\nKept blocks: " + to_wstring(keptBlockCount) +
+        L"\nAudio: " + wstring{keepAudioRequested ? L"kept" : L"removed"} +
+        L"\nCrossfade: " + crossfadeSummary +
+        L"\nVolume: " + volumeSummary +
+        L"\nOutput container: " + containerSummary));
+    exportSummaryDialog.PrimaryButtonText(L"Continue");
+    exportSummaryDialog.CloseButtonText(L"Cancel");
+    if((co_await exportSummaryDialog.ShowAsync()) != Controls::ContentDialogResult::Primary){
+        co_return;
+    }
+
     const auto outputPath{pickExportOutputPath(sourceFsPath, defaultExt, outputDuration100ns, getWindowHandle(), sourceIsAvi)};
     if(outputPath.empty()){
         co_return;
     }
 
     m_isExportInProgress = true;
+    m_cancelExportRequested = false;
     m_resumeTimelineRenderAfterExport = m_prj.videoFile() && m_timelineDurationSeconds > 0;
     ++m_timelineRenderVersion;
 
@@ -82,6 +109,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
     winrt::hstring exportErrorMessage{};
     auto exportSucceeded{false};
+    auto exportCanceled{false};
     const auto exportComment{makeExportComment(sourceFsPath)};
 
     winrt::apartment_context uiThread;
@@ -120,7 +148,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
         check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
-        auto sourceVideoType{chooseBestNativeVideoMediaType(reader, videoStreamIndex)};
+        const vector<GUID> streamCopySubtypes{MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_H265};
+        auto sourceVideoType{chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, streamCopySubtypes)};
         if(sourceIsAvi){
             sourceVideoType = nullptr;
             for(DWORD mediaTypeIndex{};; ++mediaTypeIndex){
@@ -142,7 +171,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
         }
         if(!sourceVideoType){
-            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No native video media type found");
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require H.264 or HEVC)");
         }
         check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, sourceVideoType.get()));
 
@@ -163,7 +192,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                     ? sourceVideoType->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, sequenceHeader.data(), sequenceHeaderSize, &bytesWritten)
                     : E_FAIL};
             if(FAILED(seqReadHr) || bytesWritten == 0){
-                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"This AVI cannot be stream-copied to MP4 on this system (missing H.264 mux support)");
+                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI H.264 stream lacks codec configuration (SPS/PPS). Convert to MP4 first.");
             }
         }
 
@@ -280,7 +309,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         const auto writerConfigHr{configureWriter()};
         if(FAILED(writerConfigHr)){
             if(sourceIsAvi){
-                throw hresult_error(writerConfigHr, L"This AVI cannot be stream-copied to MP4 on this system (missing H.264 mux support).");
+                throw hresult_error(writerConfigHr, L"System cannot mux H.264 into MP4 via Media Foundation.");
             }
             check_hresult(writerConfigHr);
         }
@@ -304,6 +333,12 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                         }
                     });
                 }
+            },
+            [self = get_weak()](){
+                if(const auto strong = self.get()){
+                    return strong->m_cancelExportRequested.load();
+                }
+                return false;
             })};
         (void)videoStats;
 
@@ -315,15 +350,29 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
 
             const auto keepRanges100ns{invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
-            const auto mixedAudio{buildMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, audioChannels, audioSampleRate, m_prj.audioXfadeMs())};
-            writePcmAudioToWriter(writer, writerAudioStreamIndex, mixedAudio, audioChannels, audioSampleRate);
+            writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer, writerAudioStreamIndex, audioChannels, audioSampleRate, m_prj.audioXfadeMs(), m_prj.audioVolumePct() / 100.0f, [self = get_weak()](){
+                if(const auto strong = self.get()){
+                    return strong->m_cancelExportRequested.load();
+                }
+                return false;
+            });
+        }
+
+        if(m_cancelExportRequested){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
         }
 
         check_hresult(writer->Finalize());
         applyExportFileMetadata(sourcePath, outputPath, exportComment);
         exportSucceeded = true;
     }catch(const hresult_error& ex){
-        exportErrorMessage = ex.message();
+        if(ex.code() == HRESULT_FROM_WIN32(ERROR_CANCELLED)){
+            exportCanceled = true;
+            std::error_code ec;
+            filesystem::remove(outputPath, ec);
+        }else{
+            exportErrorMessage = ex.message();
+        }
     }
 
     co_await uiThread;
@@ -338,6 +387,9 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         setStatusMessage(L"Export completed");
         clearErrorMessage();
         refreshStatusInfoSection();
+    }else if(exportCanceled){
+        setStatusMessage(L"Export canceled");
+        clearErrorMessage();
     }else{
         setStatusMessage(L"Export failed");
         setErrorMessage(exportErrorMessage.c_str());

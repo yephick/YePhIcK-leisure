@@ -26,6 +26,8 @@
 #include <mfobjects.h>
 #include <mfreadwrite.h>
 
+#include <commctrl.h>
+
 #include <microsoft.ui.xaml.window.h>
 #include <propkey.h>
 #include <propsys.h>
@@ -50,6 +52,7 @@ import llvc.Export;
 import llvc.Utils;
 
 #pragma comment(lib, "Shell32.lib")
+#pragma comment(lib, "Comctl32.lib")
 
 using namespace std;
 using namespace winrt;
@@ -87,6 +90,27 @@ using TS = MainWindow::TS;
 constexpr auto W_POS_L{L"WindowLeft"};
 
 namespace{
+
+LRESULT CALLBACK MainWindowSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR refData){
+    auto* self{reinterpret_cast<MainWindow*>(refData)};
+    if(!self){
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }
+
+    if(msg == WM_CLOSE && self->isExportInProgressForClosePrompt()){
+        const auto choice{MessageBoxW(hwnd,
+            L"An export is still in progress. Cancel export and close the app?",
+            L"Export in progress",
+            MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2)};
+        if(choice != IDYES){
+            return 0;
+        }
+
+        self->requestExportCancel();
+    }
+
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
 
 constexpr int64_t HNS_PER_SECOND{10'000'000LL};
 
@@ -420,8 +444,21 @@ bool isControlModifierActive(VirtualKeyModifiers modifiers){
     return (ctrlState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down;
 }
 
+wstring audioVolumeGlyph(bool keepAudio, int32_t volumePct){
+    if(!keepAudio || volumePct <= 0){
+        return L"\xD83D\xDD07"; // U+1F507
+    }
+    if(volumePct < 75){
+        return L"\xD83D\xDD08"; // U+1F508
+    }
+    if(volumePct > 100){
+        return L"\xD83D\xDD0A"; // U+1F50A
+    }
+    return L"\xD83D\xDD09"; // U+1F509
+}
+
 bool MainWindow::isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const{
-    if(a.keepAudio != b.keepAudio || a.audioCrossfadeMs != b.audioCrossfadeMs || a.cutScenes != b.cutScenes || a.frameIndex.size() != b.frameIndex.size()){
+    if(a.keepAudio != b.keepAudio || a.audioCrossfadeMs != b.audioCrossfadeMs || a.audioVolumePct != b.audioVolumePct || a.cutScenes != b.cutScenes || a.frameIndex.size() != b.frameIndex.size()){
         return false;
     }
 
@@ -442,6 +479,7 @@ MainWindow::UndoRedoState MainWindow::captureUndoRedoState() const{
         .cutScenes = m_prj.cutScenes(),
         .keepAudio = m_prj.keepAudio(),
         .audioCrossfadeMs = m_prj.audioXfadeMs(),
+        .audioVolumePct = m_prj.audioVolumePct(),
     };
 }
 
@@ -478,6 +516,7 @@ bool MainWindow::applyUndoRedoState(const UndoRedoState& state, bool fromUndo){
     m_prj.cutScenes(state.cutScenes);
     m_prj.keepAudio(state.keepAudio);
     m_prj.audioXfadeMs(state.audioCrossfadeMs);
+    m_prj.audioVolumePct(state.audioVolumePct);
 
     syncAudioCrossfadeComboSelection();
     updateAudioUiAndPlaybackState();
@@ -536,6 +575,8 @@ MainWindow::MainWindow(){
     setVideoDetailsPanelExpanded(false);
 
     restoreWindowPlacement();
+    const auto hwnd{getWindowHandle()};
+    SetWindowSubclass(hwnd, MainWindowSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
     loadAppSettings();
     Closed({this, &MainWindow::onClosed});
     m_mainWindowActivatedRevoker = Activated(auto_revoke, {this, &MainWindow::onWindowActivated});
@@ -663,6 +704,9 @@ void MainWindow::saveWindowPlacement() const{
 void MainWindow::onClosed(const Control&, const WEArgs&){
     m_isClosing = true;
 
+    const auto hwnd{getWindowHandle()};
+    RemoveWindowSubclass(hwnd, MainWindowSubclassProc, 1);
+
     if(m_positionTimer){
         m_positionTimer.Stop();
     }
@@ -686,6 +730,16 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
 
     saveWindowPlacement();
     saveAppSettings();
+}
+
+bool MainWindow::isExportInProgressForClosePrompt() const{
+    return m_isExportInProgress;
+}
+
+void MainWindow::requestExportCancel(){
+    m_cancelExportRequested = true;
+    setStatusMessage(L"Canceling export...");
+    setOperationInProgress(false);
 }
 
 void MainWindow::onWindowActivated(const Control&, const WAVArgs& args){
@@ -811,7 +865,7 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
     if(m_prj.videoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }
-    //ensureCurrentTimelineCursorVisible(); XXX: for some reason this line causes a terminating exception
+    ensureCurrentTimelineCursorVisible();
     updateWindowTitle();
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
@@ -861,6 +915,22 @@ void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const C
     }
 
     syncAudioCrossfadeComboSelection();
+    updateWindowTitle();
+    refreshStatusInfoSection();
+}
+
+void MainWindow::audioVolumeSlider_ValueChanged(const Control&, const RBVArgs& args){
+    if(!m_player){
+        return;
+    }
+
+    if(m_isApplyingUndoRedoState){
+        return;
+    }
+
+    (void)pushUndoStateIfChanged();
+    m_prj.audioVolumePct(static_cast<int32_t>(lround(args.NewValue())));
+    updateAudioUiAndPlaybackState();
     updateWindowTitle();
     refreshStatusInfoSection();
 }
@@ -1115,6 +1185,10 @@ void MainWindow::seekTimelineToCanvasX(double pointerX){
 
 void MainWindow::ensureTimelineCursorVisible(double cursorLeft){
     const auto scrollViewer{TimelineScrollViewer()};
+    if(!scrollViewer || !TimelineCanvas()){
+        return;
+    }
+
     const auto currentOffset{scrollViewer.HorizontalOffset()};
     const auto viewportWidth{scrollViewer.ViewportWidth()};
 
@@ -1137,6 +1211,10 @@ void MainWindow::ensureTimelineCursorVisible(double cursorLeft){
 }
 
 void MainWindow::ensureCurrentTimelineCursorVisible(){
+    if(!TimelineCursor() || !TimelineScrollViewer() || !TimelineCanvas()){
+        return;
+    }
+
     const auto cursorLeft{Controls::Canvas::GetLeft(TimelineCursor())};
     ensureTimelineCursorVisible(cursorLeft);
     syncTimelineHorizontalScrollBar();
@@ -1535,6 +1613,10 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         return true;
     case VirtualKey::F11:
         (void)toggleSeparatePreviewFullscreen();
+        args.Handled(true);
+        return true;
+    case VirtualKey::F7:
+        (void)exportVideoMenuItem_Click(Control{}, REArgs{});
         args.Handled(true);
         return true;
     default:
@@ -2016,14 +2098,14 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
         L"• Preview window: Tools → Preview in separate window opens a movable second window; use F11 to toggle full-screen.\n"
         L"• Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
         L"• Project files: Save and reopen .llvc projects with timeline state.\n"
-        L"• Export: Render a lossless cut based on your selected ranges (auto-adjusting to proper cut points if necessary).\n\n"
+        L"• Export: Render a lossless cut based on your selected ranges (auto-adjusting to proper cut points if necessary). Use F7 as a shortcut.\n\n"
         L"Usage workflow:\n"
         L"1) File → Load video (or drag and drop a supported file).\n"
         L"2) Right-click to place boundary markers around scenes you may want to remove.\n"
         L"3) Reevaluate cut markers to land on proper RAP frames.\n"
         L"4) Ctrl+Left-Click scene blocks to toggle which scenes are cut (dark = cut, clear = kept).\n"
         L"5) Optionally adjust Keep audio and Audio cross-fade settings, then preview playback.\n"
-        L"6) Use File → Save project, then File → Export video to generate the final cut.");
+        L"6) Use File → Save project, then File → Export video (or press F7) to generate the final cut.");
 }
 
 AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
@@ -2337,6 +2419,10 @@ void MainWindow::clearErrorMessage(){
 }
 
 void MainWindow::refreshStatusInfoSection(){
+    if(!InfoText()){
+        return;
+    }
+
     const auto outputDuration100ns{m_prj.outputDuration100ns()};
     wstring text{L"Estimated output: "};
     text += formatTimelineDurationText(outputDuration100ns);
@@ -2353,11 +2439,23 @@ void MainWindow::setOperationInProgress(bool active, bool indeterminate){
         OperationProgressBar().IsIndeterminate(false);
     }
     OperationProgressBar().Visibility(active ? Visibility::Visible : Visibility::Collapsed);
+    CancelExportButton().Visibility((active && m_isExportInProgress) ? Visibility::Visible : Visibility::Collapsed);
+    CancelExportButton().IsEnabled(active && m_isExportInProgress);
 }
 
 void MainWindow::setOperationProgress(double percent){
     OperationProgressBar().IsIndeterminate(false);
     OperationProgressBar().Value(clamp(percent, 0.0, 100.0));
+}
+
+void MainWindow::cancelExportButton_Click(const Control&, const REArgs&){
+    if(!m_isExportInProgress){
+        return;
+    }
+
+    m_cancelExportRequested = true;
+    setStatusMessage(L"Canceling export...");
+    setOperationInProgress(false);
 }
 
 AAction MainWindow::showOptionsDialogAsync(){
@@ -2465,6 +2563,10 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     uint32_t allSamplesIndependent{};
     uint32_t maxKeyFrameSpacing{};
     const auto sourceIsAvi{isAviPath(filePath)};
+    wstring lowerPath{filePath};
+    transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::towlower);
+    const auto sourceIsMp4{lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mp4"};
+    const auto sourceIsMov{lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mov"};
 
     for(DWORD streamIndex{0};; ++streamIndex){
         com_ptr<IMFMediaType> type;
@@ -2534,13 +2636,17 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     }
 
     if(videoStreamIndex != invalidStreamIndex){
-        if(auto bestVideoType{chooseBestNativeVideoMediaType(reader, videoStreamIndex)}){
-            if(sourceIsAvi){
-                bestVideoType = aviNativeH264Type;
-            }
+        vector<GUID> allowedVideoSubtypes;
+        if(sourceIsMp4 || sourceIsMov){
+            allowedVideoSubtypes = {MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_H265};
+        }
+
+        if(auto bestVideoType{sourceIsAvi ? aviNativeH264Type : chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, allowedVideoSubtypes)}){
             (void)reader->SetCurrentMediaType(videoStreamIndex, nullptr, bestVideoType.get());
 
             MFGetAttributeSize(bestVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
+
+            check_hresult(bestVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
             MFGetAttributeRatio(bestVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
             (void)bestVideoType->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
             if(SUCCEEDED(bestVideoType->GetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, &allSamplesIndependent))){
@@ -2549,6 +2655,9 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
             if(SUCCEEDED(bestVideoType->GetUINT32(MF_MT_MAX_KEYFRAME_SPACING, &maxKeyFrameSpacing))){
                 result.maxKeyFrameSpacing = to_wstring(maxKeyFrameSpacing) + L" frames";
             }
+        }else if(sourceIsMp4 || sourceIsMov){
+            result.errorMessage = L"No stream-copy video media type found. Require H.264 or HEVC in MP4/MOV.";
+            return result;
         }
     }
 
@@ -2569,13 +2678,11 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         return result;
     }
 
-    wstring lowerPath{filePath};
-    transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::towlower);
-    if(lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mp4"){
+    if(sourceIsMp4){
         result.container = L"MP4";
-    }else if(lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mov"){
+    }else if(sourceIsMov){
         result.container = L"MOV";
-    }else if(lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".avi"){
+    }else if(sourceIsAvi){
         result.container = L"AVI";
     }else{
         result.errorMessage = L"Container not supported. Only MP4, MOV, and AVI (H.264 only) are allowed";
@@ -2774,6 +2881,9 @@ void MainWindow::applyAudioSettingsToPlayer(){
 
     const auto allowAudio{sourceHasAudio() && m_prj.keepAudio()};
     m_player.IsMuted(!allowAudio);
+    // WinRT MediaPlayer preview volume is 0..1, so preview boost is capped at 100%.
+    // Export path still applies full configured gain above 100%.
+    m_player.Volume(allowAudio ? clamp(m_prj.audioVolumePct() / 100.0, 0.0, 1.0) : 0.0);
 }
 
 void MainWindow::updateAudioUiAndPlaybackState(){
@@ -2794,6 +2904,9 @@ void MainWindow::updateAudioUiAndPlaybackState(){
     KeepAudioCheckBox().IsEnabled(hasAudio && !audioHardDisabled);
     KeepAudioCheckBox().IsChecked(box_value(hasAudio && !audioHardDisabled && m_prj.keepAudio()).as<IReference<bool>>());
     AudioCrossfadeComboBox().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
+    AudioVolumeSlider().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
+    AudioVolumeSlider().Value(static_cast<double>(m_prj.audioVolumePct()));
+    AudioVolumeIconText().Text(audioVolumeGlyph(hasAudio && !audioHardDisabled && m_prj.keepAudio(), m_prj.audioVolumePct()));
     m_isApplyingUndoRedoState = previousGuard;
     applyAudioSettingsToPlayer();
 }

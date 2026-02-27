@@ -35,6 +35,7 @@ struct Project final{
     void setZoom(double v);
     void keepAudio(bool v);
     void audioXfadeMs(int32_t valueMs);
+    void audioVolumePct(int32_t valuePct);
     void frameIndex(const vector<IndexedFrameSample>& v);
     void cutScenes(const vector<uint32_t>& v);
 
@@ -42,6 +43,7 @@ struct Project final{
     inline auto  zoom()         const{ return m_zoom; }
     inline bool  keepAudio()    const{ return m_keepAudio; }
     inline auto  audioXfadeMs() const{ return m_audioCrossfadeMs; }
+    inline auto  audioVolumePct() const{ return m_audioVolumePct; }
     inline auto& frameIndex()   const{ return m_frameIndex; }
     inline auto& selKeyFrames() const{ return m_selectedKeyFrames; }
     inline auto& cutScenes()    const{ return m_cutScenes; }
@@ -72,6 +74,7 @@ private:
     double m_zoom{4};
     bool m_keepAudio{true};
     int32_t m_audioCrossfadeMs{0};
+    int32_t m_audioVolumePct{100};
     vector<IndexedFrameSample> m_frameIndex{};
     vector<uint32_t> m_selectedKeyFrames{};
     vector<uint32_t> m_cutScenes{};
@@ -94,6 +97,7 @@ constexpr auto P_FILE_PATH{L"file_path"};
 constexpr auto P_STORYLINE_ZOOM{L"storyline_zoom"};
 constexpr auto P_KEEP_AUDIO{L"keep_audio"};
 constexpr auto P_AUDIO_CROSSFADE_MS{L"audio_crossfade_ms"};
+constexpr auto P_AUDIO_VOLUME_PCT{L"audio_volume_pct"};
 constexpr auto P_CUT_MARKERS{L"cut_markers"};
 constexpr auto P_CUT_SCENES{L"cut_scenes"};
 
@@ -102,6 +106,7 @@ struct LoadedProjectData{
     wstring zoomLevel;
     wstring keepAudio;
     wstring audioXfadeMs;
+    wstring audioVolumePct;
     wstring markers;
     wstring cutScenes;
 };
@@ -130,6 +135,7 @@ LoadedProjectData _parseProjectLines(const Windows::Foundation::Collections::IVe
         if(key == P_CUT_SCENES)         { data.cutScenes      = value; } else
         if(key == P_KEEP_AUDIO)         { data.keepAudio      = value; } else
         if(key == P_AUDIO_CROSSFADE_MS) { data.audioXfadeMs   = value; }
+        if(key == P_AUDIO_VOLUME_PCT)   { data.audioVolumePct = value; }
     }
 
     return data;
@@ -149,6 +155,7 @@ Project::AAction Project::open(const SFile& file){
     m_loadedFile = co_await StorageFile::GetFileFromPathAsync(projectData.loadedFilePath);
     m_keepAudio = projectData.keepAudio != L"0";
     try{ audioXfadeMs(stoi(projectData.audioXfadeMs)); } catch(...){}
+    try{ audioVolumePct(stoi(projectData.audioVolumePct)); } catch(...){}
     try{ m_zoom = stod(projectData.zoomLevel); } catch(...){}
 
     m_frameIndex = std::move(_parseKeyframeVector(projectData.markers));
@@ -177,6 +184,7 @@ Project::AAction Project::save(const SFile& file){
     lines.emplace_back(wstring(P_STORYLINE_ZOOM) + L"=" + to_wstring(m_zoom));
     lines.emplace_back(wstring(P_KEEP_AUDIO) + L"=" + wstring(m_keepAudio ? L"1" : L"0"));
     lines.emplace_back(wstring(P_AUDIO_CROSSFADE_MS) + L"=" + to_wstring(m_audioCrossfadeMs));
+    lines.emplace_back(wstring(P_AUDIO_VOLUME_PCT) + L"=" + to_wstring(m_audioVolumePct));
     lines.emplace_back(wstring(P_CUT_MARKERS) + L"=" + _serializeCutMarkers());
     lines.emplace_back(wstring(P_CUT_SCENES) + L"=" + serializeIndexList(m_cutScenes));
 
@@ -206,7 +214,7 @@ void Project::keepAudio(bool v){
     m_keepAudio = v;
 }
 
-constexpr array<int32_t, 8> AUDIO_CROSSFADE_PRESETS_MS{{0, 50, 100, 250, 500, 750, 1000}};
+constexpr array<int32_t, 10> AUDIO_CROSSFADE_PRESETS_MS{{0, 50, 100, 250, 500, 750, 1000, 2000, 5000}};
 
 void Project::audioXfadeMs(int32_t valueMs){
     const auto nearest{min_element(AUDIO_CROSSFADE_PRESETS_MS.begin(), AUDIO_CROSSFADE_PRESETS_MS.end(), [valueMs](auto a, auto b){
@@ -215,6 +223,13 @@ void Project::audioXfadeMs(int32_t valueMs){
     const auto v{nearest == AUDIO_CROSSFADE_PRESETS_MS.end() ? 0 : *nearest};
     m_isDirty = (m_isDirty || m_audioCrossfadeMs != v);
     m_audioCrossfadeMs = v;
+}
+
+void Project::audioVolumePct(int32_t valuePct){
+    const auto clamped{clamp(valuePct, 0, 250)};
+    const auto rounded{(clamped / 5) * 5};
+    m_isDirty = (m_isDirty || m_audioVolumePct != rounded);
+    m_audioVolumePct = rounded;
 }
 
 void Project::frameIndex(const vector<IndexedFrameSample>& v){
@@ -549,13 +564,15 @@ std::optional<size_t> Project::_sceneIndexAtTime100ns(int64_t time100ns) const{
 
 wstring Project::_buildProjectSnapshot() const{
     const auto snapshot{std::format(
-        L"{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n",
+        L"{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n",
         P_STORYLINE_ZOOM,
         m_zoom,
         P_KEEP_AUDIO,
         m_keepAudio ? 1 : 0,
         P_AUDIO_CROSSFADE_MS,
         m_audioCrossfadeMs,
+        P_AUDIO_VOLUME_PCT,
+        m_audioVolumePct,
         P_CUT_MARKERS,
         _serializeCutMarkers(),
         P_CUT_SCENES,

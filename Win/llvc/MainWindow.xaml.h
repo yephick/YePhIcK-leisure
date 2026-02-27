@@ -3,6 +3,7 @@
 #include "MainWindow.g.h"
 
 #include <cstdint>
+#include <atomic>
 #include <functional>
 #include <optional>
 #include <string>
@@ -78,6 +79,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void timelineZoomSlider_PointerWheelChanged(const Control& sender, const PREArgs& args);
     void keepAudioCheckBox_Changed(const Control& sender, const REArgs& args);
     void audioCrossfadeComboBox_SelectionChanged(const Control& sender, const Control& args);
+    void audioVolumeSlider_ValueChanged(const Control& sender, const RBVArgs& args);
     void timelineHorizontalScrollBar_ValueChanged(const Control& sender, const RBVArgs& args);
     void timelineScrollViewer_ViewChanged(const Control& sender, const SVVCArgs& args);
     void timelineScrollViewer_SizeChanged(const Control& sender, const SCArgs& args);
@@ -124,6 +126,9 @@ struct MainWindow: MainWindowT<MainWindow>{
     void onWindowActivated(const Control& sender, const WAVArgs& args);
     void onNaturalDurationChanged(const MPSession& sender, const Control& args);
     void onPositionTimerTick(const Control& sender, const Control& args);
+    void cancelExportButton_Click(const Control& sender, const REArgs& args);
+    bool isExportInProgressForClosePrompt() const;
+    void requestExportCancel();
 
 private:
     MP m_player{nullptr};
@@ -139,6 +144,7 @@ private:
     hstring m_projectPath{};
     bool m_isClosing{false};
     bool m_isExportInProgress{false};
+    std::atomic_bool m_cancelExportRequested{false};
     bool m_resumeTimelineRenderAfterExport{false};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};
@@ -170,6 +176,7 @@ private:
         vector<uint32_t> cutScenes{};
         bool keepAudio{true};
         int32_t audioCrossfadeMs{0};
+        int32_t audioVolumePct{100};
     };
     vector<UndoRedoState> m_undoStack{};
     vector<UndoRedoState> m_redoStack{};
