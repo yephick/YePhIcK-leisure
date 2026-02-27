@@ -76,6 +76,7 @@ using SCArgs = MainWindow::SCArgs;
 using KRArgs = MainWindow::KRArgs;
 using DEArgs = MainWindow::DEArgs;
 using WEArgs = MainWindow::WEArgs;
+using WAVArgs = MainWindow::WAVArgs;
 using MPSession = MainWindow::MPSession;
 using SFile = MainWindow::SFile;
 using FState = MainWindow::FState;
@@ -529,6 +530,7 @@ MainWindow::MainWindow(){
     restoreWindowPlacement();
     loadAppSettings();
     Closed({this, &MainWindow::onClosed});
+    m_mainWindowActivatedRevoker = Activated(auto_revoke, {this, &MainWindow::onWindowActivated});
     refreshRecentVideosMenu();
     refreshRecentProjectsMenu();
     updateWindowTitle();
@@ -668,6 +670,7 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
     }
 
     m_naturalDurationChangedRevoker.revoke();
+    m_mainWindowActivatedRevoker.revoke();
 
     if(m_separatePreviewWindow){
         m_separatePreviewClosedRevoker.revoke();
@@ -677,6 +680,19 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
 
     saveWindowPlacement();
     saveAppSettings();
+}
+
+void MainWindow::onWindowActivated(const Control&, const WAVArgs& args){
+    if(args.WindowActivationState() == WindowActivationState::Deactivated){
+        return;
+    }
+
+    const auto weakThis{get_weak()};
+    DispatcherQueue().TryEnqueue([weakThis]{
+        if(const auto self{weakThis.get()}){
+            self->tryFocusTimelineCanvas(FocusState::Programmatic);
+        }
+    });
 }
 
 void MainWindow::startButton_Click(const Control&, const REArgs&){

@@ -59,6 +59,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     using KRArgs = winrt::Microsoft::UI::Xaml::Input::KeyRoutedEventArgs;
     using DEArgs = winrt::Microsoft::UI::Xaml::DragEventArgs;
     using WEArgs = winrt::Microsoft::UI::Xaml::WindowEventArgs;
+    using WAVArgs = winrt::Microsoft::UI::Xaml::WindowActivatedEventArgs;
     using MPSession = winrt::Windows::Media::Playback::MediaPlaybackSession;
     using MP = winrt::Windows::Media::Playback::MediaPlayer;
     using SFile = winrt::Windows::Storage::StorageFile;
@@ -118,6 +119,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void window_DragOver(const Control& sender, const DEArgs& args);
     AAction window_Drop(const Control& sender, const DEArgs& args);
     void onClosed(const Control& sender, const WEArgs& args);
+    void onWindowActivated(const Control& sender, const WAVArgs& args);
     void onNaturalDurationChanged(const MPSession& sender, const Control& args);
     void onPositionTimerTick(const Control& sender, const Control& args);
 
@@ -142,6 +144,7 @@ private:
     double m_timelineDragStartX{0};
     double m_timelineDragStartOffset{0};
     bool m_isApplyingUndoRedoState{false};
+    winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
     bool m_isSeparatePreviewWindowOpen{false};
     bool m_isSeparatePreviewFullscreen{false};
     RECT m_separatePreviewRestoreRect{0, 0, 0, 0};
