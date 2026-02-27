@@ -27,7 +27,7 @@
                 <MenuFlyoutItem Text="Close project" Click="closeProjectMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutItem Text="Load video..." Click="loadVideoMenuItem_Click"/>
-                <MenuFlyoutItem Text="Export video..." Click="exportVideoMenuItem_Click"/>
+                <MenuFlyoutItem Text="Export video...\tF7" Click="exportVideoMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutSubItem x:Name="RecentProjectsMenu" Text="Recent projects"/>
                 <MenuFlyoutSubItem x:Name="RecentVideosMenu" Text="Recent videos"/>
