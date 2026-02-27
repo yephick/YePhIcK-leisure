@@ -152,7 +152,14 @@ Project::AAction Project::open(const SFile& file){
     const auto lines{co_await FileIO::ReadLinesAsync(file)};
     auto projectData{_parseProjectLines(lines)};
 
-    m_loadedFile = co_await StorageFile::GetFileFromPathAsync(projectData.loadedFilePath);
+    m_loadedFile = nullptr;
+    if(!projectData.loadedFilePath.empty()){
+        try{
+            m_loadedFile = co_await StorageFile::GetFileFromPathAsync(projectData.loadedFilePath);
+        }catch(...){
+            m_loadedFile = nullptr;
+        }
+    }
     m_keepAudio = projectData.keepAudio != L"0";
     try{ audioXfadeMs(stoi(projectData.audioXfadeMs)); } catch(...){}
     try{ audioVolumePct(stoi(projectData.audioVolumePct)); } catch(...){}
