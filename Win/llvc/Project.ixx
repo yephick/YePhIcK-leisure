@@ -226,7 +226,7 @@ void Project::audioXfadeMs(int32_t valueMs){
 }
 
 void Project::audioVolumePct(int32_t valuePct){
-    const auto clamped{clamp(valuePct, 0, 175)};
+    const auto clamped{clamp(valuePct, 0, 250)};
     const auto rounded{(clamped / 5) * 5};
     m_isDirty = (m_isDirty || m_audioVolumePct != rounded);
     m_audioVolumePct = rounded;

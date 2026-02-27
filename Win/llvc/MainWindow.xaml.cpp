@@ -2873,7 +2873,7 @@ void MainWindow::applyAudioSettingsToPlayer(){
 
     const auto allowAudio{sourceHasAudio() && m_prj.keepAudio()};
     m_player.IsMuted(!allowAudio);
-    m_player.Volume(allowAudio ? clamp(m_prj.audioVolumePct() / 100.0, 0.0, 1.0) : 0.0);
+    m_player.Volume(allowAudio ? clamp(m_prj.audioVolumePct() / 100.0, 0.0, 2.5) : 0.0);
 }
 
 void MainWindow::updateAudioUiAndPlaybackState(){
