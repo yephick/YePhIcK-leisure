@@ -1465,6 +1465,16 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
             args.Handled(true);
             return true;
         }
+        if(args.Key() == VirtualKey::Add || args.Key() == VirtualKey::OemPlus){
+            adjustTimelineZoomBy(1);
+            args.Handled(true);
+            return true;
+        }
+        if(args.Key() == VirtualKey::Subtract || args.Key() == VirtualKey::OemMinus){
+            adjustTimelineZoomBy(-1);
+            args.Handled(true);
+            return true;
+        }
         if(args.Key() == VirtualKey::R){
             reevaluateClearCutMarkersButton_Click(nullptr, {});
             args.Handled(true);
@@ -1540,6 +1550,24 @@ void MainWindow::separatePreviewWindowMenuItem_Click(const Control&, const REArg
 
 void MainWindow::toggleSeparatePreviewFullscreenMenuItem_Click(const Control&, const REArgs&){
     (void)toggleSeparatePreviewFullscreen();
+}
+
+void MainWindow::zoomInTimelineMenuItem_Click(const Control&, const REArgs&){
+    adjustTimelineZoomBy(1);
+}
+
+void MainWindow::zoomOutTimelineMenuItem_Click(const Control&, const REArgs&){
+    adjustTimelineZoomBy(-1);
+}
+
+void MainWindow::adjustTimelineZoomBy(int delta){
+    auto slider{TimelineZoomSlider()};
+    if(!slider){
+        return;
+    }
+
+    const auto target{clamp(slider.Value() + delta, slider.Minimum(), slider.Maximum())};
+    slider.Value(target);
 }
 
 bool MainWindow::setSeparatePreviewWindowOpen(bool open){

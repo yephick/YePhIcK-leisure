@@ -113,6 +113,8 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction optionsMenuItem_Click(const Control& sender, const REArgs& args);
     void separatePreviewWindowMenuItem_Click(const Control& sender, const REArgs& args);
     void toggleSeparatePreviewFullscreenMenuItem_Click(const Control& sender, const REArgs& args);
+    void zoomInTimelineMenuItem_Click(const Control& sender, const REArgs& args);
+    void zoomOutTimelineMenuItem_Click(const Control& sender, const REArgs& args);
     AAction toggleCutMarkerAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     AAction markSceneCutAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     AAction markSceneKeptAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
@@ -240,6 +242,7 @@ private:
     void onSeparatePreviewWindowClosed(const Control& sender, const WEArgs& args);
     void onSeparatePreviewWindowKeyDown(const KRArgs& args);
     bool toggleSeparatePreviewFullscreen();
+    void adjustTimelineZoomBy(int delta);
     void saveSeparatePreviewPlacement(HWND previewHwnd);
     void restoreSeparatePreviewPlacement(HWND previewHwnd);
     static TS secondsToTimeSpan(double seconds);
