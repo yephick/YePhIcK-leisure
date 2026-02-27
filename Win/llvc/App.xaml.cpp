@@ -110,7 +110,7 @@ void App::OnActivated(IActivatedEventArgs const& e){
             const auto files{fileArgs.Files()};
             if(files.Size() > 0){
                 if(const auto file{files.GetAt(0).try_as<Windows::Storage::StorageFile>()}){
-                    (void)mainWindow.OpenProjectPath(file.Path());
+                    (void)mainWindow.OpenProjectFile(file);
                 }
             }
         }
