@@ -1443,6 +1443,11 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
             args.Handled(true);
             return true;
         }
+        if(args.Key() == VirtualKey::R){
+            reevaluateClearCutMarkersButton_Click(nullptr, {});
+            args.Handled(true);
+            return true;
+        }
     }
 
     if(focusOnMenu || focusInDialog){

@@ -41,15 +41,18 @@
                 <MenuFlyoutItem Text="Undo	Ctrl+Z" Click="undoMenuItem_Click"/>
                 <MenuFlyoutItem Text="Redo	Ctrl+Y" Click="redoMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
+                <MenuFlyoutItem Text="Reevaluate clear cut markers	Ctrl+R" Click="reevaluateClearCutMarkersButton_Click"/>
+                <MenuFlyoutSeparator/>
                 <MenuFlyoutItem Text="Toggle cut mark	Ctrl+M" Click="toggleCutMarkerAtCursorMenuItem_Click"/>
                 <MenuFlyoutItem Text="Mark scene cut	Delete" Click="markSceneCutAtCursorMenuItem_Click"/>
                 <MenuFlyoutItem Text="Mark scene kept	Insert" Click="markSceneKeptAtCursorMenuItem_Click"/>
             </controls:MenuBarItem>
+            <controls:MenuBarItem Title="View">
+                <ToggleMenuFlyoutItem x:Name="SeparatePreviewWindowMenuItem" Text="Preview in separate window" Click="separatePreviewWindowMenuItem_Click"/>
+                <MenuFlyoutItem Text="Toggle preview full-screen	F11" Click="toggleSeparatePreviewFullscreenMenuItem_Click"/>
+            </controls:MenuBarItem>
 
             <controls:MenuBarItem Title="Tools">
-                <ToggleMenuFlyoutItem x:Name="SeparatePreviewWindowMenuItem" Text="Preview in separate window" Click="separatePreviewWindowMenuItem_Click"/>
-                <MenuFlyoutItem Text="Toggle preview full-screen\tF11" Click="toggleSeparatePreviewFullscreenMenuItem_Click"/>
-                <MenuFlyoutSeparator/>
                 <MenuFlyoutItem Text="Options" Click="optionsMenuItem_Click"/>
             </controls:MenuBarItem>
 
