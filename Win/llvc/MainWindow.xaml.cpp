@@ -811,7 +811,6 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
     if(m_prj.videoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }
-    ensureCurrentTimelineCursorVisible();
     updateWindowTitle();
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
@@ -1136,12 +1135,6 @@ void MainWindow::ensureTimelineCursorVisible(double cursorLeft){
     }
 }
 
-void MainWindow::ensureCurrentTimelineCursorVisible(){
-    const auto cursorLeft{Controls::Canvas::GetLeft(TimelineCursor())};
-    ensureTimelineCursorVisible(cursorLeft);
-    syncTimelineHorizontalScrollBar();
-}
-
 void MainWindow::renderTimelineTicks(){
     TimelineTickCanvas().Children().Clear();
 
@@ -1343,7 +1336,9 @@ void MainWindow::stepByFrame(int delta){
     const auto target {clamp(current + (direction * frameStep100ns), 0LL, duration100ns)};
     m_player.PlaybackSession().Position(TimeSpan{target});
     updateTimelineCursorFromPlayback();
-    ensureCurrentTimelineCursorVisible();
+    const auto cursorLeft{Controls::Canvas::GetLeft(TimelineCursor())};
+    ensureTimelineCursorVisible(cursorLeft);
+    syncTimelineHorizontalScrollBar();
 }
 
 
@@ -1395,7 +1390,9 @@ bool MainWindow::moveCursorToMarker(int direction){
     if(m_player){
         m_player.PlaybackSession().Position(TimeSpan{target100ns});
         updateTimelineCursorFromPlayback();
-        ensureCurrentTimelineCursorVisible();
+        const auto cursorLeft{Controls::Canvas::GetLeft(TimelineCursor())};
+        ensureTimelineCursorVisible(cursorLeft);
+        syncTimelineHorizontalScrollBar();
         return true;
     }
 
@@ -2919,11 +2916,10 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         }
 
         updateTimelineCursorFromPlayback();
-        if(!renderDuringExport){
-            ensureCurrentTimelineCursorVisible();
-        }else{
-            syncTimelineHorizontalScrollBar();
+        if(!renderDuringExport && m_player && m_player.PlaybackSession().PlaybackState() == MediaPlaybackState::Playing){
+            ensureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
         }
+        syncTimelineHorizontalScrollBar();
 
         if(!renderDuringExport){
             wstring status{L"Loaded: "};
