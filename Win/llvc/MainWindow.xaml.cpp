@@ -2873,7 +2873,9 @@ void MainWindow::applyAudioSettingsToPlayer(){
 
     const auto allowAudio{sourceHasAudio() && m_prj.keepAudio()};
     m_player.IsMuted(!allowAudio);
-    m_player.Volume(allowAudio ? clamp(m_prj.audioVolumePct() / 100.0, 0.0, 2.5) : 0.0);
+    // WinRT MediaPlayer preview volume is 0..1, so preview boost is capped at 100%.
+    // Export path still applies full configured gain above 100%.
+    m_player.Volume(allowAudio ? clamp(m_prj.audioVolumePct() / 100.0, 0.0, 1.0) : 0.0);
 }
 
 void MainWindow::updateAudioUiAndPlaybackState(){
