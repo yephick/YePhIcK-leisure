@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -73,6 +74,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void stopButton_Click(const Control& sender, const REArgs& args);
     void reevaluateClearCutMarkersButton_Click(const Control& sender, const REArgs& args);
     void timelineZoomSlider_ValueChanged(const Control& sender, const RBVArgs& args);
+    void timelineZoomSlider_PointerWheelChanged(const Control& sender, const PREArgs& args);
     void keepAudioCheckBox_Changed(const Control& sender, const REArgs& args);
     void audioCrossfadeComboBox_SelectionChanged(const Control& sender, const Control& args);
     void timelineHorizontalScrollBar_ValueChanged(const Control& sender, const RBVArgs& args);
@@ -180,9 +182,10 @@ private:
     void seekTimelineToCanvasX(double pointerX);
     void renderKeyframeTicks();
     void renderCutOverlays();
-    bool toggleSelectedKeyframeAtCanvasX(double pointerX);
-    bool toggleCutBlockAtCanvasX(double pointerX);
-    bool setCutBlockAtCanvasX(double pointerX, bool cutScene);
+    std::optional<int64_t> timelinePointToTime100ns(double pointerX, double width) const;
+    bool toggleSelectedKeyframeAtTime100ns(int64_t time100ns);
+    bool toggleCutBlockAtTime100ns(int64_t time100ns);
+    bool setCutBlockAtTime100ns(int64_t time100ns, bool cutScene);
     bool toggleCutMarkerAtCursor();
     bool markSceneAtCursor(bool cutScene);
     bool trySkipCurrentCutDuringPlayback();

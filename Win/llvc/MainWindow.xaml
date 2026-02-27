@@ -90,17 +90,17 @@
                     <ScrollViewer Margin="30,0,0,0" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" IsTabStop="False">
                         <StackPanel Spacing="4" IsTabStop="False">
                             <TextBlock Text="Quick actions" FontWeight="SemiBold"/>
-                            <TextBlock Text="Play/pause: Space key" TextWrapping="Wrap"/>
-                            <TextBlock Text="Frame back: Left key" TextWrapping="Wrap"/>
-                            <TextBlock Text="Frame forward: Right key" TextWrapping="Wrap"/>
-                            <TextBlock Text="Toggle mark: Ctrl+M" TextWrapping="Wrap"/>
-                            <TextBlock Text="Scene cut: Delete key" TextWrapping="Wrap"/>
-                            <TextBlock Text="Scene kept: Insert key" TextWrapping="Wrap"/>
-                            <TextBlock Text="Seek timeline: drag cursor"/>
-                            <TextBlock Text="Toggle mark: right-click"/>
-                            <TextBlock Text="Toggle scene: Ctrl+click" TextWrapping="Wrap"/>
-                            <TextBlock Text="Seek point: tick click"/>
-                            <TextBlock Text="Load video: file drop"/>
+                            <TextBlock Text="Spacebar - play/pause video" TextWrapping="Wrap"/>
+                            <TextBlock Text="Left Arrow - previous frame" TextWrapping="Wrap"/>
+                            <TextBlock Text="Right Arrow - next frame" TextWrapping="Wrap"/>
+                            <TextBlock Text="Ctrl+M - toggle cut mark" TextWrapping="Wrap"/>
+                            <TextBlock Text="Delete - mark scene cut" TextWrapping="Wrap"/>
+                            <TextBlock Text="Insert - mark scene kept" TextWrapping="Wrap"/>
+                            <TextBlock Text="Drag cursor - seek timeline"/>
+                            <TextBlock Text="Right-click - toggle mark"/>
+                            <TextBlock Text="Ctrl+click - toggle scene" TextWrapping="Wrap"/>
+                            <TextBlock Text="Tick click - seek point"/>
+                            <TextBlock Text="File drop - load video"/>
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>
@@ -136,7 +136,7 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <Button x:Name="ReevaluateClearCutMarkersButton" Content="⟳" Width="34" IsTabStop="False" Click="reevaluateClearCutMarkersButton_Click" ToolTipService.ToolTip="Reevaluate clear cut markers"/>
                     <TextBlock Text="Zoom" VerticalAlignment="Center"/>
-                    <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="24" Value="4" SmallChange="1" LargeChange="4" ValueChanged="timelineZoomSlider_ValueChanged"/>
+                    <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="24" Value="4" SmallChange="1" LargeChange="4" ValueChanged="timelineZoomSlider_ValueChanged" PointerWheelChanged="timelineZoomSlider_PointerWheelChanged"/>
                 </StackPanel>
             </Grid>
 

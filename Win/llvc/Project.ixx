@@ -52,14 +52,15 @@ struct Project final{
     void refreshSelectedMarkers();
     void remapCutScenesAfterMarkerRemoval(uint32_t removePos);
     void remapCutScenesAfterMarkerInsertion(uint32_t insertPos);
-    bool toggleSelectedKeyframeAtCanvasX(double pointerX, double width, double tlDurationSeconds, double fps);
-    bool toggleCutBlockAtCanvasX(double pointerX, double width, double tlDurationSeconds);
-    bool setCutBlockAtCanvasX(double pointerX, double width, double tlDurationSeconds, bool cutScene);
+    bool toggleSelectedKeyframeAtTime100ns(int64_t time100ns, int64_t totalDuration100ns, double fps);
+    bool toggleCutBlockAtTime100ns(int64_t time100ns, int64_t totalDuration100ns);
+    bool setCutBlockAtTime100ns(int64_t time100ns, int64_t totalDuration100ns, bool cutScene);
 
 private:
     wstring _buildProjectSnapshot() const;
     wstring _serializeCutMarkers() const;
     static vector<IndexedFrameSample> _parseKeyframeVector(const wstring& text);
+    optional<size_t> _sceneIndexAtTime100ns(int64_t time100ns, int64_t totalDuration100ns) const;
 
 private:
     // these are persisted on disk
@@ -414,20 +415,19 @@ void Project::remapCutScenesAfterMarkerInsertion(uint32_t insertPos){
     m_cutScenes = std::move(updatedCuts);
 }
 
-bool Project::toggleSelectedKeyframeAtCanvasX(double pointerX, double width, double tlDurationSeconds, double fps){
-    if(tlDurationSeconds <= 0 || width <= 0){
+bool Project::toggleSelectedKeyframeAtTime100ns(int64_t time100ns, int64_t totalDuration100ns, double fps){
+    if(totalDuration100ns <= 0){
         return false;
     }
 
-    constexpr auto hitTolerancePx{4.0};
-    const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (tlDurationSeconds * 10'000'000.0))};
+    constexpr auto hitTolerance100ns{50'000};
+    const auto clicked100ns{clamp<int64_t>(time100ns, 0, totalDuration100ns)};
 
     auto nearestIndex{m_frameIndex.size()};
-    auto nearestDistance{hitTolerancePx + 1.0};
+    auto nearestDistance{hitTolerance100ns + 1};
     for(size_t i{0}; i < m_frameIndex.size(); ++i){
-        const auto x{clamp((static_cast<double>(m_frameIndex[i].time100ns) / (tlDurationSeconds * 10'000'000.0)) * width, 0.0, width)};
-        const auto distance{fabs(pointerX - x)};
-        if(distance <= hitTolerancePx && distance < nearestDistance){
+        const auto distance{llabs(m_frameIndex[i].time100ns - clicked100ns)};
+        if(distance <= hitTolerance100ns && distance < nearestDistance){
             nearestDistance = distance;
             nearestIndex = i;
         }
@@ -454,28 +454,15 @@ bool Project::toggleSelectedKeyframeAtCanvasX(double pointerX, double width, dou
     return true;
 }
 
-bool Project::toggleCutBlockAtCanvasX(double pointerX, double width, double tlDurationSeconds){
-    if(tlDurationSeconds <= 0 || width <= 0){
+bool Project::toggleCutBlockAtTime100ns(int64_t time100ns, int64_t totalDuration100ns){
+    const auto sceneIndex{_sceneIndexAtTime100ns(time100ns, totalDuration100ns)};
+    if(!sceneIndex){
         return false;
     }
 
-    const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (tlDurationSeconds * 10'000'000.0))};
-    const auto boundaries{buildSceneBoundaries100ns(static_cast<int64_t>(tlDurationSeconds * 10'000'000.0))};
-    if(boundaries.size() < 2){
-        return false;
-    }
-
-    auto sceneIndex{boundaries.size() - 2};
-    for(size_t i{0}; i + 1 < boundaries.size(); ++i){
-        if(clicked100ns < boundaries[i + 1]){
-            sceneIndex = i;
-            break;
-        }
-    }
-
-    const auto it{find(m_cutScenes.begin(), m_cutScenes.end(), sceneIndex)};
+    const auto it{find(m_cutScenes.begin(), m_cutScenes.end(), *sceneIndex)};
     if(it == m_cutScenes.end()){
-        m_cutScenes.push_back(static_cast<uint32_t>(sceneIndex));
+        m_cutScenes.push_back(static_cast<uint32_t>(*sceneIndex));
         sort(m_cutScenes.begin(), m_cutScenes.end());
     }else{
         m_cutScenes.erase(it);
@@ -484,15 +471,35 @@ bool Project::toggleCutBlockAtCanvasX(double pointerX, double width, double tlDu
     return true;
 }
 
-bool Project::setCutBlockAtCanvasX(double pointerX, double width, double tlDurationSeconds, bool cutScene){
-    if(tlDurationSeconds <= 0 || width <= 0){
+bool Project::setCutBlockAtTime100ns(int64_t time100ns, int64_t totalDuration100ns, bool cutScene){
+    const auto sceneIndex{_sceneIndexAtTime100ns(time100ns, totalDuration100ns)};
+    if(!sceneIndex){
         return false;
     }
 
-    const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (tlDurationSeconds * 10'000'000.0))};
-    const auto boundaries{buildSceneBoundaries100ns(static_cast<int64_t>(tlDurationSeconds * 10'000'000.0))};
+    const auto it{find(m_cutScenes.begin(), m_cutScenes.end(), *sceneIndex)};
+    if(cutScene){
+        if(it == m_cutScenes.end()){
+            m_cutScenes.push_back(static_cast<uint32_t>(*sceneIndex));
+            sort(m_cutScenes.begin(), m_cutScenes.end());
+        }
+    } else if(it != m_cutScenes.end()){
+        m_cutScenes.erase(it);
+    }
+
+    return true;
+}
+
+
+optional<size_t> Project::_sceneIndexAtTime100ns(int64_t time100ns, int64_t totalDuration100ns) const{
+    if(totalDuration100ns <= 0){
+        return nullopt;
+    }
+
+    const auto clicked100ns{clamp<int64_t>(time100ns, 0, totalDuration100ns)};
+    const auto boundaries{buildSceneBoundaries100ns(totalDuration100ns)};
     if(boundaries.size() < 2){
-        return false;
+        return nullopt;
     }
 
     auto sceneIndex{boundaries.size() - 2};
@@ -503,17 +510,7 @@ bool Project::setCutBlockAtCanvasX(double pointerX, double width, double tlDurat
         }
     }
 
-    const auto it{find(m_cutScenes.begin(), m_cutScenes.end(), sceneIndex)};
-    if(cutScene){
-        if(it == m_cutScenes.end()){
-            m_cutScenes.push_back(static_cast<uint32_t>(sceneIndex));
-            sort(m_cutScenes.begin(), m_cutScenes.end());
-        }
-    } else if(it != m_cutScenes.end()){
-        m_cutScenes.erase(it);
-    }
-
-    return true;
+    return sceneIndex;
 }
 
 wstring Project::_buildProjectSnapshot() const{

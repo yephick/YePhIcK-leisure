@@ -786,6 +786,20 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
+void MainWindow::timelineZoomSlider_PointerWheelChanged(const Control&, const PREArgs& args){
+    const auto point{args.GetCurrentPoint(TimelineZoomSlider())};
+    const auto delta{point.Properties().MouseWheelDelta()};
+    if(delta == 0){
+        return;
+    }
+
+    auto slider{TimelineZoomSlider()};
+    const auto direction{delta > 0 ? 1.0 : -1.0};
+    const auto step{max(0.1, slider.SmallChange())};
+    slider.Value(clamp(slider.Value() + (direction * step), slider.Minimum(), slider.Maximum()));
+    args.Handled(true);
+}
+
 void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
     if(m_isApplyingUndoRedoState){
         return;
@@ -888,9 +902,20 @@ void MainWindow::timelineCanvas_PointerMoved(const Control&, const PREArgs& e){
     e.Handled(true);
 }
 
-bool MainWindow::toggleSelectedKeyframeAtCanvasX(double pointerX){
+optional<int64_t> MainWindow::timelinePointToTime100ns(double pointerX, double width) const{
+    if(m_timelineDurationSeconds <= 0 || width <= 0){
+        return nullopt;
+    }
+
+    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
+    const auto clampedX{clamp(pointerX, 0.0, width)};
+    return static_cast<int64_t>((clampedX / width) * duration100ns);
+}
+
+bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
     (void)pushUndoStateIfChanged();
-    if(!m_prj.toggleSelectedKeyframeAtCanvasX(pointerX, TimelineTickCanvas().Width(), m_timelineDurationSeconds, m_mediaInfo.frameRate)){
+    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
+    if(!m_prj.toggleSelectedKeyframeAtTime100ns(time100ns, duration100ns, m_mediaInfo.frameRate)){
         return false;
     }
 
@@ -905,7 +930,7 @@ bool MainWindow::toggleSelectedKeyframeAtCanvasX(double pointerX){
 void MainWindow::timelineCanvas_PointerReleased(const Control&, const PREArgs& e){
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
     if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased){
-        if(toggleSelectedKeyframeAtCanvasX(point.Position().X)){
+        if(const auto time100ns{timelinePointToTime100ns(point.Position().X, TimelineCanvas().Width())}; time100ns && toggleSelectedKeyframeAtTime100ns(*time100ns)){
             e.Handled(true);
             return;
         }
@@ -922,7 +947,9 @@ void MainWindow::timelineCanvas_PointerReleased(const Control&, const PREArgs& e
 
     if(!dragged){
         if(isControlModifierActive(e.KeyModifiers())){
-            toggleCutBlockAtCanvasX(point.Position().X);
+            if(const auto time100ns{timelinePointToTime100ns(point.Position().X, TimelineCanvas().Width())}){
+                toggleCutBlockAtTime100ns(*time100ns);
+            }
         }else{
             seekTimelineToCanvasX(point.Position().X);
         }
@@ -951,15 +978,17 @@ void MainWindow::timelineCanvas_Loaded(const Control&, const REArgs&){
 
 void MainWindow::timelineTickCanvas_PointerReleased(const Control&, const PREArgs& e){
     const auto point{e.GetCurrentPoint(TimelineTickCanvas())};
-    if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased && toggleSelectedKeyframeAtCanvasX(point.Position().X)){
-        tryFocusTimelineCanvas(FocusState::Programmatic);
-        e.Handled(true);
-        return;
+    if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased){
+        if(const auto time100ns{timelinePointToTime100ns(point.Position().X, TimelineTickCanvas().Width())}; time100ns && toggleSelectedKeyframeAtTime100ns(*time100ns)){
+            tryFocusTimelineCanvas(FocusState::Programmatic);
+            e.Handled(true);
+            return;
+        }
     }
 
     if(point.Properties().PointerUpdateKind() == PointerUpdateKind::LeftButtonReleased){
         if(isControlModifierActive(e.KeyModifiers())){
-            if(toggleCutBlockAtCanvasX(point.Position().X)){
+            if(const auto time100ns{timelinePointToTime100ns(point.Position().X, TimelineTickCanvas().Width())}; time100ns && toggleCutBlockAtTime100ns(*time100ns)){
                 tryFocusTimelineCanvas(FocusState::Programmatic);
                 e.Handled(true);
                 return;
@@ -1181,9 +1210,10 @@ void MainWindow::renderCutOverlays(){
 }
 
 
-bool MainWindow::toggleCutBlockAtCanvasX(double pointerX){
+bool MainWindow::toggleCutBlockAtTime100ns(int64_t time100ns){
     (void)pushUndoStateIfChanged();
-    if(!m_prj.toggleCutBlockAtCanvasX(pointerX, TimelineCanvas().Width(), m_timelineDurationSeconds)){
+    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
+    if(!m_prj.toggleCutBlockAtTime100ns(time100ns, duration100ns)){
         return false;
     }
 
@@ -1192,9 +1222,10 @@ bool MainWindow::toggleCutBlockAtCanvasX(double pointerX){
     return true;
 }
 
-bool MainWindow::setCutBlockAtCanvasX(double pointerX, bool cutScene){
+bool MainWindow::setCutBlockAtTime100ns(int64_t time100ns, bool cutScene){
     (void)pushUndoStateIfChanged();
-    if(!m_prj.setCutBlockAtCanvasX(pointerX, TimelineCanvas().Width(), m_timelineDurationSeconds, cutScene)){
+    const auto duration100ns{static_cast<int64_t>(m_timelineDurationSeconds * 10'000'000.0)};
+    if(!m_prj.setCutBlockAtTime100ns(time100ns, duration100ns, cutScene)){
         return false;
     }
 
@@ -1204,11 +1235,17 @@ bool MainWindow::setCutBlockAtCanvasX(double pointerX, bool cutScene){
 }
 
 bool MainWindow::toggleCutMarkerAtCursor(){
-    return toggleSelectedKeyframeAtCanvasX(Controls::Canvas::GetLeft(TimelineCursor()));
+    if(const auto time100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineTickCanvas().Width())}){
+        return toggleSelectedKeyframeAtTime100ns(*time100ns);
+    }
+    return false;
 }
 
 bool MainWindow::markSceneAtCursor(bool cutScene){
-    return setCutBlockAtCanvasX(Controls::Canvas::GetLeft(TimelineCursor()), cutScene);
+    if(const auto time100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
+        return setCutBlockAtTime100ns(*time100ns, cutScene);
+    }
+    return false;
 }
 
 
