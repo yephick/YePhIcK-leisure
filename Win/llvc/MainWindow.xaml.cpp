@@ -92,20 +92,20 @@ constexpr int64_t HNS_PER_SECOND{10'000'000LL};
 
 
 template<typename T>
-optional<T> tryReadSetting(Windows::Foundation::Collections::IMap<hstring, IInspectable>& values, const wchar_t* key){
+std::optional<T> tryReadSetting(Windows::Foundation::Collections::IPropertySet& values, const wchar_t* key){
     if(!values.HasKey(key)){
-        return nullopt;
+        return std::nullopt;
     }
 
     try{
         return unbox_value<T>(values.Lookup(key));
     }catch(const winrt::hresult_error&){
         values.Remove(key);
-        return nullopt;
+        return std::nullopt;
     }
 }
 
-optional<bool> tryReadBoolSetting(Windows::Foundation::Collections::IMap<hstring, IInspectable>& values, const wchar_t* key){
+std::optional<bool> tryReadBoolSetting(Windows::Foundation::Collections::IPropertySet& values, const wchar_t* key){
     if(const auto asBool{tryReadSetting<bool>(values, key)}){
         return asBool;
     }
@@ -121,7 +121,7 @@ optional<bool> tryReadBoolSetting(Windows::Foundation::Collections::IMap<hstring
             return false;
         }
     }
-    return nullopt;
+    return std::nullopt;
 }
 
 bool isAviPath(const wstring& filePath){
