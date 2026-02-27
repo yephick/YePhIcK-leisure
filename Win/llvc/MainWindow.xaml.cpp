@@ -27,7 +27,6 @@
 #include <mfreadwrite.h>
 
 #include <microsoft.ui.xaml.window.h>
-#include <Microsoft.UI.Interop.h>
 #include <propkey.h>
 #include <propsys.h>
 #include <propvarutil.h>
@@ -37,7 +36,6 @@
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Microsoft.UI.Xaml.Shapes.h>
-#include <winrt/Microsoft.UI.Windowing.h>
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
@@ -59,7 +57,6 @@ using namespace Microsoft::UI::Xaml;
 using namespace Microsoft::UI::Input;
 using namespace Microsoft::UI::Xaml::Controls;
 using namespace Microsoft::UI::Xaml::Input;
-using namespace Microsoft::UI::Windowing;
 using namespace Windows::Foundation;
 using namespace Windows::Media::Playback;
 using namespace Windows::Storage;
@@ -1588,15 +1585,54 @@ bool MainWindow::toggleSeparatePreviewFullscreen(){
         return false;
     }
 
-    const auto previewAppWindow{AppWindow::GetFromWindowId(GetWindowIdFromWindow(previewHwnd))};
-    if(!previewAppWindow){
-        setErrorMessage(L"Could not control preview window presenter");
-        return false;
+    if(!m_isSeparatePreviewFullscreen){
+        RECT currentRect{};
+        if(!::GetWindowRect(previewHwnd, &currentRect)){
+            setErrorMessage(L"Could not read preview window bounds");
+            return false;
+        }
+
+        m_separatePreviewRestoreRect = currentRect;
+        m_separatePreviewRestoreStyle = ::GetWindowLongPtrW(previewHwnd, GWL_STYLE);
+        m_separatePreviewRestoreExStyle = ::GetWindowLongPtrW(previewHwnd, GWL_EXSTYLE);
+
+        const auto fullscreenStyle{m_separatePreviewRestoreStyle & ~(WS_OVERLAPPEDWINDOW)};
+        ::SetWindowLongPtrW(previewHwnd, GWL_STYLE, fullscreenStyle);
+
+        MONITORINFO monitorInfo{.cbSize = sizeof(monitorInfo)};
+        const auto monitor{::MonitorFromWindow(previewHwnd, MONITOR_DEFAULTTONEAREST)};
+        if(!monitor || !::GetMonitorInfoW(monitor, &monitorInfo)){
+            setErrorMessage(L"Could not resolve preview monitor bounds");
+            return false;
+        }
+
+        ::SetWindowPos(
+            previewHwnd,
+            HWND_TOP,
+            monitorInfo.rcMonitor.left,
+            monitorInfo.rcMonitor.top,
+            monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left,
+            monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+
+        m_isSeparatePreviewFullscreen = true;
+        setStatusMessage(L"Separate preview: full-screen on");
+        return true;
     }
 
-    m_isSeparatePreviewFullscreen = !m_isSeparatePreviewFullscreen;
-    previewAppWindow.SetPresenter(m_isSeparatePreviewFullscreen ? AppWindowPresenterKind::FullScreen : AppWindowPresenterKind::Default);
-    setStatusMessage(m_isSeparatePreviewFullscreen ? L"Separate preview: full-screen on" : L"Separate preview: full-screen off");
+    ::SetWindowLongPtrW(previewHwnd, GWL_STYLE, m_separatePreviewRestoreStyle);
+    ::SetWindowLongPtrW(previewHwnd, GWL_EXSTYLE, m_separatePreviewRestoreExStyle);
+    ::SetWindowPos(
+        previewHwnd,
+        HWND_NOTOPMOST,
+        m_separatePreviewRestoreRect.left,
+        m_separatePreviewRestoreRect.top,
+        m_separatePreviewRestoreRect.right - m_separatePreviewRestoreRect.left,
+        m_separatePreviewRestoreRect.bottom - m_separatePreviewRestoreRect.top,
+        SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+
+    m_isSeparatePreviewFullscreen = false;
+    setStatusMessage(L"Separate preview: full-screen off");
     return true;
 }
 

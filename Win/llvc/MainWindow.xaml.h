@@ -144,6 +144,9 @@ private:
     bool m_isApplyingUndoRedoState{false};
     bool m_isSeparatePreviewWindowOpen{false};
     bool m_isSeparatePreviewFullscreen{false};
+    RECT m_separatePreviewRestoreRect{0, 0, 0, 0};
+    LONG_PTR m_separatePreviewRestoreStyle{0};
+    LONG_PTR m_separatePreviewRestoreExStyle{0};
     winrt::Microsoft::UI::Xaml::Window m_separatePreviewWindow{nullptr};
     winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_separatePreviewClosedRevoker{};
     ::llvc::Project m_prj{};
