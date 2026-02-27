@@ -90,6 +90,8 @@ struct MainWindow: MainWindowT<MainWindow>{
     void rootGrid_PointerReleased(const Control& sender, const PREArgs& args);
     void videoDetailsOpenMarker_Click(const Control& sender, const REArgs& args);
     void videoDetailsCollapseMarker_Click(const Control& sender, const REArgs& args);
+    void cheatSheetOpenMarker_Click(const Control& sender, const REArgs& args);
+    void cheatSheetCollapseMarker_Click(const Control& sender, const REArgs& args);
     AAction newProjectMenuItem_Click(const Control& sender, const REArgs& args);
     AAction undoMenuItem_Click(const Control& sender, const REArgs& args);
     AAction redoMenuItem_Click(const Control& sender, const REArgs& args);
@@ -106,6 +108,9 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction manualMenuItem_Click(const Control& sender, const REArgs& args);
     AAction aboutMenuItem_Click(const Control& sender, const REArgs& args);
     AAction optionsMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction toggleCutMarkerAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction markSceneCutAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction markSceneKeptAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     void window_DragOver(const Control& sender, const DEArgs& args);
     AAction window_Drop(const Control& sender, const DEArgs& args);
     void onClosed(const Control& sender, const WEArgs& args);
@@ -177,6 +182,9 @@ private:
     void renderCutOverlays();
     bool toggleSelectedKeyframeAtCanvasX(double pointerX);
     bool toggleCutBlockAtCanvasX(double pointerX);
+    bool setCutBlockAtCanvasX(double pointerX, bool cutScene);
+    bool toggleCutMarkerAtCursor();
+    bool markSceneAtCursor(bool cutScene);
     bool trySkipCurrentCutDuringPlayback();
     void stepByFrame(int delta);
     void ensureTimelineCursorVisible(double cursorLeft);

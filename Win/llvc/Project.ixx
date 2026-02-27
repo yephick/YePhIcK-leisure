@@ -54,6 +54,7 @@ struct Project final{
     void remapCutScenesAfterMarkerInsertion(uint32_t insertPos);
     bool toggleSelectedKeyframeAtCanvasX(double pointerX, double width, double tlDurationSeconds, double fps);
     bool toggleCutBlockAtCanvasX(double pointerX, double width, double tlDurationSeconds);
+    bool setCutBlockAtCanvasX(double pointerX, double width, double tlDurationSeconds, bool cutScene);
 
 private:
     wstring _buildProjectSnapshot() const;
@@ -477,6 +478,38 @@ bool Project::toggleCutBlockAtCanvasX(double pointerX, double width, double tlDu
         m_cutScenes.push_back(static_cast<uint32_t>(sceneIndex));
         sort(m_cutScenes.begin(), m_cutScenes.end());
     }else{
+        m_cutScenes.erase(it);
+    }
+
+    return true;
+}
+
+bool Project::setCutBlockAtCanvasX(double pointerX, double width, double tlDurationSeconds, bool cutScene){
+    if(tlDurationSeconds <= 0 || width <= 0){
+        return false;
+    }
+
+    const auto clicked100ns{static_cast<int64_t>(clamp(pointerX, 0.0, width) / width * (tlDurationSeconds * 10'000'000.0))};
+    const auto boundaries{buildSceneBoundaries100ns(static_cast<int64_t>(tlDurationSeconds * 10'000'000.0))};
+    if(boundaries.size() < 2){
+        return false;
+    }
+
+    auto sceneIndex{boundaries.size() - 2};
+    for(size_t i{0}; i + 1 < boundaries.size(); ++i){
+        if(clicked100ns < boundaries[i + 1]){
+            sceneIndex = i;
+            break;
+        }
+    }
+
+    const auto it{find(m_cutScenes.begin(), m_cutScenes.end(), sceneIndex)};
+    if(cutScene){
+        if(it == m_cutScenes.end()){
+            m_cutScenes.push_back(static_cast<uint32_t>(sceneIndex));
+            sort(m_cutScenes.begin(), m_cutScenes.end());
+        }
+    } else if(it != m_cutScenes.end()){
         m_cutScenes.erase(it);
     }
 

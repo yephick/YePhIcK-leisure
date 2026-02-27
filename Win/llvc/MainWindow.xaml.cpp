@@ -1192,6 +1192,25 @@ bool MainWindow::toggleCutBlockAtCanvasX(double pointerX){
     return true;
 }
 
+bool MainWindow::setCutBlockAtCanvasX(double pointerX, bool cutScene){
+    (void)pushUndoStateIfChanged();
+    if(!m_prj.setCutBlockAtCanvasX(pointerX, TimelineCanvas().Width(), m_timelineDurationSeconds, cutScene)){
+        return false;
+    }
+
+    renderCutOverlays();
+    updateWindowTitle();
+    return true;
+}
+
+bool MainWindow::toggleCutMarkerAtCursor(){
+    return toggleSelectedKeyframeAtCanvasX(Controls::Canvas::GetLeft(TimelineCursor()));
+}
+
+bool MainWindow::markSceneAtCursor(bool cutScene){
+    return setCutBlockAtCanvasX(Controls::Canvas::GetLeft(TimelineCursor()), cutScene);
+}
+
 
 bool MainWindow::trySkipCurrentCutDuringPlayback(){
     if(!m_player || m_prj.cutScenes().empty() || m_timelineDurationSeconds <= 0){
@@ -1312,6 +1331,11 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
             args.Handled(true);
             return true;
         }
+        if(args.Key() == VirtualKey::M){
+            (void)toggleCutMarkerAtCursor();
+            args.Handled(true);
+            return true;
+        }
     }
 
     if(focusOnMenu || focusInDialog){
@@ -1338,6 +1362,14 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         return true;
     case VirtualKey::Right:
         stepByFrame(1);
+        args.Handled(true);
+        return true;
+    case VirtualKey::Delete:
+        (void)markSceneAtCursor(true);
+        args.Handled(true);
+        return true;
+    case VirtualKey::Insert:
+        (void)markSceneAtCursor(false);
         args.Handled(true);
         return true;
     default:
@@ -1387,6 +1419,17 @@ void MainWindow::videoDetailsOpenMarker_Click(const Control&, const REArgs&){
 
 void MainWindow::videoDetailsCollapseMarker_Click(const Control&, const REArgs&){
     setVideoDetailsPanelExpanded(false);
+}
+
+void MainWindow::cheatSheetOpenMarker_Click(const Control&, const REArgs&){
+    CheatSheetPanel().Visibility(Visibility::Visible);
+    CheatSheetOpenMarker().Visibility(Visibility::Collapsed);
+}
+
+void MainWindow::cheatSheetCollapseMarker_Click(const Control&, const REArgs&){
+    CheatSheetPanel().Visibility(Visibility::Collapsed);
+    CheatSheetOpenMarker().Visibility(Visibility::Visible);
+    tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
 TS MainWindow::secondsToTimeSpan(double seconds){
@@ -1578,6 +1621,21 @@ AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
 
 AAction MainWindow::optionsMenuItem_Click(const Control&, const REArgs&){
     co_await showOptionsDialogAsync();
+}
+
+AAction MainWindow::toggleCutMarkerAtCursorMenuItem_Click(const Control&, const REArgs&){
+    (void)toggleCutMarkerAtCursor();
+    co_return;
+}
+
+AAction MainWindow::markSceneCutAtCursorMenuItem_Click(const Control&, const REArgs&){
+    (void)markSceneAtCursor(true);
+    co_return;
+}
+
+AAction MainWindow::markSceneKeptAtCursorMenuItem_Click(const Control&, const REArgs&){
+    (void)markSceneAtCursor(false);
+    co_return;
 }
 
 AAction MainWindow::pickAndLoadVideoAsync(){
