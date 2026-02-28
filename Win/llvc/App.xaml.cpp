@@ -29,8 +29,8 @@ App::App(){
 /// Invoked when the application is launched.
 /// </summary>
 /// <param name="e">Details about the launch request and process.</param>
-void App::OnLaunched([[maybe_unused]] LaunchActivatedEventArgs const& e){
-    window = make<MainWindow>();
+void App::OnLaunched(LaunchActivatedEventArgs const& e){
+    window = make<MainWindow>(e.Arguments());
     window.Activate();
 }
 
