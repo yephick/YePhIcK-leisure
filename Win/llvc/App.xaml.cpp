@@ -12,14 +12,6 @@ namespace winrt::llvc::implementation{
 
 namespace{
 
-void showLaunchDebugPopup(const std::wstring& message){
-#if defined(_DEBUG)
-    ::MessageBoxW(nullptr, message.c_str(), L"llvc launch debug", MB_OK | MB_ICONINFORMATION | MB_SYSTEMMODAL);
-#else
-    (void)message;
-#endif
-}
-
 hstring getLaunchTargetFromOnLaunched(Microsoft::UI::Xaml::LaunchActivatedEventArgs const& e){
     if(!e.Arguments().empty()){
         return e.Arguments();
@@ -66,10 +58,6 @@ App::App(){
 void App::OnLaunched(Microsoft::UI::Xaml::LaunchActivatedEventArgs const& e){
     const auto launchTarget{getLaunchTargetFromOnLaunched(e)};
 
-    showLaunchDebugPopup(
-        L"OnLaunched arguments: [" + std::wstring(e.Arguments().c_str()) +
-        L"]\nCommand line target fallback: [" + std::wstring(launchTarget.c_str()) + L"]");
-
     window = make<MainWindow>(launchTarget);
     window.Activate();
 }
@@ -81,8 +69,6 @@ void App::OnFileActivated(winrt::Windows::ApplicationModel::Activation::FileActi
             launchPath = file.Path().c_str();
         }
     }
-
-    showLaunchDebugPopup(L"OnFileActivated path: " + launchPath);
 
     window = make<MainWindow>(winrt::hstring(launchPath));
     window.Activate();

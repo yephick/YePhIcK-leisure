@@ -114,14 +114,6 @@ LRESULT CALLBACK MainWindowSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 
 constexpr int64_t HNS_PER_SECOND{10'000'000LL};
 
-void showLaunchTracePopup(const std::wstring& message){
-#if defined(_DEBUG)
-    ::MessageBoxW(nullptr, message.c_str(), L"llvc launch trace", MB_OK | MB_ICONINFORMATION | MB_SYSTEMMODAL);
-#else
-    (void)message;
-#endif
-}
-
 bool isAviPath(const wstring& filePath){
     if(filePath.size() < 4){
         return false;
@@ -603,17 +595,13 @@ MainWindow::MainWindow(const hstring& launchArguments){
 }
 
 AAction MainWindow::openFromLaunchArgumentsAsync(const hstring& arguments){
-    showLaunchTracePopup(L"MainWindow::openFromLaunchArgumentsAsync raw argument: " + std::wstring(arguments.c_str()));
-
     wstring launchPath{arguments.c_str()};
     if(launchPath.empty()){
-        showLaunchTracePopup(L"Launch argument is empty (nothing to open)");
         co_return;
     }
 
     const auto begin{launchPath.find_first_not_of(L" \t\r\n")};
     if(begin == wstring::npos){
-        showLaunchTracePopup(L"Launch argument only contained whitespace");
         co_return;
     }
     const auto end{launchPath.find_last_not_of(L" \t\r\n")};
@@ -623,15 +611,11 @@ AAction MainWindow::openFromLaunchArgumentsAsync(const hstring& arguments){
         launchPath = launchPath.substr(1, launchPath.size() - 2);
     }
 
-    showLaunchTracePopup(L"Normalized launch path: " + launchPath);
-
     wstring lowerExt{std::filesystem::path(launchPath).extension().wstring()};
     transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::towlower);
-    showLaunchTracePopup(L"Detected extension: " + lowerExt);
 
     if(lowerExt != PROJECT_EXT && lowerExt != L".mp4" && lowerExt != L".mov" && lowerExt != L".avi"){
         setStatusMessage(L"Launch argument is not a supported media/project file");
-        showLaunchTracePopup(L"Extension not supported; aborting launch-open path");
         co_return;
     }
 
@@ -640,24 +624,17 @@ AAction MainWindow::openFromLaunchArgumentsAsync(const hstring& arguments){
         file = co_await SFile::GetFileFromPathAsync(launchPath);
     }catch(const winrt::hresult_error&){
         setStatusMessage(L"File from launch argument was not found");
-        showLaunchTracePopup(L"GetFileFromPathAsync failed for: " + launchPath);
         co_return;
     }
 
-    showLaunchTracePopup(L"StorageFile resolved: " + std::wstring(file.Path().c_str()));
-
     if(lowerExt == PROJECT_EXT){
-        showLaunchTracePopup(L"Detected .llvc project; calling openProjectFileAsync");
         co_await openProjectFileAsync(file);
-        showLaunchTracePopup(L"openProjectFileAsync finished");
         co_return;
     }
 
     m_prj.clearTimeline();
     clearUndoRedoHistory();
-    showLaunchTracePopup(L"Detected media file; calling loadVideoFileAsync");
     co_await loadVideoFileAsync(file);
-    showLaunchTracePopup(L"loadVideoFileAsync finished");
 }
 
 HWND MainWindow::getWindowHandle() const{
