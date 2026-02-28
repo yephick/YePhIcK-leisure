@@ -1745,7 +1745,6 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         root.IsTabStop(true);
         root.PreviewKeyDown(detachedKeyHandler);
         root.KeyDown(detachedKeyHandler);
-        root.DoubleTapped(detachedDoubleTapHandler);
 
         root.Children().Append(detachedPreview);
 
