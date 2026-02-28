@@ -1349,6 +1349,7 @@ void MainWindow::renderCutOverlays(){
 
     const auto cutRanges100ns{m_prj.buildCutRanges100ns()};
     const auto overlayColor {Windows::UI::ColorHelper::FromArgb(180, 0, 0, 0)};
+    const auto crossColor {Windows::UI::ColorHelper::FromArgb(220, 255, 48, 48)};
     for(const auto& [startTime100ns, endTime100ns]: cutRanges100ns){
         const auto start{clamp((static_cast<double>(startTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
         const auto end{clamp((static_cast<double>(endTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
@@ -1356,15 +1357,37 @@ void MainWindow::renderCutOverlays(){
             continue;
         }
 
-        Shapes::Rectangle block{};
         const auto left{start * width};
-        block.Width(max(1.0, (end - start) * width));
+        const auto blockWidth{max(1.0, (end - start) * width)};
+
+        Shapes::Rectangle block{};
+        block.Width(blockWidth);
         block.Height(86.0);
         block.Fill(Media::SolidColorBrush(overlayColor));
         block.IsHitTestVisible(false);
         Controls::Canvas::SetLeft(block, left);
         Controls::Canvas::SetTop(block, 0.0);
         CutOverlayLayer().Children().Append(block);
+
+        Shapes::Line diagonalOne{};
+        diagonalOne.X1(left);
+        diagonalOne.Y1(0.0);
+        diagonalOne.X2(left + blockWidth);
+        diagonalOne.Y2(86.0);
+        diagonalOne.Stroke(Media::SolidColorBrush(crossColor));
+        diagonalOne.StrokeThickness(2.0);
+        diagonalOne.IsHitTestVisible(false);
+        CutOverlayLayer().Children().Append(diagonalOne);
+
+        Shapes::Line diagonalTwo{};
+        diagonalTwo.X1(left + blockWidth);
+        diagonalTwo.Y1(0.0);
+        diagonalTwo.X2(left);
+        diagonalTwo.Y2(86.0);
+        diagonalTwo.Stroke(Media::SolidColorBrush(crossColor));
+        diagonalTwo.StrokeThickness(2.0);
+        diagonalTwo.IsHitTestVisible(false);
+        CutOverlayLayer().Children().Append(diagonalTwo);
     }
 
     refreshStatusInfoSection();
