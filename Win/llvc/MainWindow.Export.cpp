@@ -24,7 +24,6 @@ namespace winrt::llvc::implementation{
 using namespace std;
 using namespace winrt;
 using namespace ::llvc;
-namespace Controls = winrt::Microsoft::UI::Xaml::Controls;
 
 using Control = MainWindow::Control;
 using REArgs = MainWindow::REArgs;
@@ -67,31 +66,6 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     const auto sourceExt{sourceFsPath.extension().wstring()};
     const auto sourceIsAvi{isAviSourcePath(sourcePath)};
     const auto defaultExt{sourceIsAvi ? L".mp4" : (_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4")};
-
-    const auto summaryCutRanges100ns{m_prj.buildCutRanges100ns()};
-    const auto cutBlockCount{summaryCutRanges100ns.size()};
-    const auto keptBlockCount{invertCutRanges100ns(summaryCutRanges100ns, sourceDuration100ns).size()};
-    const auto keepAudioRequested{m_prj.keepAudio() && sourceHasAudio() && !m_mediaInfo.audioDisabledForThisSource};
-    const auto crossfadeSummary{keepAudioRequested ? (to_wstring(m_prj.audioXfadeMs()) + L" ms") : wstring{L"n/a (audio removed)"}};
-    const auto volumeSummary{keepAudioRequested ? (to_wstring(m_prj.audioVolumePct()) + L"%") : wstring{L"n/a (audio removed)"}};
-    const auto containerSummary{sourceIsAvi ? L"MP4" : (_wcsicmp(defaultExt, L".mov") == 0 ? L"MOV" : L"MP4")};
-
-    Controls::ContentDialog exportSummaryDialog{};
-    exportSummaryDialog.XamlRoot(Content().XamlRoot());
-    exportSummaryDialog.Title(box_value(L"Confirm export settings"));
-    exportSummaryDialog.Content(box_value(
-        L"Output duration: " + formatTimelineDurationText(outputDuration100ns) +
-        L"\nCut blocks: " + to_wstring(cutBlockCount) +
-        L"\nKept blocks: " + to_wstring(keptBlockCount) +
-        L"\nAudio: " + wstring{keepAudioRequested ? L"kept" : L"removed"} +
-        L"\nCrossfade: " + crossfadeSummary +
-        L"\nVolume: " + volumeSummary +
-        L"\nOutput container: " + containerSummary));
-    exportSummaryDialog.PrimaryButtonText(L"Continue");
-    exportSummaryDialog.CloseButtonText(L"Cancel");
-    if((co_await exportSummaryDialog.ShowAsync()) != Controls::ContentDialogResult::Primary){
-        co_return;
-    }
 
     const auto outputPath{pickExportOutputPath(sourceFsPath, defaultExt, outputDuration100ns, getWindowHandle(), sourceIsAvi)};
     if(outputPath.empty()){
