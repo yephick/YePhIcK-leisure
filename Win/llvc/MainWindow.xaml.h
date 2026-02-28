@@ -129,8 +129,6 @@ struct MainWindow: MainWindowT<MainWindow>{
     void cancelExportButton_Click(const Control& sender, const REArgs& args);
     bool isExportInProgressForClosePrompt() const;
     void requestExportCancel();
-    AAction OpenProjectPath(const hstring& path);
-    AAction OpenProjectFile(const SFile& file);
 
 private:
     MP m_player{nullptr};
@@ -198,7 +196,6 @@ private:
     AAction showPropertiesDialogAsync();
     AAction showOptionsDialogAsync();
     AAction openProjectFileAsync(const SFile& file);
-    AAction openProjectFromActivationFileAsync(const SFile& file);
     AAction saveProjectFileAsync(const SFile& file);
     void resetProjectState();
     void updateWindowTitle();

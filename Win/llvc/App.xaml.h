@@ -8,12 +8,8 @@ struct App: AppT<App>{
     App();
 
     void OnLaunched(Microsoft::UI::Xaml::LaunchActivatedEventArgs const&);
-    void OnActivated(winrt::Windows::ApplicationModel::Activation::IActivatedEventArgs const&);
 
 private:
-    void ensureMainWindow();
-    void tryHandleLaunchArguments(const winrt::hstring& arguments);
-
     winrt::Microsoft::UI::Xaml::Window window{ nullptr };
 };
 

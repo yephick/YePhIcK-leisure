@@ -2281,38 +2281,6 @@ IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){
     co_return false;
 }
 
-AAction MainWindow::OpenProjectPath(const hstring& path){
-    if(path.empty()){
-        co_return;
-    }
-
-    try{
-        const auto file{co_await StorageFile::GetFileFromPathAsync(path)};
-        co_await openProjectFromActivationFileAsync(file);
-    }catch(const hresult_error&){
-        co_return;
-    }
-}
-
-AAction MainWindow::OpenProjectFile(const SFile& file){
-    co_await openProjectFromActivationFileAsync(file);
-}
-
-AAction MainWindow::openProjectFromActivationFileAsync(const SFile& file){
-    if(!file){
-        co_return;
-    }
-
-    const auto ext{file.FileType()};
-    wstring lower{ext.c_str()};
-    transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
-    if(lower != PROJECT_EXT){
-        co_return;
-    }
-
-    co_await openProjectFileAsync(file);
-}
-
 AAction MainWindow::openProjectFileAsync(const SFile& file){
     resetProjectState();
 
