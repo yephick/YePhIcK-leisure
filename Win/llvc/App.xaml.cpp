@@ -4,8 +4,22 @@
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
+using namespace Windows::ApplicationModel::Activation;
+using namespace Windows::Storage;
 
 namespace winrt::llvc::implementation{
+
+namespace{
+
+void showLaunchDebugPopup(const std::wstring& message){
+#if defined(_DEBUG)
+    ::MessageBoxW(nullptr, message.c_str(), L"llvc launch debug", MB_OK | MB_ICONINFORMATION | MB_SYSTEMMODAL);
+#else
+    (void)message;
+#endif
+}
+
+}
 
 /// <summary>
 /// Initializes the singleton application object.  This is the first line of authored code
@@ -30,7 +44,23 @@ App::App(){
 /// </summary>
 /// <param name="e">Details about the launch request and process.</param>
 void App::OnLaunched(LaunchActivatedEventArgs const& e){
+    showLaunchDebugPopup(L"OnLaunched arguments: " + std::wstring(e.Arguments().c_str()));
+
     window = make<MainWindow>(e.Arguments());
+    window.Activate();
+}
+
+void App::OnFileActivated(FileActivatedEventArgs const& e){
+    std::wstring launchPath{};
+    if(e.Files().Size() > 0){
+        if(const auto file{e.Files().GetAt(0).try_as<StorageFile>()}){
+            launchPath = file.Path().c_str();
+        }
+    }
+
+    showLaunchDebugPopup(L"OnFileActivated path: " + launchPath);
+
+    window = make<MainWindow>(winrt::hstring(launchPath));
     window.Activate();
 }
 
