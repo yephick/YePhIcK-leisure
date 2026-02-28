@@ -24,6 +24,8 @@ namespace winrt::runlock::implementation
         void Window_Loaded(winrt::Windows::Foundation::IInspectable const& sender, winrt::Microsoft::UI::Xaml::RoutedEventArgs const& args);
 
     private:
+        bool LoadProjectFromPath(std::wstring const& projectPath);
+
         enum class UnlockState { Stopped, Running, Paused };
         UnlockState m_unlockState{ UnlockState::Stopped };
     };

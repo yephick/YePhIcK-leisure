@@ -5,6 +5,9 @@
 #endif
 
 #include <thread>
+#include <fstream>
+#include <filesystem>
+#include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 
 using namespace winrt;
@@ -12,6 +15,33 @@ using namespace Microsoft::UI::Xaml;
 
 namespace winrt::runlock::implementation
 {
+    namespace
+    {
+        std::wstring TryGetStartupProjectPath()
+        {
+            int argc = 0;
+            std::wstring startupProjectPath;
+            LPWSTR* argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
+            if (argv == nullptr)
+            {
+                return startupProjectPath;
+            }
+
+            for (int i = 1; i < argc; ++i)
+            {
+                std::filesystem::path candidate{ argv[i] };
+                if (_wcsicmp(candidate.extension().c_str(), L".llvc") == 0 && std::filesystem::exists(candidate))
+                {
+                    startupProjectPath = candidate.wstring();
+                    break;
+                }
+            }
+
+            ::LocalFree(argv);
+            return startupProjectPath;
+        }
+    }
+
     MainWindow::MainWindow()
     {
         InitializeComponent();
@@ -27,6 +57,12 @@ namespace winrt::runlock::implementation
             CpuCoresComboBox().Items().Append(box_value(i));
         }
         CpuCoresComboBox().SelectedIndex(0);
+
+        auto startupProjectPath = TryGetStartupProjectPath();
+        if (!startupProjectPath.empty())
+        {
+            LoadProjectFromPath(startupProjectPath);
+        }
     }
 
     void MainWindow::BrowseArchive_Click(IInspectable const&, RoutedEventArgs const&)
@@ -98,6 +134,51 @@ namespace winrt::runlock::implementation
     void MainWindow::LoadProject_Click(IInspectable const&, RoutedEventArgs const&)
     {
         // TODO: Load project settings
+    }
+
+    bool MainWindow::LoadProjectFromPath(std::wstring const& projectPath)
+    {
+        std::wifstream stream(projectPath);
+        if (!stream)
+        {
+            StatusText().Text(L"Failed to load project");
+            return false;
+        }
+
+        std::wstring projectJsonText((std::istreambuf_iterator<wchar_t>(stream)), std::istreambuf_iterator<wchar_t>());
+        Windows::Data::Json::JsonObject json;
+        if (!Windows::Data::Json::JsonObject::TryParse(projectJsonText, json))
+        {
+            StatusText().Text(L"Invalid project file");
+            return false;
+        }
+
+        if (json.HasKey(L"archivePath"))
+        {
+            ArchivePathBox().Text(json.GetNamedString(L"archivePath", L""));
+        }
+
+        if (json.HasKey(L"passwordRules"))
+        {
+            PasswordRulesBox().Text(json.GetNamedString(L"passwordRules", L""));
+        }
+
+        auto minLength = json.GetNamedNumber(L"minLength", 0.0);
+        auto maxLength = json.GetNamedNumber(L"maxLength", 0.0);
+        MinLengthBox().Value(minLength);
+        MaxLengthBox().Value(maxLength);
+
+        auto cpuCoresValue = static_cast<uint32_t>(json.GetNamedNumber(L"cpuCores", 1.0));
+        auto itemCount = CpuCoresComboBox().Items().Size();
+        if (itemCount > 0)
+        {
+            uint32_t clamped = (cpuCoresValue == 0) ? 1 : cpuCoresValue;
+            clamped = (clamped > itemCount) ? itemCount : clamped;
+            CpuCoresComboBox().SelectedIndex(clamped - 1);
+        }
+
+        StatusText().Text(L"Loaded project: " + hstring(projectPath));
+        return true;
     }
 
     int32_t MainWindow::MyProperty()
