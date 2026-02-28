@@ -3,6 +3,7 @@
 #include "MainWindow.xaml.h"
 
 #include <winrt/Windows.Storage.h>
+#include <shellapi.h>
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -17,6 +18,25 @@ void showLaunchDebugPopup(const std::wstring& message){
 #else
     (void)message;
 #endif
+}
+
+hstring getLaunchTargetFromOnLaunched(Microsoft::UI::Xaml::LaunchActivatedEventArgs const& e){
+    if(!e.Arguments().empty()){
+        return e.Arguments();
+    }
+
+    int argc{};
+    wchar_t** argv{::CommandLineToArgvW(::GetCommandLineW(), &argc)};
+    if(argc <= 1 || !argv){
+        if(argv){
+            ::LocalFree(argv);
+        }
+        return {};
+    }
+
+    const hstring target{argv[1]};
+    ::LocalFree(argv);
+    return target;
 }
 
 }
@@ -44,9 +64,13 @@ App::App(){
 /// </summary>
 /// <param name="e">Details about the launch request and process.</param>
 void App::OnLaunched(Microsoft::UI::Xaml::LaunchActivatedEventArgs const& e){
-    showLaunchDebugPopup(L"OnLaunched arguments: " + std::wstring(e.Arguments().c_str()));
+    const auto launchTarget{getLaunchTargetFromOnLaunched(e)};
 
-    window = make<MainWindow>(e.Arguments());
+    showLaunchDebugPopup(
+        L"OnLaunched arguments: [" + std::wstring(e.Arguments().c_str()) +
+        L"]\nCommand line target fallback: [" + std::wstring(launchTarget.c_str()) + L"]");
+
+    window = make<MainWindow>(launchTarget);
     window.Activate();
 }
 
