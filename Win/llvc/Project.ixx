@@ -214,7 +214,7 @@ void Project::keepAudio(bool v){
     m_keepAudio = v;
 }
 
-constexpr array<int32_t, 10> AUDIO_CROSSFADE_PRESETS_MS{{0, 50, 100, 250, 500, 750, 1000, 2000, 5000}};
+constexpr array<int32_t, 9> AUDIO_CROSSFADE_PRESETS_MS{{0, 50, 100, 250, 500, 750, 1000, 2000, 5000}};
 
 void Project::audioXfadeMs(int32_t valueMs){
     const auto nearest{min_element(AUDIO_CROSSFADE_PRESETS_MS.begin(), AUDIO_CROSSFADE_PRESETS_MS.end(), [valueMs](auto a, auto b){
