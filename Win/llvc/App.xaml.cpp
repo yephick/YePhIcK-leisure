@@ -2,10 +2,10 @@
 #include "App.xaml.h"
 #include "MainWindow.xaml.h"
 
+#include <winrt/Windows.Storage.h>
+
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
-using namespace Windows::ApplicationModel::Activation;
-using namespace Windows::Storage;
 
 namespace winrt::llvc::implementation{
 
@@ -43,17 +43,17 @@ App::App(){
 /// Invoked when the application is launched.
 /// </summary>
 /// <param name="e">Details about the launch request and process.</param>
-void App::OnLaunched(LaunchActivatedEventArgs const& e){
+void App::OnLaunched(Microsoft::UI::Xaml::LaunchActivatedEventArgs const& e){
     showLaunchDebugPopup(L"OnLaunched arguments: " + std::wstring(e.Arguments().c_str()));
 
     window = make<MainWindow>(e.Arguments());
     window.Activate();
 }
 
-void App::OnFileActivated(FileActivatedEventArgs const& e){
+void App::OnFileActivated(winrt::Windows::ApplicationModel::Activation::FileActivatedEventArgs const& e){
     std::wstring launchPath{};
     if(e.Files().Size() > 0){
-        if(const auto file{e.Files().GetAt(0).try_as<StorageFile>()}){
+        if(const auto file{e.Files().GetAt(0).try_as<winrt::Windows::Storage::StorageFile>()}){
             launchPath = file.Path().c_str();
         }
     }
