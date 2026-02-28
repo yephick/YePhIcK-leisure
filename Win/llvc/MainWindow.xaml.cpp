@@ -2231,7 +2231,7 @@ void MainWindow::resetProjectState(){
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
     syncTimelineHorizontalScrollBar();
 
-    setStatusMessage(L"Load or drag-and-drop an .mp4/.mov/.avi (H.264 only) file to preview.");
+    setStatusMessage(L"Load or drag-and-drop a .llvc/.mp4/.mov/.avi file to begin.");
     clearErrorMessage();
     refreshStatusInfoSection();
     updateWindowTitle();
@@ -2746,7 +2746,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
 
     const auto items{co_await view.GetStorageItemsAsync()};
     if(items.Size() != 1){
-        setStatusMessage(L"Only support a single .mp4/.mov/.avi (H.264) file");
+        setStatusMessage(L"Only support a single .llvc/.mp4/.mov/.avi file");
         co_return;
     }
 
@@ -2757,14 +2757,18 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
         co_return;
     }
 
-    {
-        const auto ext{file.FileType()};
-        wstring lower{ext.c_str()};
-        transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
-        if(lower != L".mp4" && lower != L".mov" && lower != L".avi"){
-            setStatusMessage(L"Only .mp4, .mov, and .avi (H.264) files are supported");
-            co_return;
-        }
+    const auto ext{file.FileType()};
+    wstring lower{ext.c_str()};
+    transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
+
+    if(lower == PROJECT_EXT){
+        co_await openProjectFileAsync(file);
+        co_return;
+    }
+
+    if(lower != L".mp4" && lower != L".mov" && lower != L".avi"){
+        setStatusMessage(L"Only .llvc, .mp4, .mov, and .avi (H.264) files are supported");
+        co_return;
     }
 
     m_prj.clearTimeline();

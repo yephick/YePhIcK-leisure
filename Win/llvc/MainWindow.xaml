@@ -10,6 +10,9 @@
     Title="llvc - Lossless Video Cut">
 
     <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="window_DragOver" Drop="window_Drop" PreviewKeyDown="window_PreviewKeyDown" KeyDown="window_KeyDown" PointerReleased="rootGrid_PointerReleased">
+        <Grid.Background>
+            <ImageBrush ImageSource="ms-appx:///Assets/SplashScreen.scale-200.png" Stretch="UniformToFill" Opacity="0.10"/>
+        </Grid.Background>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
