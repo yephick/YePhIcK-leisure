@@ -556,7 +556,7 @@ bool MainWindow::redoLastEdit(){
     return applyUndoRedoState(next, false);
 }
 
-MainWindow::MainWindow(){
+MainWindow::MainWindow(const hstring& launchArguments){
     InitializeComponent();
 
     m_player = MediaPlayer();
@@ -588,6 +588,53 @@ MainWindow::MainWindow(){
     if(m_restorePreviewDetachedOnStartup){
         (void)setSeparatePreviewWindowOpen(true);
     }
+
+    if(!launchArguments.empty()){
+        (void)openFromLaunchArgumentsAsync(launchArguments);
+    }
+}
+
+AAction MainWindow::openFromLaunchArgumentsAsync(const hstring& arguments){
+    wstring launchPath{arguments.c_str()};
+    if(launchPath.empty()){
+        co_return;
+    }
+
+    const auto begin{launchPath.find_first_not_of(L" \t\r\n")};
+    if(begin == wstring::npos){
+        co_return;
+    }
+    const auto end{launchPath.find_last_not_of(L" \t\r\n")};
+    launchPath = launchPath.substr(begin, end - begin + 1);
+
+    if(launchPath.size() >= 2 && launchPath.front() == L'"' && launchPath.back() == L'"'){
+        launchPath = launchPath.substr(1, launchPath.size() - 2);
+    }
+
+    wstring lowerExt{std::filesystem::path(launchPath).extension().wstring()};
+    transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::towlower);
+
+    if(lowerExt != PROJECT_EXT && lowerExt != L".mp4" && lowerExt != L".mov" && lowerExt != L".avi"){
+        setStatusMessage(L"Launch argument is not a supported media/project file");
+        co_return;
+    }
+
+    SFile file{nullptr};
+    try{
+        file = co_await SFile::GetFileFromPathAsync(launchPath);
+    }catch(const winrt::hresult_error&){
+        setStatusMessage(L"File from launch argument was not found");
+        co_return;
+    }
+
+    if(lowerExt == PROJECT_EXT){
+        co_await openProjectFileAsync(file);
+        co_return;
+    }
+
+    m_prj.clearTimeline();
+    clearUndoRedoHistory();
+    co_await loadVideoFileAsync(file);
 }
 
 HWND MainWindow::getWindowHandle() const{
@@ -1686,8 +1733,14 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
                 self->onSeparatePreviewWindowKeyDown(e);
             }
         }};
+        const auto detachedDoubleTapHandler{[weakSelf](const auto&, const auto&){
+            if(const auto self{weakSelf.get()}){
+                (void)self->toggleSeparatePreviewFullscreen();
+            }
+        }};
         detachedPreview.PreviewKeyDown(detachedKeyHandler);
         detachedPreview.KeyDown(detachedKeyHandler);
+        detachedPreview.DoubleTapped(detachedDoubleTapHandler);
 
         root.IsTabStop(true);
         root.PreviewKeyDown(detachedKeyHandler);

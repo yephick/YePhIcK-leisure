@@ -69,7 +69,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     using TS = winrt::Windows::Foundation::TimeSpan;
     using FState = winrt::Microsoft::UI::Xaml::FocusState;
 
-    MainWindow();
+    MainWindow(const hstring& launchArguments = {});
 
     void startButton_Click(const Control& sender, const REArgs& args);
     void pauseButton_Click(const Control& sender, const REArgs& args);
@@ -193,6 +193,7 @@ private:
     void addRecentVideo(const hstring& path);
     void addRecentProject(const hstring& path);
     AAction showInfoDialogAsync(const hstring& title, const hstring& message);
+    AAction openFromLaunchArgumentsAsync(const hstring& arguments);
     AAction showPropertiesDialogAsync();
     AAction showOptionsDialogAsync();
     AAction openProjectFileAsync(const SFile& file);
