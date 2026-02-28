@@ -1733,12 +1733,19 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
                 self->onSeparatePreviewWindowKeyDown(e);
             }
         }};
+        const auto detachedDoubleTapHandler{[weakSelf](const auto&, const auto&){
+            if(const auto self{weakSelf.get()}){
+                (void)self->toggleSeparatePreviewFullscreen();
+            }
+        }};
         detachedPreview.PreviewKeyDown(detachedKeyHandler);
         detachedPreview.KeyDown(detachedKeyHandler);
+        detachedPreview.DoubleTapped(detachedDoubleTapHandler);
 
         root.IsTabStop(true);
         root.PreviewKeyDown(detachedKeyHandler);
         root.KeyDown(detachedKeyHandler);
+        root.DoubleTapped(detachedDoubleTapHandler);
 
         root.Children().Append(detachedPreview);
 
