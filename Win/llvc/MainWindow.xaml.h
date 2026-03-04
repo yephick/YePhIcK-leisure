@@ -218,6 +218,7 @@ private:
     bool setCutBlockAtTime100ns(int64_t time100ns, bool cutScene);
     bool toggleCutMarkerAtCursor();
     bool markSceneAtCursor(bool cutScene);
+    bool nudgeCurrentSceneBoundaryToNearestRap(bool expandScene);
     bool trySkipCurrentCutDuringPlayback();
     void stepByFrame(int delta);
     bool moveCursorToMarker(int direction);

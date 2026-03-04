@@ -1430,6 +1430,120 @@ bool MainWindow::markSceneAtCursor(bool cutScene){
     return false;
 }
 
+bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
+    if(!m_prj.videoFile() || m_timelineDurationSeconds <= 0){
+        return false;
+    }
+
+    vector<int64_t> rapTimes100ns;
+    try{
+        rapTimes100ns = collectCleanPointTimes100ns(m_prj.videoFile().Path().c_str());
+    }catch(const winrt::hresult_error&){
+        return false;
+    }
+
+    if(rapTimes100ns.empty()){
+        return false;
+    }
+
+    const auto boundaries{m_prj.buildSceneBoundaries100ns()};
+    if(boundaries.size() < 2){
+        return false;
+    }
+
+    const auto cursorTime100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())};
+    if(!cursorTime100ns){
+        return false;
+    }
+
+    auto sceneIndex{boundaries.size() - 2};
+    for(size_t i{}; i + 1 < boundaries.size(); ++i){
+        if(*cursorTime100ns < boundaries[i + 1]){
+            sceneIndex = i;
+            break;
+        }
+    }
+
+    auto markers{m_prj.frameIndex()};
+    if(markers.empty()){
+        return false;
+    }
+
+    auto moveBoundaryToDirectionalRap{[&](size_t boundaryIndex, bool moveTowardEarlier, int64_t minExclusive, int64_t maxExclusive){
+        if(boundaryIndex == 0 || boundaryIndex >= (boundaries.size() - 1)){
+            return false;
+        }
+
+        const auto markerIndex{boundaryIndex - 1};
+        if(markerIndex >= markers.size()){
+            return false;
+        }
+
+        const auto currentBoundaryTime{boundaries[boundaryIndex]};
+        int64_t replacementBoundaryTime{};
+        if(moveTowardEarlier){
+            const auto it{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)};
+            if(it == rapTimes100ns.begin()){
+                return false;
+            }
+            replacementBoundaryTime = *(it - 1);
+        }else{
+            const auto it{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)};
+            if(it == rapTimes100ns.end()){
+                return false;
+            }
+            replacementBoundaryTime = *it;
+        }
+
+        if(replacementBoundaryTime <= minExclusive || replacementBoundaryTime >= maxExclusive){
+            return false;
+        }
+
+        markers[markerIndex].time100ns = replacementBoundaryTime;
+        markers[markerIndex].cleanPoint = true;
+        return true;
+    };
+
+    const auto leftBoundaryIndex{sceneIndex};
+    const auto rightBoundaryIndex{sceneIndex + 1};
+
+    auto changed{false};
+    if(expandScene){
+        if(leftBoundaryIndex > 0){
+            changed = moveBoundaryToDirectionalRap(leftBoundaryIndex, true, boundaries[leftBoundaryIndex - 1], boundaries[rightBoundaryIndex]) || changed;
+        }
+        if(rightBoundaryIndex + 1 < boundaries.size()){
+            const auto leftTimeAfterMove{leftBoundaryIndex > 0 ? markers[leftBoundaryIndex - 1].time100ns : boundaries[leftBoundaryIndex]};
+            changed = moveBoundaryToDirectionalRap(rightBoundaryIndex, false, leftTimeAfterMove, boundaries[rightBoundaryIndex + 1]) || changed;
+        }
+    }else{
+        if(rightBoundaryIndex + 1 < boundaries.size()){
+            changed = moveBoundaryToDirectionalRap(rightBoundaryIndex, true, boundaries[leftBoundaryIndex], boundaries[rightBoundaryIndex + 1]) || changed;
+        }
+        if(leftBoundaryIndex > 0){
+            const auto rightTimeAfterMove{rightBoundaryIndex + 1 < boundaries.size() ? markers[rightBoundaryIndex - 1].time100ns : boundaries[rightBoundaryIndex]};
+            changed = moveBoundaryToDirectionalRap(leftBoundaryIndex, false, boundaries[leftBoundaryIndex - 1], rightTimeAfterMove) || changed;
+        }
+    }
+
+    if(!changed){
+        return false;
+    }
+
+    (void)pushUndoStateIfChanged();
+    sort(markers.begin(), markers.end(), [](const auto& a, const auto& b){ return a.time100ns < b.time100ns; });
+    markers.erase(unique(markers.begin(), markers.end(), [](const auto& a, const auto& b){ return a.time100ns == b.time100ns; }), markers.end());
+    m_prj.frameIndex(std::move(markers));
+    m_prj.refreshSelectedMarkers();
+
+    renderTimelineTicks();
+    renderKeyframeTicks();
+    renderCutOverlays();
+    updateWindowTitle();
+    return true;
+}
+
+
 
 bool MainWindow::trySkipCurrentCutDuringPlayback(){
     if(!m_player || m_prj.cutScenes().empty() || m_timelineDurationSeconds <= 0){
@@ -1634,6 +1748,16 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         }
         if(args.Key() == VirtualKey::R){
             reevaluateClearCutMarkersButton_Click(nullptr, {});
+            args.Handled(true);
+            return true;
+        }
+        if(args.Key() == static_cast<VirtualKey>(188)){
+            (void)nudgeCurrentSceneBoundaryToNearestRap(false);
+            args.Handled(true);
+            return true;
+        }
+        if(args.Key() == static_cast<VirtualKey>(190)){
+            (void)nudgeCurrentSceneBoundaryToNearestRap(true);
             args.Handled(true);
             return true;
         }
@@ -2170,6 +2294,7 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
         L"• Load video: Open .mp4/.mov/.avi source footage for timeline editing.\n"
         L"• Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
         L"• Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
+        L"• Boundary RAP nudging: Ctrl+< shrinks the current scene by nudging both scene edges inward to RAPs, Ctrl+> expands by nudging both edges outward to RAPs.\n"
         L"• Preview start/pause/stop skipping cut scenes.\n"
         L"• Preview window: Tools → Preview in separate window opens a movable second window; use F11 to toggle full-screen.\n"
         L"• Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
