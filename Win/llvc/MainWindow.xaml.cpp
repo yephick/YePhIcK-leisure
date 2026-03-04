@@ -1469,7 +1469,7 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
         return false;
     }
 
-    auto moveBoundaryToDirectionalRap{[&](size_t boundaryIndex, bool moveTowardEarlier, int64_t minExclusive, int64_t maxExclusive){
+    const auto moveBoundaryToDirectionalRap = [&](size_t boundaryIndex, bool moveTowardEarlier, int64_t minExclusive, int64_t maxExclusive) -> bool{
         if(boundaryIndex == 0 || boundaryIndex >= (boundaries.size() - 1)){
             return false;
         }
