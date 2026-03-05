@@ -830,8 +830,8 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
         return;
     }
 
-    vector<int64_t> rapTimes100ns;
-    if(!tryGetRapTimes100ns(rapTimes100ns)){
+    const auto rapTimes100ns{tryGetRapTimes100ns()};
+    if(!rapTimes100ns){
         setStatusMessage(L"Could not read RAP markers from the current source");
         return;
     }
@@ -850,13 +850,13 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
 
     auto replacedCount{0u};
     for(const auto& marker: originalMarkers){
-        if(binary_search(rapTimes100ns.begin(), rapTimes100ns.end(), marker.time100ns)){
+        if(binary_search(rapTimes100ns->begin(), rapTimes100ns->end(), marker.time100ns)){
             updatedMarkers.push_back(marker);
             continue;
         }
 
         ++replacedCount;
-        const auto nextIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), marker.time100ns)};
+        const auto nextIt{lower_bound(rapTimes100ns->begin(), rapTimes100ns->end(), marker.time100ns)};
         if(nextIt != rapTimes100ns.begin()){
             const auto previousRapTime{*(nextIt - 1)};
             updatedMarkers.push_back(IndexedFrameSample{.time100ns = previousRapTime, .duration100ns = 0, .cleanPoint = true, .sampleIndex = 0});
@@ -1428,8 +1428,8 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
         return false;
     }
 
-    vector<int64_t> rapTimes100ns;
-    if(!tryGetRapTimes100ns(rapTimes100ns)){
+    const auto rapTimes100ns{tryGetRapTimes100ns()};
+    if(!rapTimes100ns){
         return false;
     }
 
@@ -1469,13 +1469,13 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
         const auto currentBoundaryTime{boundaries[boundaryIndex]};
         int64_t replacementBoundaryTime{};
         if(moveTowardEarlier){
-            const auto it{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)};
+            const auto it{lower_bound(rapTimes100ns->begin(), rapTimes100ns->end(), currentBoundaryTime)};
             if(it == rapTimes100ns.begin()){
                 return false;
             }
             replacementBoundaryTime = *(it - 1);
         }else{
-            const auto it{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)};
+            const auto it{upper_bound(rapTimes100ns->begin(), rapTimes100ns->end(), currentBoundaryTime)};
             if(it == rapTimes100ns.end()){
                 return false;
             }
@@ -1668,35 +1668,38 @@ void MainWindow::tryFocusTimelineCanvas(FState focusState){
     }
 }
 
-bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns){
+const vector<int64_t>* MainWindow::tryGetRapTimes100ns(){
     if(!m_prj.videoFile()){
-        return false;
+        return nullptr;
     }
 
     const hstring sourcePath{m_prj.videoFile().Path()};
-    if(!m_cachedRapTimes100ns.empty() && sourcePath == m_cachedRapSourcePath){
-        rapTimes100ns = m_cachedRapTimes100ns;
-        return true;
+    if(m_cachedRapLookupAttempted && sourcePath == m_cachedRapSourcePath){
+        return m_cachedRapLookupSucceeded ? &m_cachedRapTimes100ns : nullptr;
     }
+
+    m_cachedRapSourcePath = sourcePath;
+    m_cachedRapTimes100ns.clear();
+    m_cachedRapLookupAttempted = true;
+    m_cachedRapLookupSucceeded = false;
 
     vector<int64_t> collected;
     try{
         collected = collectCleanPointTimes100ns(sourcePath.c_str());
     }catch(const winrt::hresult_error&){
-        return false;
+        return nullptr;
     }
 
     if(collected.empty()){
-        return false;
+        return nullptr;
     }
 
     sort(collected.begin(), collected.end());
     collected.erase(unique(collected.begin(), collected.end()), collected.end());
 
-    m_cachedRapSourcePath = sourcePath;
-    m_cachedRapTimes100ns = collected;
-    rapTimes100ns = std::move(collected);
-    return true;
+    m_cachedRapTimes100ns = std::move(collected);
+    m_cachedRapLookupSucceeded = true;
+    return &m_cachedRapTimes100ns;
 }
 
 bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
@@ -2437,6 +2440,8 @@ void MainWindow::resetProjectState(){
     m_mediaInfo = {};
     m_cachedRapSourcePath.clear();
     m_cachedRapTimes100ns.clear();
+    m_cachedRapLookupAttempted = false;
+    m_cachedRapLookupSucceeded = false;
     m_timelineDurationSeconds = 0;
     TimelineZoomSlider().Value(m_prj.zoom());
     refreshVideoDetailsPanel();
@@ -3028,6 +3033,8 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_mediaInfo = inspected;
     m_cachedRapSourcePath.clear();
     m_cachedRapTimes100ns.clear();
+    m_cachedRapLookupAttempted = false;
+    m_cachedRapLookupSucceeded = false;
 
     wstring status{L"Loaded: "};
     status += file.Name().c_str();
