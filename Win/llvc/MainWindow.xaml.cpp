@@ -857,11 +857,11 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
 
         ++replacedCount;
         const auto nextIt{lower_bound(rapTimes100ns->begin(), rapTimes100ns->end(), marker.time100ns)};
-        if(nextIt != rapTimes100ns.begin()){
+        if(nextIt != rapTimes100ns->begin()){
             const auto previousRapTime{*(nextIt - 1)};
             updatedMarkers.push_back(IndexedFrameSample{.time100ns = previousRapTime, .duration100ns = 0, .cleanPoint = true, .sampleIndex = 0});
         }
-        if(nextIt != rapTimes100ns.end()){
+        if(nextIt != rapTimes100ns->end()){
             const auto nextRapTime{*nextIt};
             updatedMarkers.push_back(IndexedFrameSample{.time100ns = nextRapTime, .duration100ns = 0, .cleanPoint = true, .sampleIndex = 0});
         }
@@ -1470,13 +1470,13 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
         int64_t replacementBoundaryTime{};
         if(moveTowardEarlier){
             const auto it{lower_bound(rapTimes100ns->begin(), rapTimes100ns->end(), currentBoundaryTime)};
-            if(it == rapTimes100ns.begin()){
+            if(it == rapTimes100ns->begin()){
                 return false;
             }
             replacementBoundaryTime = *(it - 1);
         }else{
             const auto it{upper_bound(rapTimes100ns->begin(), rapTimes100ns->end(), currentBoundaryTime)};
-            if(it == rapTimes100ns.end()){
+            if(it == rapTimes100ns->end()){
                 return false;
             }
             replacementBoundaryTime = *it;
