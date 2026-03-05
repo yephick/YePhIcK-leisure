@@ -1467,6 +1467,10 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
         }
 
         const auto currentBoundaryTime{boundaries[boundaryIndex]};
+        if(binary_search(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)){
+            return false;
+        }
+
         int64_t replacementBoundaryTime{};
         if(moveTowardEarlier){
             const auto it{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)};
