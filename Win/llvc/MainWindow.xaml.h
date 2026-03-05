@@ -137,6 +137,8 @@ private:
     double m_timelineDurationSeconds{0};
     uint64_t m_timelineRenderVersion{0};
     MediaInspectionResult m_mediaInfo{};
+    hstring m_cachedRapSourcePath{};
+    vector<int64_t> m_cachedRapTimes100ns{};
     vector<hstring> m_recentVideos{};
     vector<hstring> m_recentProjects{};
     uint32_t m_maxRecentVideos{5};
@@ -226,6 +228,7 @@ private:
     void ensureCurrentTimelineCursorVisible();
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
+    bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns);
     UndoRedoState captureUndoRedoState() const;
     bool isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const;
     void clearUndoRedoHistory();

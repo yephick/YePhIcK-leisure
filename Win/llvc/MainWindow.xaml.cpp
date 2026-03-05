@@ -831,15 +831,8 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
     }
 
     vector<int64_t> rapTimes100ns;
-    try{
-        rapTimes100ns = collectCleanPointTimes100ns(m_prj.videoFile().Path().c_str());
-    }catch(const winrt::hresult_error&){
+    if(!tryGetRapTimes100ns(rapTimes100ns)){
         setStatusMessage(L"Could not read RAP markers from the current source");
-        return;
-    }
-
-    if(rapTimes100ns.empty()){
-        setStatusMessage(L"Could not detect RAP markers in the current source");
         return;
     }
 
@@ -1436,13 +1429,7 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
     }
 
     vector<int64_t> rapTimes100ns;
-    try{
-        rapTimes100ns = collectCleanPointTimes100ns(m_prj.videoFile().Path().c_str());
-    }catch(const winrt::hresult_error&){
-        return false;
-    }
-
-    if(rapTimes100ns.empty()){
+    if(!tryGetRapTimes100ns(rapTimes100ns)){
         return false;
     }
 
@@ -1681,6 +1668,37 @@ void MainWindow::tryFocusTimelineCanvas(FState focusState){
     }
 }
 
+bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns){
+    if(!m_prj.videoFile()){
+        return false;
+    }
+
+    const hstring sourcePath{m_prj.videoFile().Path()};
+    if(!m_cachedRapTimes100ns.empty() && sourcePath == m_cachedRapSourcePath){
+        rapTimes100ns = m_cachedRapTimes100ns;
+        return true;
+    }
+
+    vector<int64_t> collected;
+    try{
+        collected = collectCleanPointTimes100ns(sourcePath.c_str());
+    }catch(const winrt::hresult_error&){
+        return false;
+    }
+
+    if(collected.empty()){
+        return false;
+    }
+
+    sort(collected.begin(), collected.end());
+    collected.erase(unique(collected.begin(), collected.end()), collected.end());
+
+    m_cachedRapSourcePath = sourcePath;
+    m_cachedRapTimes100ns = collected;
+    rapTimes100ns = std::move(collected);
+    return true;
+}
+
 bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
     const auto focused{Input::FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
     const auto focusOnMenu{focused && isInMenuSubtree(focused)};
@@ -1763,7 +1781,7 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         }
     }
 
-    if(focusOnMenu || focusInDialog){
+    if(focusInDialog){
         return false;
     }
 
@@ -2417,6 +2435,8 @@ void MainWindow::resetProjectState(){
     m_prj.reset();
     clearUndoRedoHistory();
     m_mediaInfo = {};
+    m_cachedRapSourcePath.clear();
+    m_cachedRapTimes100ns.clear();
     m_timelineDurationSeconds = 0;
     TimelineZoomSlider().Value(m_prj.zoom());
     refreshVideoDetailsPanel();
@@ -3006,6 +3026,8 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     inspected.sourceCreated = formatDateTimeText(file.DateCreated());
     inspected.sourceModified = formatDateTimeText(basicProperties.DateModified());
     m_mediaInfo = inspected;
+    m_cachedRapSourcePath.clear();
+    m_cachedRapTimes100ns.clear();
 
     wstring status{L"Loaded: "};
     status += file.Name().c_str();
