@@ -230,7 +230,7 @@ private:
     void ensureCurrentTimelineCursorVisible();
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
-    const vector<int64_t>* tryGetRapTimes100ns();
+    bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns);
     UndoRedoState captureUndoRedoState() const;
     bool isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const;
     void clearUndoRedoHistory();
