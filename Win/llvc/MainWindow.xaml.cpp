@@ -1495,21 +1495,24 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
     const auto rightBoundaryIndex{sceneIndex + 1};
 
     auto changed{false};
+    constexpr auto noMinBound{std::numeric_limits<int64_t>::lowest()};
+    constexpr auto noMaxBound{std::numeric_limits<int64_t>::max()};
+
     if(expandScene){
         if(leftBoundaryIndex > 0){
-            changed = moveBoundaryToDirectionalRap(leftBoundaryIndex, true, boundaries[leftBoundaryIndex - 1], boundaries[rightBoundaryIndex]) || changed;
+            changed = moveBoundaryToDirectionalRap(leftBoundaryIndex, true, noMinBound, boundaries[rightBoundaryIndex]) || changed;
         }
         if(rightBoundaryIndex + 1 < boundaries.size()){
             const auto leftTimeAfterMove{leftBoundaryIndex > 0 ? markers[leftBoundaryIndex - 1].time100ns : boundaries[leftBoundaryIndex]};
-            changed = moveBoundaryToDirectionalRap(rightBoundaryIndex, false, leftTimeAfterMove, boundaries[rightBoundaryIndex + 1]) || changed;
+            changed = moveBoundaryToDirectionalRap(rightBoundaryIndex, false, leftTimeAfterMove, noMaxBound) || changed;
         }
     }else{
         if(rightBoundaryIndex + 1 < boundaries.size()){
-            changed = moveBoundaryToDirectionalRap(rightBoundaryIndex, true, boundaries[leftBoundaryIndex], boundaries[rightBoundaryIndex + 1]) || changed;
+            changed = moveBoundaryToDirectionalRap(rightBoundaryIndex, true, boundaries[leftBoundaryIndex], noMaxBound) || changed;
         }
         if(leftBoundaryIndex > 0){
             const auto rightTimeAfterMove{rightBoundaryIndex + 1 < boundaries.size() ? markers[rightBoundaryIndex - 1].time100ns : boundaries[rightBoundaryIndex]};
-            changed = moveBoundaryToDirectionalRap(leftBoundaryIndex, false, boundaries[leftBoundaryIndex - 1], rightTimeAfterMove) || changed;
+            changed = moveBoundaryToDirectionalRap(leftBoundaryIndex, false, noMinBound, rightTimeAfterMove) || changed;
         }
     }
 
