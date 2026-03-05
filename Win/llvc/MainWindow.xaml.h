@@ -141,6 +141,9 @@ private:
     vector<int64_t> m_cachedRapTimes100ns{};
     bool m_cachedRapLookupAttempted{false};
     bool m_cachedRapLookupSucceeded{false};
+    bool m_isRapLookupInProgress{false};
+    bool m_pendingReevaluateAfterRapLookup{false};
+    int m_pendingNudgeDirectionAfterRapLookup{0};
     vector<hstring> m_recentVideos{};
     vector<hstring> m_recentProjects{};
     uint32_t m_maxRecentVideos{5};
@@ -231,6 +234,8 @@ private:
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
     bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns);
+    void queueRapLookup(bool queueReevaluate, int nudgeDirection);
+    fire_and_forget runRapLookupAsync();
     UndoRedoState captureUndoRedoState() const;
     bool isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const;
     void clearUndoRedoHistory();

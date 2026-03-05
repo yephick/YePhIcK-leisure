@@ -832,7 +832,7 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
 
     vector<int64_t> rapTimes100ns;
     if(!tryGetRapTimes100ns(rapTimes100ns)){
-        setStatusMessage(L"Could not read RAP markers from the current source");
+        queueRapLookup(true, 0);
         return;
     }
 
@@ -1430,6 +1430,7 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
 
     vector<int64_t> rapTimes100ns;
     if(!tryGetRapTimes100ns(rapTimes100ns)){
+        queueRapLookup(false, expandScene ? 1 : -1);
         return false;
     }
 
@@ -1683,36 +1684,104 @@ bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns){
     }
 
     const hstring sourcePath{m_prj.videoFile().Path()};
-    if(m_cachedRapLookupAttempted && sourcePath == m_cachedRapSourcePath){
-        if(!m_cachedRapLookupSucceeded){
-            return false;
-        }
-        rapTimes100ns = m_cachedRapTimes100ns;
-        return true;
+    if(sourcePath != m_cachedRapSourcePath || !m_cachedRapLookupAttempted || !m_cachedRapLookupSucceeded){
+        return false;
     }
 
-    m_cachedRapSourcePath = sourcePath;
-    m_cachedRapTimes100ns.clear();
-    m_cachedRapLookupAttempted = true;
-    m_cachedRapLookupSucceeded = false;
+    rapTimes100ns = m_cachedRapTimes100ns;
+    return !rapTimes100ns.empty();
+}
 
+void MainWindow::queueRapLookup(bool queueReevaluate, int nudgeDirection){
+    if(!m_prj.videoFile() || m_prj.videoFile().Path().empty()){
+        return;
+    }
+
+    const hstring sourcePath{m_prj.videoFile().Path()};
+    if(m_cachedRapLookupAttempted && sourcePath == m_cachedRapSourcePath && !m_cachedRapLookupSucceeded){
+        setStatusMessage(L"Could not read RAP markers from the current source");
+        return;
+    }
+
+    if(queueReevaluate){
+        m_pendingReevaluateAfterRapLookup = true;
+    }
+    if(nudgeDirection != 0){
+        m_pendingNudgeDirectionAfterRapLookup = nudgeDirection;
+    }
+
+    if(m_isRapLookupInProgress){
+        setStatusMessage(L"Scanning source for RAP markers...");
+        return;
+    }
+
+    runRapLookupAsync();
+}
+
+fire_and_forget MainWindow::runRapLookupAsync(){
+    const auto weakSelf{get_weak()};
+    const hstring sourcePath{m_prj.videoFile() ? m_prj.videoFile().Path() : hstring{}};
+    if(sourcePath.empty()){
+        co_return;
+    }
+
+    m_isRapLookupInProgress = true;
+    setOperationInProgress(true, true);
+    setStatusMessage(L"Scanning source for RAP markers...");
+
+    vector<int64_t> rapTimes100ns;
+    auto lookupSucceeded{false};
+
+    co_await resume_background();
     try{
         rapTimes100ns = collectCleanPointTimes100ns(sourcePath.c_str());
+        sort(rapTimes100ns.begin(), rapTimes100ns.end());
+        rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
+        lookupSucceeded = !rapTimes100ns.empty();
     }catch(const winrt::hresult_error&){
         rapTimes100ns.clear();
-        return false;
+        lookupSucceeded = false;
     }
 
-    if(rapTimes100ns.empty()){
-        return false;
+    co_await resume_foreground(DispatcherQueue());
+
+    if(const auto self{weakSelf.get()}){
+        const auto sameSourceLoaded{self->m_prj.videoFile() && self->m_prj.videoFile().Path() == sourcePath};
+
+        if(sameSourceLoaded){
+            self->m_cachedRapSourcePath = sourcePath;
+            self->m_cachedRapTimes100ns = lookupSucceeded ? rapTimes100ns : vector<int64_t>{};
+            self->m_cachedRapLookupAttempted = true;
+            self->m_cachedRapLookupSucceeded = lookupSucceeded;
+        }
+
+        self->m_isRapLookupInProgress = false;
+        self->setOperationInProgress(false);
+
+        const auto runReevaluate{self->m_pendingReevaluateAfterRapLookup};
+        const auto nudgeDirection{self->m_pendingNudgeDirectionAfterRapLookup};
+        self->m_pendingReevaluateAfterRapLookup = false;
+        self->m_pendingNudgeDirectionAfterRapLookup = 0;
+
+        if(!sameSourceLoaded){
+            co_return;
+        }
+
+        if(!lookupSucceeded){
+            self->setStatusMessage(L"Could not read RAP markers from the current source");
+            co_return;
+        }
+
+        self->setStatusMessage(L"RAP markers ready");
+        if(runReevaluate){
+            self->reevaluateClearCutMarkersButton_Click(nullptr, {});
+        }
+        if(nudgeDirection < 0){
+            (void)self->nudgeCurrentSceneBoundaryToNearestRap(false);
+        }else if(nudgeDirection > 0){
+            (void)self->nudgeCurrentSceneBoundaryToNearestRap(true);
+        }
     }
-
-    sort(rapTimes100ns.begin(), rapTimes100ns.end());
-    rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
-
-    m_cachedRapTimes100ns = rapTimes100ns;
-    m_cachedRapLookupSucceeded = true;
-    return true;
 }
 
 bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
@@ -2455,6 +2524,9 @@ void MainWindow::resetProjectState(){
     m_cachedRapTimes100ns.clear();
     m_cachedRapLookupAttempted = false;
     m_cachedRapLookupSucceeded = false;
+    m_isRapLookupInProgress = false;
+    m_pendingReevaluateAfterRapLookup = false;
+    m_pendingNudgeDirectionAfterRapLookup = 0;
     m_timelineDurationSeconds = 0;
     TimelineZoomSlider().Value(m_prj.zoom());
     refreshVideoDetailsPanel();
@@ -3048,6 +3120,9 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_cachedRapTimes100ns.clear();
     m_cachedRapLookupAttempted = false;
     m_cachedRapLookupSucceeded = false;
+    m_isRapLookupInProgress = false;
+    m_pendingReevaluateAfterRapLookup = false;
+    m_pendingNudgeDirectionAfterRapLookup = 0;
 
     wstring status{L"Loaded: "};
     status += file.Name().c_str();
