@@ -1849,6 +1849,7 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         }
         if(args.Key() == VirtualKey::M){
             (void)toggleCutMarkerAtCursor();
+            tryFocusTimelineCanvas(FocusState::Programmatic);
             args.Handled(true);
             return true;
         }
