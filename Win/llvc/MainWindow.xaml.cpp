@@ -1576,11 +1576,24 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
 
 
 void MainWindow::stepByFrame(int delta){
-    if(!m_player || delta == 0){
+    if(delta == 0){
         return;
     }
 
-    const auto current {m_player.PlaybackSession().Position().count()};
+    const auto durationFromProject100ns{m_prj.timelineDuration100ns()};
+    const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * 10'000'000.0)};
+    const auto duration100ns{max(durationFromProject100ns, durationFromTimeline100ns)};
+    if(duration100ns <= 0){
+        return;
+    }
+
+    int64_t current{};
+    if(m_player){
+        current = max<int64_t>(0, m_player.PlaybackSession().Position().count());
+    }else if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
+        current = *cursor100ns;
+    }
+
     constexpr auto fallbackFrameDuration100ns{333'667LL}; // ~29.97 fps
 
     vector<int64_t> frameDurations;
@@ -1593,10 +1606,10 @@ void MainWindow::stepByFrame(int delta){
 
     if(frameDurations.empty()){
         for(size_t i{1}; i < m_prj.frameIndex().size(); ++i){
-            const auto sampleCount {static_cast<int64_t>(m_prj.frameIndex()[i].sampleIndex) - static_cast<int64_t>(m_prj.frameIndex()[i - 1].sampleIndex)};
-            const auto timeDelta {m_prj.frameIndex()[i].time100ns - m_prj.frameIndex()[i - 1].time100ns};
-            if(sampleCount > 0 && timeDelta > 0){
-                frameDurations.push_back(timeDelta / sampleCount);
+            const auto sampleCount{static_cast<int64_t>(m_prj.frameIndex()[i].sampleIndex) - static_cast<int64_t>(m_prj.frameIndex()[i - 1].sampleIndex)};
+            const auto dt100ns{m_prj.frameIndex()[i].time100ns - m_prj.frameIndex()[i - 1].time100ns};
+            if(sampleCount > 0 && dt100ns > 0){
+                frameDurations.push_back(dt100ns / sampleCount);
             }
         }
     }
@@ -1607,12 +1620,26 @@ void MainWindow::stepByFrame(int delta){
         frameStep100ns = max(1LL, frameDurations[frameDurations.size() / 2]);
     }
 
-    const auto direction {delta < 0 ? -1 : 1};
-    const auto duration100ns {static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * 10'000'000.0)};
-    const auto target {clamp(current + (direction * frameStep100ns), 0LL, duration100ns)};
-    m_player.PlaybackSession().Position(TimeSpan{target});
-    updateTimelineCursorFromPlayback();
-    ensureCurrentTimelineCursorVisible();
+    const auto direction{delta < 0 ? -1 : 1};
+    const auto target{clamp(current + (direction * frameStep100ns), 0LL, duration100ns)};
+
+    if(m_player){
+        m_player.PlaybackSession().Position(TimeSpan{target});
+        updateTimelineCursorFromPlayback();
+        ensureCurrentTimelineCursorVisible();
+        return;
+    }
+
+    const auto width{TimelineCanvas().Width()};
+    if(width <= 0){
+        return;
+    }
+
+    const auto ratio{clamp(static_cast<double>(target) / duration100ns, 0.0, 1.0)};
+    const auto left{ratio * width};
+    Controls::Canvas::SetLeft(TimelineCursor(), left);
+    ensureTimelineCursorVisible(left);
+    syncTimelineHorizontalScrollBar();
 }
 
 
