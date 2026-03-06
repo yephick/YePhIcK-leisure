@@ -1876,7 +1876,7 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         }
         if(args.Key() == VirtualKey::M){
             (void)toggleCutMarkerAtCursor();
-            tryFocusTimelineCanvas(FocusState::Programmatic);
+            tryFocusTimelineCanvas(FocusState::Keyboard);
             args.Handled(true);
             return true;
         }
@@ -1911,7 +1911,7 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         return false;
     }
 
-    tryFocusTimelineCanvas(FocusState::Programmatic);
+    tryFocusTimelineCanvas(FocusState::Keyboard);
 
     switch(args.Key()){
     case VirtualKey::Space:
