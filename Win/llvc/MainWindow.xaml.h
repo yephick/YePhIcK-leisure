@@ -120,6 +120,8 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction toggleCutMarkerAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     AAction markSceneCutAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     AAction markSceneKeptAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction shrinkSceneToRapMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction expandSceneToRapMenuItem_Click(const Control& sender, const REArgs& args);
     void window_DragOver(const Control& sender, const DEArgs& args);
     AAction window_Drop(const Control& sender, const DEArgs& args);
     void onClosed(const Control& sender, const WEArgs& args);

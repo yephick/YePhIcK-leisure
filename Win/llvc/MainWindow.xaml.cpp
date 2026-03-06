@@ -2436,6 +2436,16 @@ AAction MainWindow::markSceneKeptAtCursorMenuItem_Click(const Control&, const RE
     co_return;
 }
 
+AAction MainWindow::shrinkSceneToRapMenuItem_Click(const Control&, const REArgs&){
+    (void)nudgeCurrentSceneBoundaryToNearestRap(false);
+    co_return;
+}
+
+AAction MainWindow::expandSceneToRapMenuItem_Click(const Control&, const REArgs&){
+    (void)nudgeCurrentSceneBoundaryToNearestRap(true);
+    co_return;
+}
+
 AAction MainWindow::pickAndLoadVideoAsync(){
     FileOpenPicker picker{};
     picker.SuggestedStartLocation(PickerLocationId::VideosLibrary);

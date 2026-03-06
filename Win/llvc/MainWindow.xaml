@@ -49,6 +49,8 @@
                 <MenuFlyoutItem Text="Toggle cut mark (Ctrl+M)" Click="toggleCutMarkerAtCursorMenuItem_Click"/>
                 <MenuFlyoutItem Text="Mark scene cut (Delete)" Click="markSceneCutAtCursorMenuItem_Click"/>
                 <MenuFlyoutItem Text="Mark scene kept (Insert)" Click="markSceneKeptAtCursorMenuItem_Click"/>
+                <MenuFlyoutItem Text="Shrink scene to RAP (Ctrl+<)" Click="shrinkSceneToRapMenuItem_Click"/>
+                <MenuFlyoutItem Text="Expand scene to RAP (Ctrl+>)" Click="expandSceneToRapMenuItem_Click"/>
             </controls:MenuBarItem>
             <controls:MenuBarItem Title="View">
                 <MenuFlyoutItem Text="Zoom in timeline (Ctrl++)" Click="zoomInTimelineMenuItem_Click"/>
@@ -109,6 +111,8 @@
                             <TextBlock Text="Up Arrow: prev. marker" TextWrapping="Wrap"/>
                             <TextBlock Text="Down Arrow: next marker" TextWrapping="Wrap"/>
                             <TextBlock Text="Ctrl+M: toggle cut mark" TextWrapping="Wrap"/>
+                            <TextBlock Text="Ctrl+<: shrink scene to RAP" TextWrapping="Wrap"/>
+                            <TextBlock Text="Ctrl+>: expand scene to RAP" TextWrapping="Wrap"/>
                             <TextBlock Text="Ctrl++: zoom in timeline" TextWrapping="Wrap"/>
                             <TextBlock Text="Ctrl+-: zoom out timeline" TextWrapping="Wrap"/>
                             <TextBlock Text="Delete: cut scene" TextWrapping="Wrap"/>
