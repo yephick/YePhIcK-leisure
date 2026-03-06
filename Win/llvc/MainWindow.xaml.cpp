@@ -1457,6 +1457,8 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
         return false;
     }
 
+    const auto previousCutRanges{m_prj.buildCutRanges100ns()};
+
     const auto moveBoundaryToDirectionalRap = [&](size_t boundaryIndex, bool moveTowardEarlier, int64_t minExclusive, int64_t maxExclusive) -> bool{
         if(boundaryIndex == 0 || boundaryIndex >= (boundaries.size() - 1)){
             return false;
@@ -1530,6 +1532,16 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
     markers.erase(unique(markers.begin(), markers.end(), [](const auto& a, const auto& b){ return a.time100ns == b.time100ns; }), markers.end());
     m_prj.frameIndex(std::move(markers));
     m_prj.refreshSelectedMarkers();
+
+    const auto sceneBoundaries{m_prj.buildSceneBoundaries100ns()};
+    vector<uint32_t> scenes;
+    for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
+        const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
+        if(isTimeInsideRanges(midpoint, previousCutRanges)){
+            scenes.push_back(static_cast<uint32_t>(i));
+        }
+    }
+    m_prj.cutScenes(std::move(scenes));
 
     renderTimelineTicks();
     renderKeyframeTicks();

@@ -108,7 +108,7 @@ bool isInMenuSubtree(const DependencyObject& object){
 bool isInDialogSubtree(const DependencyObject& object){
     auto current{object};
     while(current){
-        if(current.try_as<Controls::ContentDialog>() || current.try_as<Controls::Primitives::Popup>()){
+        if(current.try_as<Controls::ContentDialog>()){
             return true;
         }
         current = Media::VisualTreeHelper::GetParent(current);
