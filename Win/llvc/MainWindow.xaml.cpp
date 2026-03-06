@@ -1595,32 +1595,12 @@ void MainWindow::stepByFrame(int delta){
     }
 
     constexpr auto fallbackFrameDuration100ns{333'667LL}; // ~29.97 fps
-
-    vector<int64_t> frameDurations;
-    frameDurations.reserve(m_prj.frameIndex().size());
-    for(const auto& sample: m_prj.frameIndex()){
-        if(sample.duration100ns > 0){
-            frameDurations.push_back(sample.duration100ns);
+    int64_t frameStep100ns{fallbackFrameDuration100ns};
+    if(m_mediaInfo.frameRate.num > 0 && m_mediaInfo.frameRate.den > 0){
+        const auto exactDuration100ns{(10'000'000LL * static_cast<int64_t>(m_mediaInfo.frameRate.den)) / static_cast<int64_t>(m_mediaInfo.frameRate.num)};
+        if(exactDuration100ns > 0){
+            frameStep100ns = exactDuration100ns;
         }
-    }
-
-    if(frameDurations.empty()){
-        for(size_t i{1}; i < m_prj.frameIndex().size(); ++i){
-            const auto sampleCount{static_cast<int64_t>(m_prj.frameIndex()[i].sampleIndex) - static_cast<int64_t>(m_prj.frameIndex()[i - 1].sampleIndex)};
-            const auto dt100ns{m_prj.frameIndex()[i].time100ns - m_prj.frameIndex()[i - 1].time100ns};
-            if(sampleCount > 0 && dt100ns > 0){
-                const auto derivedFrameDuration{dt100ns / sampleCount};
-                if(derivedFrameDuration > 0){
-                    frameDurations.push_back(derivedFrameDuration);
-                }
-            }
-        }
-    }
-
-    auto frameStep100ns{fallbackFrameDuration100ns};
-    if(!frameDurations.empty()){
-        nth_element(frameDurations.begin(), frameDurations.begin() + frameDurations.size() / 2, frameDurations.end());
-        frameStep100ns = max(1LL, frameDurations[frameDurations.size() / 2]);
     }
 
     const auto direction{delta < 0 ? -1 : 1};
