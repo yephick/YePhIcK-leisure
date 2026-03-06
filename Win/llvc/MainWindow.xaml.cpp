@@ -1720,6 +1720,7 @@ void MainWindow::queueRapLookup(bool queueReevaluate, int nudgeDirection){
 
 fire_and_forget MainWindow::runRapLookupAsync(){
     const auto weakSelf{get_weak()};
+    winrt::apartment_context uiThread;
     const hstring sourcePath{m_prj.videoFile() ? m_prj.videoFile().Path() : hstring{}};
     if(sourcePath.empty()){
         co_return;
@@ -1743,7 +1744,7 @@ fire_and_forget MainWindow::runRapLookupAsync(){
         lookupSucceeded = false;
     }
 
-    co_await resume_foreground(DispatcherQueue());
+    co_await uiThread;
 
     if(const auto self{weakSelf.get()}){
         const auto sameSourceLoaded{self->m_prj.videoFile() && self->m_prj.videoFile().Path() == sourcePath};
