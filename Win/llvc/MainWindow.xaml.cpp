@@ -1498,8 +1498,27 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
         return true;
     };
 
-    const auto leftBoundaryIndex{sceneIndex};
-    const auto rightBoundaryIndex{sceneIndex + 1};
+    const auto sceneCount{boundaries.size() - 1};
+    vector<bool> isCut(sceneCount, false);
+    for(const auto cutSceneIndex: m_prj.cutScenes()){
+        if(cutSceneIndex < sceneCount){
+            isCut[cutSceneIndex] = true;
+        }
+    }
+
+    const auto targetCutState{sceneIndex < sceneCount ? isCut[sceneIndex] : false};
+    auto blockStartSceneIndex{sceneIndex};
+    auto blockEndSceneIndex{sceneIndex};
+
+    while(blockStartSceneIndex > 0 && isCut[blockStartSceneIndex - 1] == targetCutState){
+        --blockStartSceneIndex;
+    }
+    while((blockEndSceneIndex + 1) < sceneCount && isCut[blockEndSceneIndex + 1] == targetCutState){
+        ++blockEndSceneIndex;
+    }
+
+    const auto leftBoundaryIndex{blockStartSceneIndex};
+    const auto rightBoundaryIndex{blockEndSceneIndex + 1};
 
     auto changed{false};
     constexpr auto noMinBound{std::numeric_limits<int64_t>::lowest()};
