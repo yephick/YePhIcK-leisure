@@ -1609,7 +1609,10 @@ void MainWindow::stepByFrame(int delta){
             const auto sampleCount{static_cast<int64_t>(m_prj.frameIndex()[i].sampleIndex) - static_cast<int64_t>(m_prj.frameIndex()[i - 1].sampleIndex)};
             const auto dt100ns{m_prj.frameIndex()[i].time100ns - m_prj.frameIndex()[i - 1].time100ns};
             if(sampleCount > 0 && dt100ns > 0){
-                frameDurations.push_back(dt100ns / sampleCount);
+                const auto derivedFrameDuration{dt100ns / sampleCount};
+                if(derivedFrameDuration > 0){
+                    frameDurations.push_back(derivedFrameDuration);
+                }
             }
         }
     }
