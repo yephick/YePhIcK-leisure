@@ -95,7 +95,7 @@
             <Button x:Name="CheatSheetOpenMarker" Width="26" Height="64" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0" Padding="0"
                     Content="❮" Click="cheatSheetOpenMarker_Click" ToolTipService.ToolTip="Show quick actions" IsTabStop="False"/>
 
-            <Border x:Name="CheatSheetPanel" Width="220" HorizontalAlignment="Right" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
+            <Border x:Name="CheatSheetPanel" Width="242" HorizontalAlignment="Right" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
                     BorderBrush="#707070" BorderThickness="1" Background="#E6101010" IsTabStop="False" Visibility="Collapsed">
                 <Grid IsTabStop="False">
                     <Button x:Name="CheatSheetCollapseMarker" Width="24" HorizontalAlignment="Left" VerticalAlignment="Stretch" Padding="0"
