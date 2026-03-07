@@ -1,6 +1,9 @@
 ﻿module;
 
 #include <Windows.h>
+#include <winrt/Microsoft.UI.Xaml.h>
+#include <winrt/Microsoft.UI.Xaml.Controls.h>
+#include <winrt/Microsoft.UI.Xaml.Media.h>
 
 export module llvc.Utils;
 
@@ -9,6 +12,9 @@ import std;
 export namespace llvc{
 
 using namespace std;
+
+bool isInMenuSubtree(const winrt::Microsoft::UI::Xaml::DependencyObject& object);
+bool isInDialogSubtree(const winrt::Microsoft::UI::Xaml::DependencyObject& object);
 
 struct WindowPlacementState final{
     int32_t left{};
@@ -35,6 +41,30 @@ bool applyWindowPlacement(HWND hwnd, const WindowPlacementState& state, HWND fal
 namespace llvc{
 
 using namespace std;
+using namespace winrt;
+using namespace Microsoft::UI::Xaml;
+
+bool isInMenuSubtree(const DependencyObject& object){
+    auto current{object};
+    while(current){
+        if(current.try_as<Controls::MenuBar>() || current.try_as<Controls::MenuBarItem>() || current.try_as<Controls::MenuFlyoutItem>() || current.try_as<Controls::MenuFlyoutSubItem>() || current.try_as<Controls::MenuFlyoutPresenter>()){
+            return true;
+        }
+        current = Media::VisualTreeHelper::GetParent(current);
+    }
+    return false;
+}
+
+bool isInDialogSubtree(const DependencyObject& object){
+    auto current{object};
+    while(current){
+        if(current.try_as<Controls::ContentDialog>()){
+            return true;
+        }
+        current = Media::VisualTreeHelper::GetParent(current);
+    }
+    return false;
+}
 
 wstring trim(wstring value){
     const auto first{value.find_first_not_of(L" \t\r\n")};

@@ -20,7 +20,6 @@ import llvc.Utils;
 using namespace llvc;
 using namespace std;
 using namespace winrt;
-using namespace Microsoft::UI::Xaml;
 
 namespace winrt::llvc::implementation{
 
@@ -91,28 +90,6 @@ vector<hstring> splitRecentItems(const wstring& source){
         start = pos + 1;
     }
     return items;
-}
-
-bool isInMenuSubtree(const DependencyObject& object){
-    auto current{object};
-    while(current){
-        if(current.try_as<Controls::MenuBar>() || current.try_as<Controls::MenuBarItem>() || current.try_as<Controls::MenuFlyoutItem>() || current.try_as<Controls::MenuFlyoutSubItem>() || current.try_as<Controls::MenuFlyoutPresenter>()){
-            return true;
-        }
-        current = Media::VisualTreeHelper::GetParent(current);
-    }
-    return false;
-}
-
-bool isInDialogSubtree(const DependencyObject& object){
-    auto current{object};
-    while(current){
-        if(current.try_as<Controls::ContentDialog>()){
-            return true;
-        }
-        current = Media::VisualTreeHelper::GetParent(current);
-    }
-    return false;
 }
 
 vector<int64_t> buildCleanKeyframeTimes100ns(const vector<::llvc::IndexedFrameSample>& index){

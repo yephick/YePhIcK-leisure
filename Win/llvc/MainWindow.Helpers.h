@@ -25,8 +25,6 @@ wstring formatRatio(uint32_t num, uint32_t den, const wstring& suffix);
 wstring joinRecentItems(const vector<winrt::hstring>& values);
 vector<winrt::hstring> splitRecentItems(const wstring& source);
 
-bool isInMenuSubtree(const winrt::Microsoft::UI::Xaml::DependencyObject& object);
-bool isInDialogSubtree(const winrt::Microsoft::UI::Xaml::DependencyObject& object);
 
 vector<int64_t> buildCleanKeyframeTimes100ns(const vector<::llvc::IndexedFrameSample>& index);
 vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(
