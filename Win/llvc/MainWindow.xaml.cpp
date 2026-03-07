@@ -2672,7 +2672,21 @@ AAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& mes
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(Content().XamlRoot());
     dialog.Title(box_value(title));
-    dialog.Content(box_value(message));
+
+    Controls::TextBlock messageText{};
+    messageText.Text(message);
+    messageText.TextWrapping(TextWrapping::Wrap);
+
+    Controls::ScrollViewer messageScroll{};
+    messageScroll.Content(messageText);
+    messageScroll.VerticalScrollBarVisibility(Controls::ScrollBarVisibility::Auto);
+    messageScroll.VerticalScrollMode(Controls::ScrollMode::Enabled);
+    messageScroll.HorizontalScrollBarVisibility(Controls::ScrollBarVisibility::Disabled);
+    messageScroll.HorizontalScrollMode(Controls::ScrollMode::Disabled);
+    messageScroll.MaxHeight(360);
+    messageScroll.MinWidth(420);
+
+    dialog.Content(messageScroll);
     dialog.CloseButtonText(L"OK");
     co_await dialog.ShowAsync();
 }
