@@ -99,6 +99,11 @@ LRESULT CALLBACK MainWindowSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         self->requestExportCancel();
     }
 
+    if(msg == WM_SETCURSOR && self->isLongOperationInProgress()){
+        ::SetCursor(::LoadCursorW(nullptr, IDC_WAIT));
+        return TRUE;
+    }
+
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
@@ -856,6 +861,10 @@ bool MainWindow::isExportInProgressForClosePrompt() const{
     return m_isExportInProgress;
 }
 
+bool MainWindow::isLongOperationInProgress() const{
+    return m_isLongOperationInProgress;
+}
+
 void MainWindow::requestExportCancel(){
     m_cancelExportRequested = true;
     setStatusMessage(L"Canceling export...");
@@ -1044,6 +1053,9 @@ void MainWindow::audioVolumeSlider_ValueChanged(const Control&, const RBVArgs& a
     (void)pushUndoStateIfChanged();
     m_prj.audioVolumePct(static_cast<int32_t>(lround(args.NewValue())));
     updateAudioUiAndPlaybackState();
+    if(m_prj.keepAudio() && m_prj.audioVolumePct() > 100){
+        setStatusMessage(L"Preview audio is capped at 100%; export still uses the full configured boost");
+    }
     updateWindowTitle();
     refreshStatusInfoSection();
 }
@@ -2810,6 +2822,8 @@ void MainWindow::refreshStatusInfoSection(){
 }
 
 void MainWindow::setOperationInProgress(bool active, bool indeterminate){
+    m_isLongOperationInProgress = active;
+
     if(active){
         OperationProgressBar().IsIndeterminate(indeterminate);
         if(!indeterminate){
@@ -2821,6 +2835,11 @@ void MainWindow::setOperationInProgress(bool active, bool indeterminate){
     OperationProgressBar().Visibility(active ? Visibility::Visible : Visibility::Collapsed);
     CancelExportButton().Visibility((active && m_isExportInProgress) ? Visibility::Visible : Visibility::Collapsed);
     CancelExportButton().IsEnabled(active && m_isExportInProgress);
+
+    if(const auto hwnd{getWindowHandle()}){
+        ::SetCursor(::LoadCursorW(nullptr, active ? IDC_WAIT : IDC_ARROW));
+        ::PostMessageW(hwnd, WM_SETCURSOR, reinterpret_cast<WPARAM>(hwnd), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    }
 }
 
 void MainWindow::setOperationProgress(double percent){
@@ -3300,6 +3319,10 @@ void MainWindow::updateAudioUiAndPlaybackState(){
     AudioVolumeSlider().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
     AudioVolumeSlider().Value(static_cast<double>(m_prj.audioVolumePct()));
     AudioVolumeIconText().Text(audioVolumeGlyph(hasAudio && !audioHardDisabled && m_prj.keepAudio(), m_prj.audioVolumePct()));
+
+    const auto showPreviewBoostHint{hasAudio && !audioHardDisabled && m_prj.keepAudio() && m_prj.audioVolumePct() > 100};
+    AudioPreviewBoostHintText().Visibility(showPreviewBoostHint ? Visibility::Visible : Visibility::Collapsed);
+
     m_isApplyingUndoRedoState = previousGuard;
     applyAudioSettingsToPlayer();
 }
