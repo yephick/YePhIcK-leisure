@@ -129,7 +129,6 @@ struct MainWindow: MainWindowT<MainWindow>{
     void onPositionTimerTick(const Control& sender, const Control& args);
     void cancelExportButton_Click(const Control& sender, const REArgs& args);
     bool isExportInProgressForClosePrompt() const;
-    bool isLongOperationInProgress() const;
     void requestExportCancel();
 
 private:
@@ -153,7 +152,6 @@ private:
     hstring m_projectPath{};
     bool m_isClosing{false};
     bool m_isExportInProgress{false};
-    bool m_isLongOperationInProgress{false};
     std::atomic_bool m_cancelExportRequested{false};
     bool m_resumeTimelineRenderAfterExport{false};
     bool m_isTimelineDragging{false};
