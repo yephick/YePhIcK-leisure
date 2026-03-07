@@ -108,7 +108,6 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction exportVideoMenuItem_Click(const Control& sender, const REArgs& args);
     AAction recentVideoMenuItem_Click(const Control& sender, const REArgs& args);
     AAction recentProjectMenuItem_Click(const Control& sender, const REArgs& args);
-    AAction propertiesMenuItem_Click(const Control& sender, const REArgs& args);
     AAction exitMenuItem_Click(const Control& sender, const REArgs& args);
     AAction manualMenuItem_Click(const Control& sender, const REArgs& args);
     AAction aboutMenuItem_Click(const Control& sender, const REArgs& args);
@@ -203,7 +202,6 @@ private:
     void addRecentProject(const hstring& path);
     AAction showInfoDialogAsync(const hstring& title, const hstring& message);
     AAction openFromLaunchArgumentsAsync(const hstring& arguments);
-    AAction showPropertiesDialogAsync();
     AAction showOptionsDialogAsync();
     AAction openProjectFileAsync(const SFile& file);
     AAction saveProjectFileAsync(const SFile& file);
