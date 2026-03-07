@@ -241,50 +241,45 @@ wstring decodeXmlEntities(wstring text){
     return text;
 }
 
-optional<wstring> tryReadVisualElementsDescriptionFromManifestPath(const filesystem::path& manifestPath){
-    if(!filesystem::exists(manifestPath)){
-        return nullopt;
-    }
-
+wstring tryReadVisualElementsDescriptionFromManifestPath(const filesystem::path& manifestPath){
     ifstream file{manifestPath, ios::binary};
     if(!file){
-        return nullopt;
+        return {};
     }
 
     string xmlBytes{istreambuf_iterator<char>{file}, istreambuf_iterator<char>{}};
     if(xmlBytes.empty()){
-        return nullopt;
+        return {};
     }
 
     static constexpr string_view key{"Description=\""};
     const auto visualElementsPos{xmlBytes.find("VisualElements")};
     if(visualElementsPos == string::npos){
-        return nullopt;
+        return {};
     }
 
     const auto descStart{xmlBytes.find(key, visualElementsPos)};
     if(descStart == string::npos){
-        return nullopt;
+        return {};
     }
 
     const auto valueStart{descStart + key.size()};
     const auto valueEnd{xmlBytes.find('"', valueStart)};
     if(valueEnd == string::npos || valueEnd <= valueStart){
-        return nullopt;
+        return {};
     }
 
-    string descriptionUtf8{xmlBytes.substr(valueStart, valueEnd - valueStart)};
+    const string descriptionUtf8{xmlBytes.substr(valueStart, valueEnd - valueStart)};
     if(descriptionUtf8.empty()){
-        return nullopt;
+        return {};
     }
 
     const int wideLen{MultiByteToWideChar(CP_UTF8, 0, descriptionUtf8.c_str(), static_cast<int>(descriptionUtf8.size()), nullptr, 0)};
     if(wideLen <= 0){
-        return nullopt;
+        return {};
     }
 
-    wstring description;
-    description.resize(static_cast<size_t>(wideLen));
+    wstring description(static_cast<size_t>(wideLen), L'\0');
     const auto converted{MultiByteToWideChar(
         CP_UTF8,
         0,
@@ -293,32 +288,10 @@ optional<wstring> tryReadVisualElementsDescriptionFromManifestPath(const filesys
         description.data(),
         wideLen)};
     if(converted <= 0){
-        return nullopt;
+        return {};
     }
 
     return decodeXmlEntities(move(description));
-}
-
-optional<wstring> tryReadVisualElementsDescriptionFromManifestFile(){
-    try{
-        const auto installedPath{filesystem::path{Package::Current().InstalledLocation().Path().c_str()}};
-        if(const auto description{tryReadVisualElementsDescriptionFromManifestPath(installedPath / L"AppxManifest.xml")}){
-            return description;
-        }
-    }catch(...){
-    }
-
-    const array<filesystem::path, 3> localCandidates{{
-        filesystem::current_path() / L"Package.appxmanifest",
-        filesystem::current_path() / L"Win" / L"llvc" / L"Package.appxmanifest",
-        filesystem::current_path().parent_path() / L"Package.appxmanifest"}};
-    for(const auto& candidate : localCandidates){
-        if(const auto description{tryReadVisualElementsDescriptionFromManifestPath(candidate)}){
-            return description;
-        }
-    }
-
-    return nullopt;
 }
 
 wstring getAppManifestVersionString(){
@@ -337,27 +310,12 @@ wstring getAppManifestVersionString(){
 }
 
 wstring getAppManifestDescriptionString(){
-    if(const auto manifestDescription{tryReadVisualElementsDescriptionFromManifestFile()}){
-        return *manifestDescription;
-    }
-
     try{
-        const auto appDescription{AppInfo::Current().DisplayInfo().Description()};
-        if(!appDescription.empty()){
-            return appDescription.c_str();
-        }
+        const auto installedPath{filesystem::path{Package::Current().InstalledLocation().Path().c_str()}};
+        return tryReadVisualElementsDescriptionFromManifestPath(installedPath / L"AppxManifest.xml");
     }catch(...){
+        return {};
     }
-
-    try{
-        const auto packageDescription{Package::Current().Description()};
-        if(!packageDescription.empty()){
-            return packageDescription.c_str();
-        }
-    }catch(...){
-    }
-
-    return L"No description available.";
 }
 
 bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
