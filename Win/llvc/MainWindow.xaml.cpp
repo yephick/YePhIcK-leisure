@@ -1,7 +1,6 @@
 ﻿#include "pch.h"
 #include "MainWindow.xaml.h"
 #include "MainWindow.g.cpp"
-#include "MainWindow.Helpers.h"
 
 
 #include <mfapi.h>
@@ -39,6 +38,10 @@ import llvc.Utils;
 
 #pragma comment(lib, "Shell32.lib")
 #pragma comment(lib, "Comctl32.lib")
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfreadwrite.lib")
+#pragma comment(lib, "mfuuid.lib")
+
 
 using namespace std;
 using namespace winrt;

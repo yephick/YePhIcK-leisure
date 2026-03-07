@@ -132,7 +132,6 @@
     <ClInclude Include="MainWindow.xaml.h">
       <DependentUpon>MainWindow.xaml</DependentUpon>
     </ClInclude>
-    <ClInclude Include="MainWindow.Helpers.h" />
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml" />
@@ -149,7 +148,6 @@
     <ClCompile Include="MainWindow.xaml.cpp">
       <DependentUpon>MainWindow.xaml</DependentUpon>
     </ClCompile>
-    <ClCompile Include="MainWindow.Helpers.cpp" />
     <ClCompile Include="MainWindow.Export.cpp" />
     <ClCompile Include="Generated Files\module.g.cpp" />
     <ClCompile Include="Project.ixx" />

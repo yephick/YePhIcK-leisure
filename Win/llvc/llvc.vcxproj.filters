@@ -12,7 +12,6 @@
   <ItemGroup>
     <ClCompile Include="pch.cpp" />
     <ClCompile Include="Generated Files\module.g.cpp" />
-    <ClCompile Include="MainWindow.Helpers.cpp" />
     <ClCompile Include="MainWindow.Export.cpp" />
     <ClCompile Include="Project.ixx" />
     <ClCompile Include="Timeline.ixx" />
@@ -21,7 +20,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
-    <ClInclude Include="MainWindow.Helpers.h" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\Wide310x150Logo.png">

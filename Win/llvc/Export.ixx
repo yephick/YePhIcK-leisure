@@ -25,9 +25,6 @@
 
 #include <wil/resource.h>
 
-#pragma comment(lib, "mfplat.lib")
-#pragma comment(lib, "mfreadwrite.lib")
-#pragma comment(lib, "mfuuid.lib")
 
 export module llvc.Export;
 
@@ -127,7 +124,11 @@ KeyFrameCadenceInfo analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoS
     constexpr uint32_t maxSamplesToInspect{900};
     constexpr int64_t maxSpan100ns{60LL * 10'000'000LL};
 
-    check_hresult(reader->SetCurrentPosition(GUID_NULL, winrt::box_value(int64_t{0})));
+    PROPVARIANT startPos{};
+    startPos.vt = VT_I8;
+    startPos.hVal.QuadPart = 0;
+    check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
+    PropVariantClear(&startPos);
 
     uint32_t sampledFrames{};
     uint32_t keyFrames{};

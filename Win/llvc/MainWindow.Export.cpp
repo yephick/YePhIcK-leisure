@@ -1,6 +1,5 @@
 ﻿#include "pch.h"
 #include "MainWindow.xaml.h"
-#include "MainWindow.Helpers.h"
 
 #include <limits>
 
@@ -16,6 +15,10 @@
 
 #include <winrt/Windows.Storage.h>
 
+
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfreadwrite.lib")
+#pragma comment(lib, "mfuuid.lib")
 import llvc.Export;
 
 namespace winrt::llvc::implementation{
