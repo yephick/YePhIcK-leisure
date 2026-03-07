@@ -2471,11 +2471,10 @@ AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
     const auto manifestVersion{getAppManifestVersionString()};
     const auto manifestDescription{getAppManifestDescriptionString()};
     const wstring aboutText{
-        L"ClipRazor: Lossless Video Cutter\n"
+        manifestDescription
+        + L"\n\n"
         + wstring{L"Version "}
         + manifestVersion
-        + L"\n\n"
-        + manifestDescription
         + L"\n\n"
         + L"\xA9 02'2026 YePhIcK"};
     co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", hstring{aboutText.c_str()});
