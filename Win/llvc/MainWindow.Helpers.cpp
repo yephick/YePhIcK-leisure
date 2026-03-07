@@ -5,7 +5,6 @@
 #include <array>
 #include <format>
 #include <limits>
-#include <numeric>
 
 #include <mfapi.h>
 #include <mfidl.h>

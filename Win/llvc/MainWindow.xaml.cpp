@@ -11,7 +11,6 @@
 #include <ctime>
 #include <cwctype>
 #include <cwchar>
-#include <filesystem>
 #include <fstream>
 #include <format>
 #include <limits>
