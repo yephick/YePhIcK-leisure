@@ -3096,7 +3096,9 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         startPos.hVal.QuadPart = 0;
         check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
         PropVariantClear(&startPos);
-        analyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen, result);
+        const auto cadence{analyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen)};
+        result.keyFrameSummary = cadence.summary;
+        result.keyFrameInterval = cadence.interval;
     }
 
     if(sourceIsAvi && audioCount > 0){

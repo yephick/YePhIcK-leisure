@@ -20,6 +20,8 @@ struct IndexedFrameSample{
     uint32_t sampleIndex{};
 };
 
+vector<int64_t> buildCleanKeyframeTimes100ns(const vector<IndexedFrameSample>& index);
+
 struct Project final{
     using AAction = ::winrt::Windows::Foundation::IAsyncAction;
     using SFile = ::winrt::Windows::Storage::StorageFile;
@@ -90,6 +92,18 @@ private:
 namespace llvc{
 
 using namespace std;
+
+vector<int64_t> buildCleanKeyframeTimes100ns(const vector<IndexedFrameSample>& index){
+    vector<int64_t> times;
+    times.reserve(index.size());
+    for(const auto& sample: index){
+        if(sample.cleanPoint){
+            times.push_back(sample.time100ns);
+        }
+    }
+    return times;
+}
+
 using namespace winrt;
 using namespace winrt::Windows::Storage;
 
