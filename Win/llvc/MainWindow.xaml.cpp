@@ -222,6 +222,105 @@ wstring BuildUnsupportedAviReason(const wstring& detail){
     return detail;
 }
 
+wstring decodeXmlEntities(wstring text){
+    const array<pair<wstring, wstring>, 5> replacements{{
+        {L"&apos;", L"'"},
+        {L"&quot;", L"\""},
+        {L"&amp;", L"&"},
+        {L"&lt;", L"<"},
+        {L"&gt;", L">"}}};
+
+    for(const auto& [from, to] : replacements){
+        size_t pos{};
+        while((pos = text.find(from, pos)) != wstring::npos){
+            text.replace(pos, from.size(), to);
+            pos += to.size();
+        }
+    }
+
+    return text;
+}
+
+optional<wstring> tryReadVisualElementsDescriptionFromManifestPath(const filesystem::path& manifestPath){
+    if(!filesystem::exists(manifestPath)){
+        return nullopt;
+    }
+
+    ifstream file{manifestPath, ios::binary};
+    if(!file){
+        return nullopt;
+    }
+
+    string xmlBytes{istreambuf_iterator<char>{file}, istreambuf_iterator<char>{}};
+    if(xmlBytes.empty()){
+        return nullopt;
+    }
+
+    static constexpr string_view key{"Description=\""};
+    const auto visualElementsPos{xmlBytes.find("VisualElements")};
+    if(visualElementsPos == string::npos){
+        return nullopt;
+    }
+
+    const auto descStart{xmlBytes.find(key, visualElementsPos)};
+    if(descStart == string::npos){
+        return nullopt;
+    }
+
+    const auto valueStart{descStart + key.size()};
+    const auto valueEnd{xmlBytes.find('"', valueStart)};
+    if(valueEnd == string::npos || valueEnd <= valueStart){
+        return nullopt;
+    }
+
+    string descriptionUtf8{xmlBytes.substr(valueStart, valueEnd - valueStart)};
+    if(descriptionUtf8.empty()){
+        return nullopt;
+    }
+
+    const int wideLen{MultiByteToWideChar(CP_UTF8, 0, descriptionUtf8.c_str(), static_cast<int>(descriptionUtf8.size()), nullptr, 0)};
+    if(wideLen <= 0){
+        return nullopt;
+    }
+
+    wstring description;
+    description.resize(static_cast<size_t>(wideLen));
+    const auto converted{MultiByteToWideChar(
+        CP_UTF8,
+        0,
+        descriptionUtf8.c_str(),
+        static_cast<int>(descriptionUtf8.size()),
+        description.data(),
+        wideLen)};
+    if(converted <= 0){
+        return nullopt;
+    }
+
+    return decodeXmlEntities(move(description));
+}
+
+optional<wstring> tryReadVisualElementsDescriptionFromManifestFile(){
+    try{
+        const auto installedPath{filesystem::path{Package::Current().InstalledLocation().Path().c_str()}};
+        if(const auto description{tryReadVisualElementsDescriptionFromManifestPath(installedPath / L"AppxManifest.xml")}){
+            return description;
+        }
+    }catch(...){
+    }
+
+    const array<filesystem::path, 3> localCandidates{{
+        filesystem::current_path() / L"Package.appxmanifest",
+        filesystem::current_path() / L"Win" / L"llvc" / L"Package.appxmanifest",
+        filesystem::current_path().parent_path() / L"Package.appxmanifest"}};
+    for(const auto& candidate : localCandidates){
+        if(const auto description{tryReadVisualElementsDescriptionFromManifestPath(candidate)}){
+            return description;
+        }
+    }
+
+    return nullopt;
+}
+
 wstring getAppManifestVersionString(){
     try{
         const auto version{Package::Current().Id().Version()};
@@ -238,6 +337,10 @@ wstring getAppManifestVersionString(){
 }
 
 wstring getAppManifestDescriptionString(){
+    if(const auto manifestDescription{tryReadVisualElementsDescriptionFromManifestFile()}){
+        return *manifestDescription;
+    }
+
     try{
         const auto appDescription{AppInfo::Current().DisplayInfo().Description()};
         if(!appDescription.empty()){
