@@ -120,6 +120,8 @@ struct MainWindow: MainWindowT<MainWindow>{
     AAction toggleCutMarkerAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     AAction markSceneCutAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
     AAction markSceneKeptAtCursorMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction shrinkSceneToRapMenuItem_Click(const Control& sender, const REArgs& args);
+    AAction expandSceneToRapMenuItem_Click(const Control& sender, const REArgs& args);
     void window_DragOver(const Control& sender, const DEArgs& args);
     AAction window_Drop(const Control& sender, const DEArgs& args);
     void onClosed(const Control& sender, const WEArgs& args);
@@ -137,6 +139,13 @@ private:
     double m_timelineDurationSeconds{0};
     uint64_t m_timelineRenderVersion{0};
     MediaInspectionResult m_mediaInfo{};
+    hstring m_cachedRapSourcePath{};
+    vector<int64_t> m_cachedRapTimes100ns{};
+    bool m_cachedRapLookupAttempted{false};
+    bool m_cachedRapLookupSucceeded{false};
+    bool m_isRapLookupInProgress{false};
+    bool m_pendingReevaluateAfterRapLookup{false};
+    int m_pendingNudgeDirectionAfterRapLookup{0};
     vector<hstring> m_recentVideos{};
     vector<hstring> m_recentProjects{};
     uint32_t m_maxRecentVideos{5};
@@ -218,6 +227,7 @@ private:
     bool setCutBlockAtTime100ns(int64_t time100ns, bool cutScene);
     bool toggleCutMarkerAtCursor();
     bool markSceneAtCursor(bool cutScene);
+    bool nudgeCurrentSceneBoundaryToNearestRap(bool expandScene);
     bool trySkipCurrentCutDuringPlayback();
     void stepByFrame(int delta);
     bool moveCursorToMarker(int direction);
@@ -225,6 +235,9 @@ private:
     void ensureCurrentTimelineCursorVisible();
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
+    bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns);
+    void queueRapLookup(bool queueReevaluate, int nudgeDirection);
+    fire_and_forget runRapLookupAsync();
     UndoRedoState captureUndoRedoState() const;
     bool isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const;
     void clearUndoRedoHistory();

@@ -831,15 +831,8 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
     }
 
     vector<int64_t> rapTimes100ns;
-    try{
-        rapTimes100ns = collectCleanPointTimes100ns(m_prj.videoFile().Path().c_str());
-    }catch(const winrt::hresult_error&){
-        setStatusMessage(L"Could not read RAP markers from the current source");
-        return;
-    }
-
-    if(rapTimes100ns.empty()){
-        setStatusMessage(L"Could not detect RAP markers in the current source");
+    if(!tryGetRapTimes100ns(rapTimes100ns)){
+        queueRapLookup(true, 0);
         return;
     }
 
@@ -1430,6 +1423,153 @@ bool MainWindow::markSceneAtCursor(bool cutScene){
     return false;
 }
 
+bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
+    if(!m_prj.videoFile() || m_timelineDurationSeconds <= 0){
+        return false;
+    }
+
+    vector<int64_t> rapTimes100ns;
+    if(!tryGetRapTimes100ns(rapTimes100ns)){
+        queueRapLookup(false, expandScene ? 1 : -1);
+        return false;
+    }
+
+    const auto boundaries{m_prj.buildSceneBoundaries100ns()};
+    if(boundaries.size() < 2){
+        return false;
+    }
+
+    const auto cursorTime100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())};
+    if(!cursorTime100ns){
+        return false;
+    }
+
+    auto sceneIndex{boundaries.size() - 2};
+    for(size_t i{}; i + 1 < boundaries.size(); ++i){
+        if(*cursorTime100ns < boundaries[i + 1]){
+            sceneIndex = i;
+            break;
+        }
+    }
+
+    auto markers{m_prj.frameIndex()};
+    if(markers.empty()){
+        return false;
+    }
+
+    const auto previousCutRanges{m_prj.buildCutRanges100ns()};
+
+    const auto moveBoundaryToDirectionalRap = [&](size_t boundaryIndex, bool moveTowardEarlier, int64_t minExclusive, int64_t maxExclusive) -> bool{
+        if(boundaryIndex == 0 || boundaryIndex >= (boundaries.size() - 1)){
+            return false;
+        }
+
+        const auto markerIndex{boundaryIndex - 1};
+        if(markerIndex >= markers.size()){
+            return false;
+        }
+
+        const auto currentBoundaryTime{boundaries[boundaryIndex]};
+        if(binary_search(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)){
+            return false;
+        }
+
+        int64_t replacementBoundaryTime{};
+        if(moveTowardEarlier){
+            const auto it{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)};
+            if(it == rapTimes100ns.begin()){
+                return false;
+            }
+            replacementBoundaryTime = *(it - 1);
+        }else{
+            const auto it{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)};
+            if(it == rapTimes100ns.end()){
+                return false;
+            }
+            replacementBoundaryTime = *it;
+        }
+
+        if(replacementBoundaryTime <= minExclusive || replacementBoundaryTime >= maxExclusive){
+            return false;
+        }
+
+        markers[markerIndex].time100ns = replacementBoundaryTime;
+        markers[markerIndex].cleanPoint = true;
+        return true;
+    };
+
+    const auto sceneCount{boundaries.size() - 1};
+    vector<bool> isCut(sceneCount, false);
+    for(const auto cutSceneIndex: m_prj.cutScenes()){
+        if(cutSceneIndex < sceneCount){
+            isCut[cutSceneIndex] = true;
+        }
+    }
+
+    const auto targetCutState{sceneIndex < sceneCount ? isCut[sceneIndex] : false};
+    auto blockStartSceneIndex{sceneIndex};
+    auto blockEndSceneIndex{sceneIndex};
+
+    while(blockStartSceneIndex > 0 && isCut[blockStartSceneIndex - 1] == targetCutState){
+        --blockStartSceneIndex;
+    }
+    while((blockEndSceneIndex + 1) < sceneCount && isCut[blockEndSceneIndex + 1] == targetCutState){
+        ++blockEndSceneIndex;
+    }
+
+    const auto leftBoundaryIndex{blockStartSceneIndex};
+    const auto rightBoundaryIndex{blockEndSceneIndex + 1};
+
+    auto changed{false};
+    constexpr auto noMinBound{std::numeric_limits<int64_t>::lowest()};
+    constexpr auto noMaxBound{std::numeric_limits<int64_t>::max()};
+
+    if(expandScene){
+        if(leftBoundaryIndex > 0){
+            changed = moveBoundaryToDirectionalRap(leftBoundaryIndex, true, noMinBound, boundaries[rightBoundaryIndex]) || changed;
+        }
+        if(rightBoundaryIndex + 1 < boundaries.size()){
+            const auto leftTimeAfterMove{leftBoundaryIndex > 0 ? markers[leftBoundaryIndex - 1].time100ns : boundaries[leftBoundaryIndex]};
+            changed = moveBoundaryToDirectionalRap(rightBoundaryIndex, false, leftTimeAfterMove, noMaxBound) || changed;
+        }
+    }else{
+        if(rightBoundaryIndex + 1 < boundaries.size()){
+            changed = moveBoundaryToDirectionalRap(rightBoundaryIndex, true, boundaries[leftBoundaryIndex], noMaxBound) || changed;
+        }
+        if(leftBoundaryIndex > 0){
+            const auto rightTimeAfterMove{rightBoundaryIndex + 1 < boundaries.size() ? markers[rightBoundaryIndex - 1].time100ns : boundaries[rightBoundaryIndex]};
+            changed = moveBoundaryToDirectionalRap(leftBoundaryIndex, false, noMinBound, rightTimeAfterMove) || changed;
+        }
+    }
+
+    if(!changed){
+        return false;
+    }
+
+    (void)pushUndoStateIfChanged();
+    sort(markers.begin(), markers.end(), [](const auto& a, const auto& b){ return a.time100ns < b.time100ns; });
+    markers.erase(unique(markers.begin(), markers.end(), [](const auto& a, const auto& b){ return a.time100ns == b.time100ns; }), markers.end());
+    m_prj.frameIndex(std::move(markers));
+    m_prj.refreshSelectedMarkers();
+
+    const auto sceneBoundaries{m_prj.buildSceneBoundaries100ns()};
+    vector<uint32_t> scenes;
+    for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
+        const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
+        if(isTimeInsideRanges(midpoint, previousCutRanges)){
+            scenes.push_back(static_cast<uint32_t>(i));
+        }
+    }
+    m_prj.cutScenes(std::move(scenes));
+
+    renderTimelineTicks();
+    renderKeyframeTicks();
+    renderCutOverlays();
+    updateWindowTitle();
+    return true;
+}
+
+
 
 bool MainWindow::trySkipCurrentCutDuringPlayback(){
     if(!m_player || m_prj.cutScenes().empty() || m_timelineDurationSeconds <= 0){
@@ -1455,43 +1595,53 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
 
 
 void MainWindow::stepByFrame(int delta){
-    if(!m_player || delta == 0){
+    if(delta == 0){
         return;
     }
 
-    const auto current {m_player.PlaybackSession().Position().count()};
+    const auto durationFromProject100ns{m_prj.timelineDuration100ns()};
+    const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * 10'000'000.0)};
+    const auto duration100ns{max(durationFromProject100ns, durationFromTimeline100ns)};
+    if(duration100ns <= 0){
+        return;
+    }
+
+    int64_t current{};
+    if(m_player){
+        current = max<int64_t>(0, m_player.PlaybackSession().Position().count());
+    }else if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
+        current = *cursor100ns;
+    }
+
     constexpr auto fallbackFrameDuration100ns{333'667LL}; // ~29.97 fps
-
-    vector<int64_t> frameDurations;
-    frameDurations.reserve(m_prj.frameIndex().size());
-    for(const auto& sample: m_prj.frameIndex()){
-        if(sample.duration100ns > 0){
-            frameDurations.push_back(sample.duration100ns);
+    int64_t frameStep100ns{fallbackFrameDuration100ns};
+    if(m_mediaInfo.frameRate.num > 0 && m_mediaInfo.frameRate.den > 0){
+        const auto exactDuration100ns{(10'000'000LL * static_cast<int64_t>(m_mediaInfo.frameRate.den)) / static_cast<int64_t>(m_mediaInfo.frameRate.num)};
+        if(exactDuration100ns > 0){
+            frameStep100ns = exactDuration100ns;
         }
     }
 
-    if(frameDurations.empty()){
-        for(size_t i{1}; i < m_prj.frameIndex().size(); ++i){
-            const auto sampleCount {static_cast<int64_t>(m_prj.frameIndex()[i].sampleIndex) - static_cast<int64_t>(m_prj.frameIndex()[i - 1].sampleIndex)};
-            const auto timeDelta {m_prj.frameIndex()[i].time100ns - m_prj.frameIndex()[i - 1].time100ns};
-            if(sampleCount > 0 && timeDelta > 0){
-                frameDurations.push_back(timeDelta / sampleCount);
-            }
-        }
+    const auto direction{delta < 0 ? -1 : 1};
+    const auto target{clamp(current + (direction * frameStep100ns), 0LL, duration100ns)};
+
+    if(m_player){
+        m_player.PlaybackSession().Position(TimeSpan{target});
+        updateTimelineCursorFromPlayback();
+        ensureCurrentTimelineCursorVisible();
+        return;
     }
 
-    auto frameStep100ns{fallbackFrameDuration100ns};
-    if(!frameDurations.empty()){
-        nth_element(frameDurations.begin(), frameDurations.begin() + frameDurations.size() / 2, frameDurations.end());
-        frameStep100ns = max(1LL, frameDurations[frameDurations.size() / 2]);
+    const auto width{TimelineCanvas().Width()};
+    if(width <= 0){
+        return;
     }
 
-    const auto direction {delta < 0 ? -1 : 1};
-    const auto duration100ns {static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * 10'000'000.0)};
-    const auto target {clamp(current + (direction * frameStep100ns), 0LL, duration100ns)};
-    m_player.PlaybackSession().Position(TimeSpan{target});
-    updateTimelineCursorFromPlayback();
-    ensureCurrentTimelineCursorVisible();
+    const auto ratio{clamp(static_cast<double>(target) / duration100ns, 0.0, 1.0)};
+    const auto left{ratio * width};
+    Controls::Canvas::SetLeft(TimelineCursor(), left);
+    ensureTimelineCursorVisible(left);
+    syncTimelineHorizontalScrollBar();
 }
 
 
@@ -1567,6 +1717,115 @@ void MainWindow::tryFocusTimelineCanvas(FState focusState){
     }
 }
 
+bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns){
+    rapTimes100ns.clear();
+
+    if(!m_prj.videoFile()){
+        return false;
+    }
+
+    const hstring sourcePath{m_prj.videoFile().Path()};
+    if(sourcePath != m_cachedRapSourcePath || !m_cachedRapLookupAttempted || !m_cachedRapLookupSucceeded){
+        return false;
+    }
+
+    rapTimes100ns = m_cachedRapTimes100ns;
+    return !rapTimes100ns.empty();
+}
+
+void MainWindow::queueRapLookup(bool queueReevaluate, int nudgeDirection){
+    if(!m_prj.videoFile() || m_prj.videoFile().Path().empty()){
+        return;
+    }
+
+    const hstring sourcePath{m_prj.videoFile().Path()};
+    if(m_cachedRapLookupAttempted && sourcePath == m_cachedRapSourcePath && !m_cachedRapLookupSucceeded){
+        setStatusMessage(L"Could not read RAP markers from the current source");
+        return;
+    }
+
+    if(queueReevaluate){
+        m_pendingReevaluateAfterRapLookup = true;
+    }
+    if(nudgeDirection != 0){
+        m_pendingNudgeDirectionAfterRapLookup = nudgeDirection;
+    }
+
+    if(m_isRapLookupInProgress){
+        setStatusMessage(L"Scanning source for RAP markers...");
+        return;
+    }
+
+    runRapLookupAsync();
+}
+
+fire_and_forget MainWindow::runRapLookupAsync(){
+    const auto weakSelf{get_weak()};
+    winrt::apartment_context uiThread;
+    const hstring sourcePath{m_prj.videoFile() ? m_prj.videoFile().Path() : hstring{}};
+    if(sourcePath.empty()){
+        co_return;
+    }
+
+    m_isRapLookupInProgress = true;
+    setOperationInProgress(true, true);
+    setStatusMessage(L"Scanning source for RAP markers...");
+
+    vector<int64_t> rapTimes100ns;
+    auto lookupSucceeded{false};
+
+    co_await resume_background();
+    try{
+        rapTimes100ns = collectCleanPointTimes100ns(sourcePath.c_str());
+        sort(rapTimes100ns.begin(), rapTimes100ns.end());
+        rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
+        lookupSucceeded = !rapTimes100ns.empty();
+    }catch(const winrt::hresult_error&){
+        rapTimes100ns.clear();
+        lookupSucceeded = false;
+    }
+
+    co_await uiThread;
+
+    if(const auto self{weakSelf.get()}){
+        const auto sameSourceLoaded{self->m_prj.videoFile() && self->m_prj.videoFile().Path() == sourcePath};
+
+        if(sameSourceLoaded){
+            self->m_cachedRapSourcePath = sourcePath;
+            self->m_cachedRapTimes100ns = lookupSucceeded ? rapTimes100ns : vector<int64_t>{};
+            self->m_cachedRapLookupAttempted = true;
+            self->m_cachedRapLookupSucceeded = lookupSucceeded;
+        }
+
+        self->m_isRapLookupInProgress = false;
+        self->setOperationInProgress(false);
+
+        const auto runReevaluate{self->m_pendingReevaluateAfterRapLookup};
+        const auto nudgeDirection{self->m_pendingNudgeDirectionAfterRapLookup};
+        self->m_pendingReevaluateAfterRapLookup = false;
+        self->m_pendingNudgeDirectionAfterRapLookup = 0;
+
+        if(!sameSourceLoaded){
+            co_return;
+        }
+
+        if(!lookupSucceeded){
+            self->setStatusMessage(L"Could not read RAP markers from the current source");
+            co_return;
+        }
+
+        self->setStatusMessage(L"RAP markers ready");
+        if(runReevaluate){
+            self->reevaluateClearCutMarkersButton_Click(nullptr, {});
+        }
+        if(nudgeDirection < 0){
+            (void)self->nudgeCurrentSceneBoundaryToNearestRap(false);
+        }else if(nudgeDirection > 0){
+            (void)self->nudgeCurrentSceneBoundaryToNearestRap(true);
+        }
+    }
+}
+
 bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
     const auto focused{Input::FocusManager::GetFocusedElement(Content().XamlRoot()).try_as<DependencyObject>()};
     const auto focusOnMenu{focused && isInMenuSubtree(focused)};
@@ -1637,9 +1896,19 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
             args.Handled(true);
             return true;
         }
+        if(args.Key() == static_cast<VirtualKey>(188)){
+            (void)nudgeCurrentSceneBoundaryToNearestRap(false);
+            args.Handled(true);
+            return true;
+        }
+        if(args.Key() == static_cast<VirtualKey>(190)){
+            (void)nudgeCurrentSceneBoundaryToNearestRap(true);
+            args.Handled(true);
+            return true;
+        }
     }
 
-    if(focusOnMenu || focusInDialog){
+    if(focusInDialog){
         return false;
     }
 
@@ -1695,11 +1964,14 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
 }
 
 void MainWindow::window_PreviewKeyDown(const Control&, const KRArgs& args){
+    if(args.Handled()){
+        return;
+    }
     (void)handleStorylineKeyDown(args);
 }
 
-void MainWindow::window_KeyDown(const Control&, const KRArgs& args){
-    (void)handleStorylineKeyDown(args);
+void MainWindow::window_KeyDown(const Control&, const KRArgs&){
+    // Keyboard shortcuts are dispatched from PreviewKeyDown to avoid duplicate handling.
 }
 
 void MainWindow::separatePreviewWindowMenuItem_Click(const Control&, const REArgs&){
@@ -2170,6 +2442,7 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
         L"• Load video: Open .mp4/.mov/.avi source footage for timeline editing.\n"
         L"• Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
         L"• Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
+        L"• Boundary RAP nudging: Ctrl+< shrinks the current scene by nudging both scene edges inward to RAPs, Ctrl+> expands by nudging both edges outward to RAPs.\n"
         L"• Preview start/pause/stop skipping cut scenes.\n"
         L"• Preview window: Tools → Preview in separate window opens a movable second window; use F11 to toggle full-screen.\n"
         L"• Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
@@ -2204,6 +2477,16 @@ AAction MainWindow::markSceneCutAtCursorMenuItem_Click(const Control&, const REA
 
 AAction MainWindow::markSceneKeptAtCursorMenuItem_Click(const Control&, const REArgs&){
     (void)markSceneAtCursor(false);
+    co_return;
+}
+
+AAction MainWindow::shrinkSceneToRapMenuItem_Click(const Control&, const REArgs&){
+    (void)nudgeCurrentSceneBoundaryToNearestRap(false);
+    co_return;
+}
+
+AAction MainWindow::expandSceneToRapMenuItem_Click(const Control&, const REArgs&){
+    (void)nudgeCurrentSceneBoundaryToNearestRap(true);
     co_return;
 }
 
@@ -2292,6 +2575,13 @@ void MainWindow::resetProjectState(){
     m_prj.reset();
     clearUndoRedoHistory();
     m_mediaInfo = {};
+    m_cachedRapSourcePath.clear();
+    m_cachedRapTimes100ns.clear();
+    m_cachedRapLookupAttempted = false;
+    m_cachedRapLookupSucceeded = false;
+    m_isRapLookupInProgress = false;
+    m_pendingReevaluateAfterRapLookup = false;
+    m_pendingNudgeDirectionAfterRapLookup = 0;
     m_timelineDurationSeconds = 0;
     TimelineZoomSlider().Value(m_prj.zoom());
     refreshVideoDetailsPanel();
@@ -2881,6 +3171,13 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     inspected.sourceCreated = formatDateTimeText(file.DateCreated());
     inspected.sourceModified = formatDateTimeText(basicProperties.DateModified());
     m_mediaInfo = inspected;
+    m_cachedRapSourcePath.clear();
+    m_cachedRapTimes100ns.clear();
+    m_cachedRapLookupAttempted = false;
+    m_cachedRapLookupSucceeded = false;
+    m_isRapLookupInProgress = false;
+    m_pendingReevaluateAfterRapLookup = false;
+    m_pendingNudgeDirectionAfterRapLookup = 0;
 
     wstring status{L"Loaded: "};
     status += file.Name().c_str();

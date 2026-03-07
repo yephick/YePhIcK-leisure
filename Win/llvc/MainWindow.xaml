@@ -49,6 +49,8 @@
                 <MenuFlyoutItem Text="Toggle cut mark (Ctrl+M)" Click="toggleCutMarkerAtCursorMenuItem_Click"/>
                 <MenuFlyoutItem Text="Mark scene cut (Delete)" Click="markSceneCutAtCursorMenuItem_Click"/>
                 <MenuFlyoutItem Text="Mark scene kept (Insert)" Click="markSceneKeptAtCursorMenuItem_Click"/>
+                <MenuFlyoutItem Text="Shrink scene to RAP (Ctrl+&lt;)" Click="shrinkSceneToRapMenuItem_Click"/>
+                <MenuFlyoutItem Text="Expand scene to RAP (Ctrl+&gt;)" Click="expandSceneToRapMenuItem_Click"/>
             </controls:MenuBarItem>
             <controls:MenuBarItem Title="View">
                 <MenuFlyoutItem Text="Zoom in timeline (Ctrl++)" Click="zoomInTimelineMenuItem_Click"/>
@@ -93,7 +95,7 @@
             <Button x:Name="CheatSheetOpenMarker" Width="26" Height="64" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0" Padding="0"
                     Content="❮" Click="cheatSheetOpenMarker_Click" ToolTipService.ToolTip="Show quick actions" IsTabStop="False"/>
 
-            <Border x:Name="CheatSheetPanel" Width="220" HorizontalAlignment="Right" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
+            <Border x:Name="CheatSheetPanel" Width="242" HorizontalAlignment="Right" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
                     BorderBrush="#707070" BorderThickness="1" Background="#E6101010" IsTabStop="False" Visibility="Collapsed">
                 <Grid IsTabStop="False">
                     <Button x:Name="CheatSheetCollapseMarker" Width="24" HorizontalAlignment="Left" VerticalAlignment="Stretch" Padding="0"
@@ -109,6 +111,8 @@
                             <TextBlock Text="Up Arrow: prev. marker" TextWrapping="Wrap"/>
                             <TextBlock Text="Down Arrow: next marker" TextWrapping="Wrap"/>
                             <TextBlock Text="Ctrl+M: toggle cut mark" TextWrapping="Wrap"/>
+                            <TextBlock Text="Ctrl+&lt;: shrink scene to RAP" TextWrapping="Wrap"/>
+                            <TextBlock Text="Ctrl+&gt;: expand scene to RAP" TextWrapping="Wrap"/>
                             <TextBlock Text="Ctrl++: zoom in timeline" TextWrapping="Wrap"/>
                             <TextBlock Text="Ctrl+-: zoom out timeline" TextWrapping="Wrap"/>
                             <TextBlock Text="Delete: cut scene" TextWrapping="Wrap"/>
