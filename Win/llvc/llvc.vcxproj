@@ -155,7 +155,6 @@
     <ClCompile Include="MainWindow.xaml.cpp">
       <DependentUpon>MainWindow.xaml</DependentUpon>
     </ClCompile>
-    <ClCompile Include="MainWindow.Export.cpp" />
     <ClCompile Include="Generated Files\module.g.cpp" />
     <ClCompile Include="Project.ixx">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
