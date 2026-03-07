@@ -239,15 +239,22 @@ wstring getAppManifestVersionString(){
 
 wstring getAppManifestDescriptionString(){
     try{
-        const auto description{Package::Current().Description()};
-        if(description.empty()){
-            return L"No description available.";
+        const auto appDescription{AppInfo::Current().DisplayInfo().Description()};
+        if(!appDescription.empty()){
+            return appDescription.c_str();
         }
-
-        return description.c_str();
     }catch(...){
-        return L"No description available.";
     }
+
+    try{
+        const auto packageDescription{Package::Current().Description()};
+        if(!packageDescription.empty()){
+            return packageDescription.c_str();
+        }
+    }catch(...){
+    }
+
+    return L"No description available.";
 }
 
 bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
