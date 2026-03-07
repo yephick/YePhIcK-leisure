@@ -2410,7 +2410,7 @@ AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
         + manifestDescription
         + L"\n\n"
         + L"\xA9 02'2026 YePhIcK"};
-    co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", to_hstring(aboutText));
+    co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", hstring{aboutText.c_str()}));
 }
 
 AAction MainWindow::optionsMenuItem_Click(const Control&, const REArgs&){
