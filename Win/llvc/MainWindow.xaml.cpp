@@ -239,7 +239,7 @@ wstring getAppManifestVersionString(){
 
 wstring getAppManifestDescriptionString(){
     try{
-        const auto description{Package::Current().Description().Description()};
+        const auto description{Package::Current().Description()};
         if(description.empty()){
             return L"No description available.";
         }
@@ -2402,7 +2402,7 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
 AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
     const auto manifestVersion{getAppManifestVersionString()};
     const auto manifestDescription{getAppManifestDescriptionString()};
-    const auto aboutText{
+    const wstring aboutText{
         L"ClipRazor: Lossless Video Cutter\n"
         + wstring{L"Version "}
         + manifestVersion
@@ -2410,7 +2410,7 @@ AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
         + manifestDescription
         + L"\n\n"
         + L"\xA9 02'2026 YePhIcK"};
-    co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", aboutText);
+    co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", to_hstring(aboutText));
 }
 
 AAction MainWindow::optionsMenuItem_Click(const Control&, const REArgs&){
