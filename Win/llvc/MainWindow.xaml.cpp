@@ -634,6 +634,7 @@ MainWindow::MainWindow(const hstring& launchArguments){
 
     m_player = MediaPlayer();
     PreviewPlayer().SetMediaPlayer(m_player);
+    updatePreviewPlaceholderVisibility();
 
     m_naturalDurationChangedRevoker = m_player.PlaybackSession().NaturalDurationChanged(auto_revoke, {this, &MainWindow::onNaturalDurationChanged});
 
@@ -1044,6 +1045,9 @@ void MainWindow::audioVolumeSlider_ValueChanged(const Control&, const RBVArgs& a
     (void)pushUndoStateIfChanged();
     m_prj.audioVolumePct(static_cast<int32_t>(lround(args.NewValue())));
     updateAudioUiAndPlaybackState();
+    if(m_prj.keepAudio() && m_prj.audioVolumePct() > 100){
+        setStatusMessage(L"Preview audio is capped at 100%; export still uses the full configured boost");
+    }
     updateWindowTitle();
     refreshStatusInfoSection();
 }
@@ -2032,6 +2036,14 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         Controls::Grid root{};
         root.Background(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0xFF, 0x08, 0x08, 0x08)));
 
+        Controls::Image detachedSplash{};
+        detachedSplash.Source(Media::Imaging::BitmapImage(Uri{L"ms-appx:///Assets/SplashScreen.png"}));
+        detachedSplash.Opacity(0.22);
+        detachedSplash.Stretch(Media::Stretch::UniformToFill);
+        detachedSplash.IsHitTestVisible(false);
+        detachedSplash.HorizontalAlignment(HorizontalAlignment::Stretch);
+        detachedSplash.VerticalAlignment(VerticalAlignment::Stretch);
+
         Controls::MediaPlayerElement detachedPreview{};
         detachedPreview.AreTransportControlsEnabled(true);
         detachedPreview.HorizontalAlignment(HorizontalAlignment::Stretch);
@@ -2057,6 +2069,7 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         root.PreviewKeyDown(detachedKeyHandler);
         root.KeyDown(detachedKeyHandler);
 
+        root.Children().Append(detachedSplash);
         root.Children().Append(detachedPreview);
 
         previewWindow.Content(root);
@@ -2078,10 +2091,13 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
 
         m_separatePreviewClosedRevoker = previewWindow.Closed(auto_revoke, {this, &MainWindow::onSeparatePreviewWindowClosed});
         m_separatePreviewWindow = previewWindow;
+        m_detachedPreviewPlayer = detachedPreview;
+        m_detachedPreviewSplashImage = detachedSplash;
         m_isSeparatePreviewWindowOpen = true;
         m_isSeparatePreviewFullscreen = false;
         m_restorePreviewDetachedOnStartup = true;
         PreviewPlayer().SetMediaPlayer(nullptr);
+        updatePreviewPlaceholderVisibility();
 
         if(m_restorePreviewFullscreenOnStartup){
             (void)toggleSeparatePreviewFullscreen();
@@ -2104,9 +2120,12 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
     }
 
     PreviewPlayer().SetMediaPlayer(m_player);
+    m_detachedPreviewPlayer = nullptr;
+    m_detachedPreviewSplashImage = nullptr;
     m_isSeparatePreviewWindowOpen = false;
     m_isSeparatePreviewFullscreen = false;
     m_restorePreviewDetachedOnStartup = false;
+    updatePreviewPlaceholderVisibility();
     SeparatePreviewWindowMenuItem().IsChecked(false);
     setStatusMessage(L"Preview restored to main window");
     return true;
@@ -2128,6 +2147,9 @@ void MainWindow::onSeparatePreviewWindowClosed(const Control&, const WEArgs&){
         m_restorePreviewDetachedOnStartup = false;
     }
     PreviewPlayer().SetMediaPlayer(m_player);
+    m_detachedPreviewPlayer = nullptr;
+    m_detachedPreviewSplashImage = nullptr;
+    updatePreviewPlaceholderVisibility();
     SeparatePreviewWindowMenuItem().IsChecked(false);
     setStatusMessage(L"Preview restored to main window");
 }
@@ -2591,6 +2613,7 @@ void MainWindow::resetProjectState(){
         m_player.Pause();
     }
     m_player.Source(nullptr);
+    updatePreviewPlaceholderVisibility();
 
     ++m_timelineRenderVersion;
     m_projectPath.clear();
@@ -2782,6 +2805,15 @@ wstring MainWindow::formatDateTimeText(const winrt::Windows::Foundation::DateTim
     }
 
     return timestamp;
+}
+
+void MainWindow::updatePreviewPlaceholderVisibility(){
+    const auto hasLoadedVideo{m_prj.videoFile() && !m_prj.videoFile().Path().empty()};
+
+    if(m_detachedPreviewPlayer && m_detachedPreviewSplashImage){
+        m_detachedPreviewPlayer.Visibility(hasLoadedVideo ? Visibility::Visible : Visibility::Collapsed);
+        m_detachedPreviewSplashImage.Visibility(hasLoadedVideo ? Visibility::Collapsed : Visibility::Visible);
+    }
 }
 
 void MainWindow::setStatusMessage(const wstring& message){
@@ -3203,6 +3235,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
 
     const auto source{Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
     m_player.Source(source);
+    updatePreviewPlaceholderVisibility();
     m_player.IsMuted(false);
     m_prj.videoFile(file);
     refreshVideoDetailsPanel();
@@ -3300,6 +3333,10 @@ void MainWindow::updateAudioUiAndPlaybackState(){
     AudioVolumeSlider().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
     AudioVolumeSlider().Value(static_cast<double>(m_prj.audioVolumePct()));
     AudioVolumeIconText().Text(audioVolumeGlyph(hasAudio && !audioHardDisabled && m_prj.keepAudio(), m_prj.audioVolumePct()));
+
+    const auto showPreviewBoostHint{hasAudio && !audioHardDisabled && m_prj.keepAudio() && m_prj.audioVolumePct() > 100};
+    AudioPreviewBoostHintText().Visibility(showPreviewBoostHint ? Visibility::Visible : Visibility::Collapsed);
+
     m_isApplyingUndoRedoState = previousGuard;
     applyAudioSettingsToPlayer();
 }

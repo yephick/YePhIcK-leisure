@@ -141,8 +141,8 @@
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Left" VerticalAlignment="Center">
                     <CheckBox x:Name="KeepAudioCheckBox" Content="Keep audio" IsEnabled="False" VerticalAlignment="Center" Checked="keepAudioCheckBox_Changed" Unchecked="keepAudioCheckBox_Changed"/>
-                    <TextBlock Text="Audio cross-fade:" VerticalAlignment="Center"/>
-                    <ComboBox x:Name="AudioCrossfadeComboBox" Width="120" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
+                    <TextBlock Text="Audio cross-fade:" MinWidth="112" Margin="4,0,2,0" VerticalAlignment="Center"/>
+                    <ComboBox x:Name="AudioCrossfadeComboBox" Width="128" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
                         <ComboBoxItem Content="None (0 ms)" Tag="0"/>
                         <ComboBoxItem Content="50 ms" Tag="50"/>
                         <ComboBoxItem Content="100 ms" Tag="100"/>
@@ -155,6 +155,7 @@
                     </ComboBox>
                     <TextBlock x:Name="AudioVolumeIconText" Text="🔉" VerticalAlignment="Center"/>
                     <Slider x:Name="AudioVolumeSlider" Width="120" IsEnabled="False" Minimum="0" Maximum="250" SmallChange="5" LargeChange="5" StepFrequency="5" Value="100" ValueChanged="audioVolumeSlider_ValueChanged" ToolTipService.ToolTip="Preview uses MediaPlayer volume (max 100%); export applies full boost."/>
+                    <TextBlock x:Name="AudioPreviewBoostHintText" Text="Preview audio is capped at 100%; boosted volume is export-only." Foreground="#FFDAA520" VerticalAlignment="Center" Visibility="Collapsed"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" VerticalAlignment="Center">
