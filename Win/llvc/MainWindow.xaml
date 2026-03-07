@@ -141,7 +141,7 @@
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Left" VerticalAlignment="Center">
                     <CheckBox x:Name="KeepAudioCheckBox" Content="Keep audio" IsEnabled="False" VerticalAlignment="Center" Checked="keepAudioCheckBox_Changed" Unchecked="keepAudioCheckBox_Changed"/>
-                    <TextBlock Text="Audio cross-fade:" VerticalAlignment="Center"/>
+                    <TextBlock Text="Audio cross-fade:" MinWidth="112" Margin="4,0,2,0" VerticalAlignment="Center"/>
                     <ComboBox x:Name="AudioCrossfadeComboBox" Width="120" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
                         <ComboBoxItem Content="None (0 ms)" Tag="0"/>
                         <ComboBoxItem Content="50 ms" Tag="50"/>
