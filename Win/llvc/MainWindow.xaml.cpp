@@ -1753,6 +1753,8 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
 
     const auto ctrlState{InputKeyboardSource::GetKeyStateForCurrentThread(VirtualKey::Control)};
     const auto ctrlDown{(ctrlState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down};
+    const auto shiftState{InputKeyboardSource::GetKeyStateForCurrentThread(VirtualKey::Shift)};
+    const auto shiftDown{(shiftState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down};
 
     if(!focusInDialog && ctrlDown){
         if(args.Key() == VirtualKey::Z){
@@ -1770,8 +1772,17 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
             args.Handled(true);
             return true;
         }
+        if(args.Key() == VirtualKey::L){
+            (void)loadVideoMenuItem_Click(nullptr, {});
+            args.Handled(true);
+            return true;
+        }
         if(args.Key() == VirtualKey::S){
-            (void)saveProjectMenuItem_Click(nullptr, {});
+            if(shiftDown){
+                (void)saveProjectAsMenuItem_Click(nullptr, {});
+            }else{
+                (void)saveProjectMenuItem_Click(nullptr, {});
+            }
             args.Handled(true);
             return true;
         }
@@ -2327,9 +2338,6 @@ AAction MainWindow::recentProjectMenuItem_Click(const Control& sender, const REA
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
 
-AAction MainWindow::propertiesMenuItem_Click(const Control&, const REArgs&){
-    co_await showPropertiesDialogAsync();
-}
 
 AAction MainWindow::exitMenuItem_Click(const Control&, const REArgs&){
     if(!co_await ensureProjectSavedBeforeContinuingAsync()){
@@ -2601,14 +2609,6 @@ AAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& mes
     co_await dialog.ShowAsync();
 }
 
-AAction MainWindow::showPropertiesDialogAsync(){
-    if(!m_prj.videoFile() || !m_mediaInfo.isValid){
-        co_await showInfoDialogAsync(L"Properties", L"No video is currently loaded.");
-        co_return;
-    }
-
-    co_await showInfoDialogAsync(L"Properties", hstring(buildSourcePropertiesText()));
-}
 
 wstring MainWindow::buildSourcePropertiesText() const{
     if(!m_prj.videoFile() || !m_mediaInfo.isValid){

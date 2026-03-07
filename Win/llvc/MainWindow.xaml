@@ -24,18 +24,16 @@
         <controls:MenuBar x:Name="MainMenuBar" Grid.Row="0" IsTabStop="False">
             <controls:MenuBarItem Title="File">
                 <MenuFlyoutItem Text="New project (Ctrl+N)" Click="newProjectMenuItem_Click"/>
-                <MenuFlyoutItem Text="Open project..." Click="openProjectMenuItem_Click"/>
+                <MenuFlyoutItem Text="Open project... (Ctrl+O)" Click="openProjectMenuItem_Click"/>
                 <MenuFlyoutItem Text="Save project (Ctrl+S)" Click="saveProjectMenuItem_Click"/>
-                <MenuFlyoutItem Text="Save project as..." Click="saveProjectAsMenuItem_Click"/>
+                <MenuFlyoutItem Text="Save project as... (Ctrl+Shift+S)" Click="saveProjectAsMenuItem_Click"/>
                 <MenuFlyoutItem Text="Close project" Click="closeProjectMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
-                <MenuFlyoutItem Text="Load video..." Click="loadVideoMenuItem_Click"/>
+                <MenuFlyoutItem Text="Load video... (Ctrl+L)" Click="loadVideoMenuItem_Click"/>
                 <MenuFlyoutItem Text="Export video... (F7)" Click="exportVideoMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutSubItem x:Name="RecentProjectsMenu" Text="Recent projects"/>
                 <MenuFlyoutSubItem x:Name="RecentVideosMenu" Text="Recent videos"/>
-                <MenuFlyoutSeparator/>
-                <MenuFlyoutItem Text="Properties" Click="propertiesMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutItem Text="Exit" Click="exitMenuItem_Click"/>
             </controls:MenuBarItem>
