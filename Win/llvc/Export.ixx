@@ -1,6 +1,6 @@
 ﻿module;
 
-#include "pch.h"
+#include <winrt/base.h>
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +25,7 @@
 
 #include <wil/resource.h>
 
+
 export module llvc.Export;
 
 import std;
@@ -33,6 +34,20 @@ export namespace llvc{
 
 using namespace ::std;
 using namespace ::winrt;
+
+struct MFLifetime{
+    MFLifetime();
+    ~MFLifetime();
+};
+
+bool hasDecoderForSubtype(const GUID& subtype);
+
+struct KeyFrameCadenceInfo{
+    wstring summary{};
+    wstring interval{};
+};
+
+KeyFrameCadenceInfo analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uint32_t fpsNum, uint32_t fpsDen);
 
 struct VideoWriteStats{
     uint64_t readSampleCount{};
@@ -66,6 +81,130 @@ namespace llvc{
 
 using namespace ::std;
 using namespace ::winrt;
+
+MFLifetime::MFLifetime(){
+    check_hresult(MFStartup(MF_VERSION, MFSTARTUP_FULL));
+}
+
+MFLifetime::~MFLifetime(){
+    MFShutdown();
+}
+
+bool hasDecoderForSubtype(const GUID& subtype){
+    MFT_REGISTER_TYPE_INFO inType{};
+    inType.guidMajorType = MFMediaType_Video;
+    inType.guidSubtype = subtype;
+
+    IMFActivate** activates{};
+    UINT32 count{};
+    const HRESULT hr = MFTEnumEx(
+        MFT_CATEGORY_VIDEO_DECODER,
+        MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_HARDWARE,
+        &inType,
+        nullptr,
+        &activates,
+        &count);
+
+    if(SUCCEEDED(hr) && activates){
+        for(UINT32 i = 0; i < count; ++i){
+            activates[i]->Release();
+        }
+        CoTaskMemFree(activates);
+    }
+
+    return SUCCEEDED(hr) && count > 0;
+}
+
+KeyFrameCadenceInfo analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uint32_t fpsNum, uint32_t fpsDen){
+    KeyFrameCadenceInfo info{.summary = L"unknown", .interval = L"unknown"};
+    if(!reader){
+        return info;
+    }
+
+    constexpr uint32_t maxSamplesToInspect{900};
+    constexpr int64_t maxSpan100ns{60LL * 10'000'000LL};
+
+    PROPVARIANT startPos{};
+    startPos.vt = VT_I8;
+    startPos.hVal.QuadPart = 0;
+    check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
+    PropVariantClear(&startPos);
+
+    uint32_t sampledFrames{};
+    uint32_t keyFrames{};
+    bool cleanPointSeen{};
+    LONGLONG firstTimestamp{-1};
+    LONGLONG previousKeyTimestamp{-1};
+    vector<double> keyIntervalsSec{};
+
+    for(uint32_t i = 0; i < maxSamplesToInspect; ++i){
+        DWORD actualStreamIndex{};
+        DWORD flags{};
+        LONGLONG timestamp{};
+        com_ptr<IMFSample> sample{};
+
+        const HRESULT hr = reader->ReadSample(videoStreamIndex, 0, &actualStreamIndex, &flags, &timestamp, sample.put());
+        if(FAILED(hr) || (flags & MF_SOURCE_READERF_ENDOFSTREAM)){
+            break;
+        }
+        if(!sample){
+            continue;
+        }
+
+        ++sampledFrames;
+        if(firstTimestamp < 0){
+            firstTimestamp = timestamp;
+        }
+
+        UINT32 cleanPoint{};
+        if(SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) && cleanPoint != 0){
+            cleanPointSeen = true;
+            ++keyFrames;
+            if(previousKeyTimestamp >= 0 && timestamp > previousKeyTimestamp){
+                keyIntervalsSec.push_back((timestamp - previousKeyTimestamp) / 10'000'000.0);
+            }
+            previousKeyTimestamp = timestamp;
+        }
+
+        if(firstTimestamp >= 0 && timestamp - firstTimestamp >= maxSpan100ns){
+            break;
+        }
+    }
+
+    if(sampledFrames == 0){
+        info.summary = L"unknown (no samples read)";
+        info.interval = L"unknown";
+        return info;
+    }
+
+    if(!cleanPointSeen){
+        info.summary = L"unknown (clean-point flags unavailable)";
+        info.interval = L"unknown";
+        return info;
+    }
+
+    const auto ratio {(1.0 * keyFrames) / sampledFrames};
+    info.summary = std::format(L"{} key frames / {} sampled frames ({:.2f}%)", keyFrames, sampledFrames, ratio * 100.0);
+
+    if(keyIntervalsSec.empty()){
+        info.interval = L"unknown (insufficient key frames sampled)";
+        return info;
+    }
+
+    const auto sum{accumulate(keyIntervalsSec.begin(), keyIntervalsSec.end(), 0.0)};
+    const auto avg{sum / keyIntervalsSec.size()};
+    const auto minIt{min_element(keyIntervalsSec.begin(), keyIntervalsSec.end())};
+    const auto maxIt{max_element(keyIntervalsSec.begin(), keyIntervalsSec.end())};
+
+    auto text{std::format(L"avg {:.3f} s, min {:.3f} s, max {:.3f} s", avg, *minIt, *maxIt)};
+    if(fpsNum > 0 && fpsDen > 0){
+        const auto fps{(1.0 * fpsNum) / fpsDen};
+        text += std::format(L" (~{:.1f} frames avg)", avg * fps);
+    }
+
+    info.interval = text;
+    return info;
+}
 
 wstring formatDurationFileTag(int64_t duration100ns){
     const auto totalMs{max<int64_t>(0, (duration100ns + 5'000) / 10'000)};

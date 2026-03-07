@@ -1,6 +1,9 @@
 ﻿module;
 
 #include <Windows.h>
+#include <winrt/Microsoft.UI.Xaml.h>
+#include <winrt/Microsoft.UI.Xaml.Controls.h>
+#include <winrt/Microsoft.UI.Xaml.Media.h>
 
 export module llvc.Utils;
 
@@ -9,6 +12,15 @@ import std;
 export namespace llvc{
 
 using namespace std;
+
+bool isInMenuSubtree(const winrt::Microsoft::UI::Xaml::DependencyObject& object);
+bool isInDialogSubtree(const winrt::Microsoft::UI::Xaml::DependencyObject& object);
+
+wstring formatGuid(const _GUID& guid);
+wstring formatFileSize(uint64_t bytes);
+wstring formatRatio(uint32_t num, uint32_t den, const wstring& suffix);
+wstring joinRecentItems(const vector<winrt::hstring>& values);
+vector<winrt::hstring> splitRecentItems(const wstring& source);
 
 struct WindowPlacementState final{
     int32_t left{};
@@ -35,6 +47,90 @@ bool applyWindowPlacement(HWND hwnd, const WindowPlacementState& state, HWND fal
 namespace llvc{
 
 using namespace std;
+using namespace winrt;
+using namespace Microsoft::UI::Xaml;
+
+bool isInMenuSubtree(const DependencyObject& object){
+    auto current{object};
+    while(current){
+        if(current.try_as<Controls::MenuBar>() || current.try_as<Controls::MenuBarItem>() || current.try_as<Controls::MenuFlyoutItem>() || current.try_as<Controls::MenuFlyoutSubItem>() || current.try_as<Controls::MenuFlyoutPresenter>()){
+            return true;
+        }
+        current = Media::VisualTreeHelper::GetParent(current);
+    }
+    return false;
+}
+
+bool isInDialogSubtree(const DependencyObject& object){
+    auto current{object};
+    while(current){
+        if(current.try_as<Controls::ContentDialog>()){
+            return true;
+        }
+        current = Media::VisualTreeHelper::GetParent(current);
+    }
+    return false;
+}
+
+namespace{
+constexpr wchar_t RECENT_DELIMITER{0x1F};
+}
+
+wstring formatGuid(const _GUID& guid){
+    constexpr auto guidBufferLength{40};
+    OLECHAR raw[guidBufferLength]{};
+    StringFromGUID2(guid, raw, guidBufferLength);
+    return wstring(raw);
+}
+
+wstring formatFileSize(uint64_t bytes){
+    constexpr auto kb{1024ULL};
+    constexpr auto mb{kb * 1024ULL};
+    constexpr auto gb{mb * 1024ULL};
+
+    auto text{std::format(L"{} bytes", bytes)};
+    if(bytes >= gb){
+        text += std::format(L" ({:.2f} GB)", (1.0 * bytes) / gb);
+    }else if(bytes >= mb){
+        text += std::format(L" ({:.2f} MB)", (1.0 * bytes) / mb);
+    }
+    return text;
+}
+
+wstring formatRatio(uint32_t num, uint32_t den, const wstring& suffix){
+    if(den == 0){
+        return L"-";
+    }
+    return std::format(L"{:.3f}{}", (1.0 * num) / den, suffix);
+}
+
+wstring joinRecentItems(const vector<winrt::hstring>& values){
+    wstring out;
+    for(size_t i{}; i < values.size(); ++i){
+        if(i > 0){
+            out.push_back(RECENT_DELIMITER);
+        }
+        out += values[i].c_str();
+    }
+    return out;
+}
+
+vector<winrt::hstring> splitRecentItems(const wstring& source){
+    vector<winrt::hstring> items;
+    size_t start{};
+    while(start <= source.size()){
+        const auto pos{source.find(RECENT_DELIMITER, start)};
+        const auto len{(pos == wstring::npos) ? (source.size() - start) : (pos - start)};
+        if(len > 0){
+            items.emplace_back(source.substr(start, len));
+        }
+        if(pos == wstring::npos){
+            break;
+        }
+        start = pos + 1;
+    }
+    return items;
+}
 
 wstring trim(wstring value){
     const auto first{value.find_first_not_of(L" \t\r\n")};

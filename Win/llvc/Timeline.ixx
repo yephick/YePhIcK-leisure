@@ -7,6 +7,10 @@ export namespace llvc{
 
 using namespace ::std;
 
+vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(
+    vector<pair<uint32_t, uint32_t>> intervals,
+    size_t keyframeCount);
+
 struct TimelineMajorTick final{
     double x{};
     wstring label{};
@@ -36,6 +40,51 @@ struct Timeline final{
 }
 
 namespace llvc{
+
+vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(vector<pair<uint32_t, uint32_t>> intervals, size_t keyframeCount){
+    constexpr auto timelineEdgeSentinel{numeric_limits<uint32_t>::max()};
+
+    using RankedInterval = pair<int64_t, int64_t>;
+    vector<RankedInterval> normalized;
+    normalized.reserve(intervals.size());
+
+    for(const auto& interval: intervals){
+        if((interval.first == timelineEdgeSentinel && interval.second == timelineEdgeSentinel)
+            || (interval.first == timelineEdgeSentinel && interval.second >= keyframeCount)
+            || (interval.second == timelineEdgeSentinel && interval.first >= keyframeCount)
+            || (interval.first != timelineEdgeSentinel && interval.second != timelineEdgeSentinel && (interval.first >= keyframeCount || interval.second >= keyframeCount))){
+            continue;
+        }
+
+        const auto startRank{interval.first == timelineEdgeSentinel ? static_cast<int64_t>(-1) : static_cast<int64_t>(interval.first)};
+        const auto endRank{interval.second == timelineEdgeSentinel ? static_cast<int64_t>(keyframeCount) : static_cast<int64_t>(interval.second)};
+        if(startRank >= endRank){
+            continue;
+        }
+        normalized.emplace_back(startRank, endRank);
+    }
+
+    sort(normalized.begin(), normalized.end());
+
+    vector<RankedInterval> mergedRanks;
+    for(const auto& interval: normalized){
+        if(mergedRanks.empty() || interval.first > mergedRanks.back().second){
+            mergedRanks.push_back(interval);
+        }else{
+            mergedRanks.back().second = max(mergedRanks.back().second, interval.second);
+        }
+    }
+
+    vector<pair<uint32_t, uint32_t>> merged;
+    merged.reserve(mergedRanks.size());
+    for(const auto& interval: mergedRanks){
+        const auto start{interval.first < 0 ? timelineEdgeSentinel : static_cast<uint32_t>(interval.first)};
+        const auto end{interval.second >= static_cast<int64_t>(keyframeCount) ? timelineEdgeSentinel : static_cast<uint32_t>(interval.second)};
+        merged.emplace_back(start, end);
+    }
+
+    return merged;
+}
 
 std::optional<int64_t> Timeline::pointToTime100ns(double pointerX, double width, int64_t duration100ns) const{
     if(duration100ns <= 0 || width <= 0){

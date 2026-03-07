@@ -1,7 +1,6 @@
 ﻿#include "pch.h"
 #include "MainWindow.xaml.h"
 #include "MainWindow.g.cpp"
-#include "MainWindow.Helpers.h"
 
 
 #include <mfapi.h>
@@ -25,6 +24,7 @@
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
+#include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Media.Core.h>
 #include <winrt/Windows.Media.Editing.h>
 #include <winrt/Windows.Media.Playback.h>
@@ -38,6 +38,10 @@ import llvc.Utils;
 
 #pragma comment(lib, "Shell32.lib")
 #pragma comment(lib, "Comctl32.lib")
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfreadwrite.lib")
+#pragma comment(lib, "mfuuid.lib")
+
 
 using namespace std;
 using namespace winrt;
@@ -47,6 +51,7 @@ using namespace Microsoft::UI::Input;
 using namespace Microsoft::UI::Xaml::Controls;
 using namespace Microsoft::UI::Xaml::Input;
 using namespace Windows::Foundation;
+using namespace Windows::ApplicationModel;
 using namespace Windows::Media::Playback;
 using namespace Windows::Storage;
 using namespace Windows::Storage::Pickers;
@@ -218,6 +223,102 @@ wstring guidToVideoCodecName(const GUID& subtype){
 
 wstring BuildUnsupportedAviReason(const wstring& detail){
     return detail;
+}
+
+wstring decodeXmlEntities(wstring text){
+    const array<pair<wstring, wstring>, 5> replacements{{
+        {L"&apos;", L"'"},
+        {L"&quot;", L"\""},
+        {L"&amp;", L"&"},
+        {L"&lt;", L"<"},
+        {L"&gt;", L">"}}};
+
+    for(const auto& [from, to] : replacements){
+        size_t pos{};
+        while((pos = text.find(from, pos)) != wstring::npos){
+            text.replace(pos, from.size(), to);
+            pos += to.size();
+        }
+    }
+
+    return text;
+}
+
+wstring tryReadVisualElementsDescriptionFromManifestPath(const filesystem::path& manifestPath){
+    ifstream file{manifestPath, ios::binary};
+    if(!file){
+        return {};
+    }
+
+    string xmlBytes{istreambuf_iterator<char>{file}, istreambuf_iterator<char>{}};
+    if(xmlBytes.empty()){
+        return {};
+    }
+
+    static constexpr string_view key{"Description=\""};
+    const auto visualElementsPos{xmlBytes.find("VisualElements")};
+    if(visualElementsPos == string::npos){
+        return {};
+    }
+
+    const auto descStart{xmlBytes.find(key, visualElementsPos)};
+    if(descStart == string::npos){
+        return {};
+    }
+
+    const auto valueStart{descStart + key.size()};
+    const auto valueEnd{xmlBytes.find('"', valueStart)};
+    if(valueEnd == string::npos || valueEnd <= valueStart){
+        return {};
+    }
+
+    const string descriptionUtf8{xmlBytes.substr(valueStart, valueEnd - valueStart)};
+    if(descriptionUtf8.empty()){
+        return {};
+    }
+
+    const int wideLen{MultiByteToWideChar(CP_UTF8, 0, descriptionUtf8.c_str(), static_cast<int>(descriptionUtf8.size()), nullptr, 0)};
+    if(wideLen <= 0){
+        return {};
+    }
+
+    wstring description(static_cast<size_t>(wideLen), L'\0');
+    const auto converted{MultiByteToWideChar(
+        CP_UTF8,
+        0,
+        descriptionUtf8.c_str(),
+        static_cast<int>(descriptionUtf8.size()),
+        description.data(),
+        wideLen)};
+    if(converted <= 0){
+        return {};
+    }
+
+    return decodeXmlEntities(move(description));
+}
+
+wstring getAppManifestVersionString(){
+    try{
+        const auto version{Package::Current().Id().Version()};
+        return to_wstring(version.Major)
+            + L"."
+            + to_wstring(version.Minor)
+            + L"."
+            + to_wstring(version.Build)
+            + L"."
+            + to_wstring(version.Revision);
+    }catch(...){
+        return L"unknown";
+    }
+}
+
+wstring getAppManifestDescriptionString(){
+    try{
+        const auto installedPath{filesystem::path{Package::Current().InstalledLocation().Path().c_str()}};
+        return tryReadVisualElementsDescriptionFromManifestPath(installedPath / L"AppxManifest.xml");
+    }catch(...){
+        return {};
+    }
 }
 
 bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
@@ -2370,7 +2471,16 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
 }
 
 AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
-    co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", L"ClipRazor: Lossless Video Cutter\nv0.2b\n\xA9 02'2026 YePhIcK");
+    const auto manifestVersion{getAppManifestVersionString()};
+    const auto manifestDescription{getAppManifestDescriptionString()};
+    const wstring aboutText{
+        manifestDescription
+        + L"\n\n"
+        + wstring{L"Version "}
+        + manifestVersion
+        + L"\n\n"
+        + L"\xA9 02'2026 YePhIcK"};
+    co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", hstring{aboutText.c_str()});
 }
 
 AAction MainWindow::optionsMenuItem_Click(const Control&, const REArgs&){
@@ -2989,7 +3099,9 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         startPos.hVal.QuadPart = 0;
         check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
         PropVariantClear(&startPos);
-        analyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen, result);
+        const auto cadence{analyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen)};
+        result.keyFrameSummary = cadence.summary;
+        result.keyFrameInterval = cadence.interval;
     }
 
     if(sourceIsAvi && audioCount > 0){
@@ -3336,5 +3448,357 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         }
     }
 }
+AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
+    if(!m_prj.videoFile()){
+        co_await showInfoDialogAsync(L"Export video", L"Load a video before exporting.");
+        co_return;
+    }
+
+    MFLifetime mf{};
+
+    const wstring sourcePath{m_prj.videoFile().Path().c_str()};
+    const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
+    const auto outputDuration100ns{m_prj.outputDuration100ns()};
+
+    const filesystem::path sourceFsPath{sourcePath};
+
+    auto makeExportComment = [&](const filesystem::path& sourcePathForComment) -> wstring {
+        const auto now{chrono::system_clock::now()};
+        const auto nowTimeT{chrono::system_clock::to_time_t(now)};
+        tm localTime{};
+        if(localtime_s(&localTime, &nowTimeT) != 0){
+            return L"created by llvc from " + sourcePathForComment.filename().wstring();
+        }
+
+        wchar_t timestamp[64]{};
+        if(wcsftime(timestamp, size(timestamp), L"%Y-%m-%d %H:%M:%S", &localTime) == 0){
+            return L"created by llvc from " + sourcePathForComment.filename().wstring();
+        }
+
+        return L"created by llvc from " + sourcePathForComment.filename().wstring() + L" on " + timestamp;
+    };
+    const auto sourceExt{sourceFsPath.extension().wstring()};
+    const auto sourceIsAvi{isAviPath(sourcePath)};
+    const auto defaultExt{sourceIsAvi ? L".mp4" : (_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4")};
+
+    const auto outputPath{pickExportOutputPath(sourceFsPath, defaultExt, outputDuration100ns, getWindowHandle(), sourceIsAvi)};
+    if(outputPath.empty()){
+        co_return;
+    }
+
+    m_isExportInProgress = true;
+    m_cancelExportRequested = false;
+    m_resumeTimelineRenderAfterExport = m_prj.videoFile() && m_timelineDurationSeconds > 0;
+    ++m_timelineRenderVersion;
+
+    setStatusMessage(L"Exporting...");
+    clearErrorMessage();
+    setOperationInProgress(true, true);
+
+    winrt::hstring exportErrorMessage{};
+    auto exportSucceeded{false};
+    auto exportCanceled{false};
+    const auto exportComment{makeExportComment(sourceFsPath)};
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+
+    try{
+        com_ptr<IMFAttributes> readerAttributes;
+        check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
+        check_hresult(readerAttributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE));
+
+        com_ptr<IMFSourceReader> reader;
+        check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), readerAttributes.get(), reader.put()));
+
+        constexpr auto invalidStream{numeric_limits<DWORD>::max()};
+        auto videoStreamIndex{invalidStream};
+        for(DWORD streamIndex{0};; ++streamIndex){
+            com_ptr<IMFMediaType> type;
+            const auto hr{reader->GetNativeMediaType(streamIndex, 0, type.put())};
+            if(hr == MF_E_INVALIDSTREAMNUMBER){
+                break;
+            }
+            check_hresult(hr);
+
+            GUID major{GUID_NULL};
+            check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+            if(major == MFMediaType_Video){
+                videoStreamIndex = streamIndex;
+                break;
+            }
+        }
+
+        if(videoStreamIndex == invalidStream){
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No video stream found");
+        }
+
+        check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+        check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
+
+        const vector<GUID> streamCopySubtypes{MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_H265};
+        auto sourceVideoType{chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, streamCopySubtypes)};
+        if(sourceIsAvi){
+            sourceVideoType = nullptr;
+            for(DWORD mediaTypeIndex{};; ++mediaTypeIndex){
+                com_ptr<IMFMediaType> type;
+                const auto hr{reader->GetNativeMediaType(videoStreamIndex, mediaTypeIndex, type.put())};
+                if(hr == MF_E_NO_MORE_TYPES){
+                    break;
+                }
+                check_hresult(hr);
+
+                GUID major{GUID_NULL};
+                GUID subtype{GUID_NULL};
+                check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+                check_hresult(type->GetGUID(MF_MT_SUBTYPE, &subtype));
+                if(major == MFMediaType_Video && subtype == MFVideoFormat_H264){
+                    sourceVideoType = type;
+                    break;
+                }
+            }
+        }
+        if(!sourceVideoType){
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require H.264 or HEVC)");
+        }
+        check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, sourceVideoType.get()));
+
+        GUID videoSubtype{GUID_NULL};
+        check_hresult(sourceVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
+        const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
+
+        if(sourceIsAvi){
+            if(videoSubtype != MFVideoFormat_H264){
+                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI is supported only for H.264 video");
+            }
+            UINT32 sequenceHeaderSize{};
+            const auto seqSizeHr{sourceVideoType->GetBlobSize(MF_MT_MPEG_SEQUENCE_HEADER, &sequenceHeaderSize)};
+            std::vector<uint8_t> sequenceHeader(sequenceHeaderSize);
+            UINT32 bytesWritten{};
+            const auto seqReadHr{
+                SUCCEEDED(seqSizeHr) && sequenceHeaderSize > 0
+                    ? sourceVideoType->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, sequenceHeader.data(), sequenceHeaderSize, &bytesWritten)
+                    : E_FAIL};
+            if(FAILED(seqReadHr) || bytesWritten == 0){
+                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI H.264 stream lacks codec configuration (SPS/PPS). Convert to MP4 first.");
+            }
+        }
+
+        vector<int64_t> rapTimes100ns;
+        rapTimes100ns.reserve(2048);
+        for(;;){
+            DWORD actualStream{};
+            DWORD flags{};
+            LONGLONG timestamp{};
+            com_ptr<IMFSample> sample;
+            const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+            if(FAILED(hr)){
+                check_hresult(hr);
+            }
+            if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+                break;
+            }
+            if(!sample){
+                continue;
+            }
+
+            LONGLONG sampleTime100ns{};
+            if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
+                sampleTime100ns = timestamp;
+            }
+
+            if(isContainerSyncSample(sample) && isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)){
+                rapTimes100ns.push_back(max<int64_t>(0, sampleTime100ns));
+            }
+        }
+        sort(rapTimes100ns.begin(), rapTimes100ns.end());
+        rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
+
+        const auto effectiveCutRanges100ns{m_prj.buildEffectiveCutRangesWithRapPreroll(sourceDuration100ns, rapTimes100ns)};
+
+        PROPVARIANT startPos{};
+        startPos.vt = VT_I8;
+        startPos.hVal.QuadPart = 0;
+        check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
+        PropVariantClear(&startPos);
+
+        auto hasAudioForExport{false};
+        DWORD writerAudioStreamIndex{};
+        uint32_t audioChannels{};
+        uint32_t audioSampleRate{};
+        com_ptr<IMFMediaType> audioPcmType;
+        com_ptr<IMFMediaType> sourceAudioNativeType;
+        DWORD audioStreamIndex{};
+        constexpr auto invalidAudioStream{numeric_limits<DWORD>::max()};
+
+        if(!sourceIsAvi && m_prj.keepAudio() && sourceHasAudio()){
+            com_ptr<IMFSourceReader> audioProbeReader;
+            check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioProbeReader.put()));
+
+            audioStreamIndex = invalidAudioStream;
+            for(DWORD streamIndex = 0;; ++streamIndex){
+                com_ptr<IMFMediaType> type;
+                const auto hr{audioProbeReader->GetNativeMediaType(streamIndex, 0, type.put())};
+                if(hr == MF_E_INVALIDSTREAMNUMBER){
+                    break;
+                }
+                check_hresult(hr);
+
+                GUID major{GUID_NULL};
+                check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+                if(major == MFMediaType_Audio){
+                    audioStreamIndex = streamIndex;
+                    sourceAudioNativeType = type;
+                    break;
+                }
+            }
+
+            if(audioStreamIndex != invalidAudioStream){
+                (void)sourceAudioNativeType->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &audioChannels);
+                (void)sourceAudioNativeType->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &audioSampleRate);
+                if(audioChannels == 0){
+                    audioChannels = 2;
+                }
+                if(audioSampleRate == 0){
+                    audioSampleRate = 48000;
+                }
+
+                audioPcmType = createPcmFloatAudioType(audioSampleRate, audioChannels);
+                hasAudioForExport = true;
+            }
+        }
+
+        com_ptr<IMFSinkWriter> writer;
+        DWORD writerVideoStreamIndex{};
+        auto configureWriter = [&]() -> HRESULT {
+            writer = nullptr;
+            writerVideoStreamIndex = 0;
+            writerAudioStreamIndex = 0;
+
+            com_ptr<IMFAttributes> writerAttributes;
+            check_hresult(MFCreateAttributes(writerAttributes.put(), 1));
+            check_hresult(writerAttributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
+            check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, writerAttributes.get(), writer.put()));
+            check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
+            check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
+
+            if(!hasAudioForExport){
+                return S_OK;
+            }
+
+            const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
+            auto hr = writer->AddStream(aacType.get(), &writerAudioStreamIndex);
+            if(SUCCEEDED(hr)){
+                hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
+            }
+            return hr;
+        };
+
+        const auto writerConfigHr{configureWriter()};
+        if(FAILED(writerConfigHr)){
+            if(sourceIsAvi){
+                throw hresult_error(writerConfigHr, L"System cannot mux H.264 into MP4 via Media Foundation.");
+            }
+            check_hresult(writerConfigHr);
+        }
+
+        check_hresult(writer->BeginWriting());
+
+        const auto videoStats{writeVideoSamplesForExport(
+            reader,
+            videoStreamIndex,
+            writer,
+            writerVideoStreamIndex,
+            effectiveCutRanges100ns,
+            videoSubtype,
+            nalLengthFieldSize,
+            sourceDuration100ns,
+            [self = get_weak()](double pct){
+                if(const auto strong = self.get()){
+                    strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct](){
+                        if(const auto ui = weak.get()){
+                            ui->setOperationProgress(pct);
+                        }
+                    });
+                }
+            },
+            [self = get_weak()](){
+                if(const auto strong = self.get()){
+                    return strong->m_cancelExportRequested.load();
+                }
+                return false;
+            })};
+        (void)videoStats;
+
+        if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
+            com_ptr<IMFSourceReader> audioReader;
+            check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioReader.put()));
+            check_hresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+            check_hresult(audioReader->SetStreamSelection(audioStreamIndex, TRUE));
+            check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
+
+            const auto keepRanges100ns{invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
+            writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer, writerAudioStreamIndex, audioChannels, audioSampleRate, m_prj.audioXfadeMs(), m_prj.audioVolumePct() / 100.0f, [self = get_weak()](){
+                if(const auto strong = self.get()){
+                    return strong->m_cancelExportRequested.load();
+                }
+                return false;
+            });
+        }
+
+        if(m_cancelExportRequested){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+        }
+
+        check_hresult(writer->Finalize());
+        applyExportFileMetadata(sourcePath, outputPath, exportComment);
+        exportSucceeded = true;
+    }catch(const hresult_error& ex){
+        if(ex.code() == HRESULT_FROM_WIN32(ERROR_CANCELLED)){
+            exportCanceled = true;
+            std::error_code ec;
+            filesystem::remove(outputPath, ec);
+        }else{
+            exportErrorMessage = ex.message();
+        }
+    }
+
+    co_await uiThread;
+
+    if(exportSucceeded){
+        setOperationProgress(100);
+    }
+
+    m_isExportInProgress = false;
+    setOperationInProgress(false);
+    if(exportSucceeded){
+        setStatusMessage(L"Export completed");
+        clearErrorMessage();
+        refreshStatusInfoSection();
+    }else if(exportCanceled){
+        setStatusMessage(L"Export canceled");
+        clearErrorMessage();
+    }else{
+        setStatusMessage(L"Export failed");
+        setErrorMessage(exportErrorMessage.c_str());
+    }
+
+    if(!exportErrorMessage.empty()){
+        co_await showInfoDialogAsync(L"Export failed", exportErrorMessage);
+    }
+
+    const auto shouldResumeTimeline{m_resumeTimelineRenderAfterExport && m_prj.videoFile() && m_timelineDurationSeconds > 0};
+    m_resumeTimelineRenderAfterExport = false;
+    if(shouldResumeTimeline){
+        wstring status{L"Loaded: "};
+        status += m_prj.videoFile().Name().c_str();
+        status += L" (loading story line...)";
+        setStatusMessage(status);
+        clearErrorMessage();
+        renderTimelineAsync();
+    }
+}
+
+
 
 }
