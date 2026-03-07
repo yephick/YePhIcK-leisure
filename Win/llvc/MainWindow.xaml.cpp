@@ -1926,7 +1926,7 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
 
     if(open){
         auto previewWindow{Window()};
-        previewWindow.Title(L"llvc - Video preview");
+        previewWindow.Title(L"ClipRazor: Lossless Video Cutter - video preview");
 
         Controls::Grid root{};
         root.Background(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0xFF, 0x08, 0x08, 0x08)));
@@ -2349,7 +2349,7 @@ AAction MainWindow::exitMenuItem_Click(const Control&, const REArgs&){
 
 AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& args){
     co_await showInfoDialogAsync(
-        L"llvc Manual",
+        L"Quick manual",
         L"Functions:\n"
         L"• Load video: Open .mp4/.mov/.avi source footage for timeline editing.\n"
         L"• Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
@@ -2370,7 +2370,7 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
 }
 
 AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
-    co_await showInfoDialogAsync(L"About llvc", L"llvc - Lossless Video Cut\nv0.1 - still in alpha\n\xA9 02'2026 YePhIcK");
+    co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", L"ClipRazor: Lossless Video Cutter\nv0.2b\n\xA9 02'2026 YePhIcK");
 }
 
 AAction MainWindow::optionsMenuItem_Click(const Control&, const REArgs&){
@@ -2531,7 +2531,7 @@ void MainWindow::updateWindowTitle(){
     }
 
     const wstring loadedFile{m_prj.videoFile() ? m_prj.videoFile().Path().c_str() : L"No file"};
-    Title(hstring(std::format(L"llvc - Lossless Video Cut - {} - {}", projectName, loadedFile)));
+    Title(hstring(std::format(L"ClipRazor: Lossless Video Cutter - {} - {}", projectName, loadedFile)));
 }
 
 IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){

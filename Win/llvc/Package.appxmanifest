@@ -9,15 +9,15 @@
   IgnorableNamespaces="uap rescap uap18">
 
   <Identity
-    Name="llvc"
-    Publisher="CN=yephick"
+    Name="YePhIcK.4394808465EB4"
+    Publisher="CN=3B6D3FB8-6F98-49E9-9B13-B044937D2F99"
     Version="1.0.0.0" />
 
-  <mp:PhoneIdentity PhoneProductId="1112dbbb-3e07-4eb7-94ff-75f93215527f" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+  <mp:PhoneIdentity PhoneProductId="34e9f797-5a26-458f-89f7-42e58038c600" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>llvc</DisplayName>
-    <PublisherDisplayName>yephick</PublisherDisplayName>
+    <DisplayName>ClipRazor: Lossless Video Cutter</DisplayName>
+    <PublisherDisplayName>YePhIcK</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -35,22 +35,31 @@
       Executable="$targetnametoken$.exe"
       EntryPoint="$targetentrypoint$" uap18:RuntimeBehavior="win32App">
       <uap:VisualElements
-        DisplayName="llvc"
-        Description="llvc - lossless video cut, is a utility to cut a video file at RAP (random access point) boundaries that allows for the result frames to be saved in their original encoding, meaning there&apos;s no video transcoding done at all (thus the &quot;lossless&quot; part)"
+        DisplayName="ClipRazor: Lossless Video Cutter"
+        Description="ClipRazor: Lossless Video Cutter, is a utility to cut a video file at RAP (random access point) boundaries that allows for the result frames to be saved in their original encoding, meaning there&apos;s no video transcoding done at all (thus the &quot;lossless&quot; part), producing *identical* frames compared to the source (at the tradeoff of requiring a cut at specific frames only)"
         BackgroundColor="transparent"
-        Square150x150Logo="Assets\Square150x150Logo.scale-200.png"
-        Square44x44Logo="Assets\Square44x44Logo.scale-200.png">
-        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.scale-200.png" />
-        <uap:SplashScreen Image="Assets\SplashScreen.scale-200.png" />
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" >
+          <uap:ShowNameOnTiles>
+            <uap:ShowOn Tile="square150x150Logo"/>
+            <uap:ShowOn Tile="wide310x150Logo"/>
+          </uap:ShowNameOnTiles>
+        </uap:DefaultTile >
+        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+        <uap:InitialRotationPreference>
+          <uap:Rotation Preference="landscape"/></uap:InitialRotationPreference>
       </uap:VisualElements>
       <Extensions>
         <uap:Extension Category="windows.fileTypeAssociation">
           <uap:FileTypeAssociation Name="llvcproject">
-            <uap:DisplayName>llvc project</uap:DisplayName>
-            <uap:Logo>Assets\Square44x44Logo.scale-200.png</uap:Logo>
+            <uap:DisplayName>ClipRazor project</uap:DisplayName>
+            <uap:Logo>Assets\Square44x44Logo.png</uap:Logo>
             <uap:SupportedFileTypes>
               <uap:FileType>.llvc</uap:FileType>
             </uap:SupportedFileTypes>
+            <uap:InfoTip>Project file for ClipRazor: Lossless Video Cutter</uap:InfoTip>
+            <uap:EditFlags OpenIsSafe="true"/>
           </uap:FileTypeAssociation>
         </uap:Extension>
       </Extensions>
@@ -60,5 +69,7 @@
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
     <uap:Capability Name="videosLibrary"/>
+    <uap:Capability Name="picturesLibrary"/>
+    <uap:Capability Name="removableStorage"/>
   </Capabilities>
 </Package>

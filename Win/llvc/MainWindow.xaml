@@ -7,11 +7,11 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="llvc - Lossless Video Cut">
+    Title="ClipRazor: Lossless Video Cutter">
 
     <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="window_DragOver" Drop="window_Drop" PreviewKeyDown="window_PreviewKeyDown" KeyDown="window_KeyDown" PointerReleased="rootGrid_PointerReleased">
         <Grid.Background>
-            <ImageBrush ImageSource="ms-appx:///Assets/SplashScreen.scale-200.png" Stretch="UniformToFill" Opacity="0.10"/>
+            <ImageBrush ImageSource="ms-appx:///Assets/SplashScreen.png" Stretch="UniformToFill" Opacity="0.10"/>
         </Grid.Background>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
