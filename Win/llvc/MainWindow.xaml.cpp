@@ -25,6 +25,7 @@
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
+#include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Media.Core.h>
 #include <winrt/Windows.Media.Editing.h>
 #include <winrt/Windows.Media.Playback.h>
@@ -47,6 +48,7 @@ using namespace Microsoft::UI::Input;
 using namespace Microsoft::UI::Xaml::Controls;
 using namespace Microsoft::UI::Xaml::Input;
 using namespace Windows::Foundation;
+using namespace Windows::ApplicationModel;
 using namespace Windows::Media::Playback;
 using namespace Windows::Storage;
 using namespace Windows::Storage::Pickers;
@@ -218,6 +220,34 @@ wstring guidToVideoCodecName(const GUID& subtype){
 
 wstring BuildUnsupportedAviReason(const wstring& detail){
     return detail;
+}
+
+wstring getAppManifestVersionString(){
+    try{
+        const auto version{Package::Current().Id().Version()};
+        return to_wstring(version.Major)
+            + L"."
+            + to_wstring(version.Minor)
+            + L"."
+            + to_wstring(version.Build)
+            + L"."
+            + to_wstring(version.Revision);
+    }catch(...){
+        return L"unknown";
+    }
+}
+
+wstring getAppManifestDescriptionString(){
+    try{
+        const auto description{Package::Current().Description().Description()};
+        if(description.empty()){
+            return L"No description available.";
+        }
+
+        return description.c_str();
+    }catch(...){
+        return L"No description available.";
+    }
 }
 
 bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
@@ -2370,7 +2400,17 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
 }
 
 AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
-    co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", L"ClipRazor: Lossless Video Cutter\nv0.2b\n\xA9 02'2026 YePhIcK");
+    const auto manifestVersion{getAppManifestVersionString()};
+    const auto manifestDescription{getAppManifestDescriptionString()};
+    const auto aboutText{
+        L"ClipRazor: Lossless Video Cutter\n"
+        + wstring{L"Version "}
+        + manifestVersion
+        + L"\n\n"
+        + manifestDescription
+        + L"\n\n"
+        + L"\xA9 02'2026 YePhIcK"};
+    co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", aboutText);
 }
 
 AAction MainWindow::optionsMenuItem_Click(const Control&, const REArgs&){
