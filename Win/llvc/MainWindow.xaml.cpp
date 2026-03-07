@@ -239,12 +239,12 @@ wstring getAppManifestVersionString(){
     }
 }
 
-wstring getAppManifestDescriptionString(){
+IAsyncOperation<hstring> getAppManifestDescriptionAsync(){
     try{
         const auto installedLocation{Package::Current().InstalledLocation()};
-        const auto manifestFile{installedLocation.GetFileAsync(L"AppxManifest.xml").get()};
+        const auto manifestFile{co_await installedLocation.GetFileAsync(L"AppxManifest.xml")};
         XmlDocument manifestDocument{};
-        manifestDocument.LoadFromFileAsync(manifestFile).get();
+        co_await manifestDocument.LoadFromFileAsync(manifestFile);
 
         const auto visualElementsNode{
             manifestDocument.SelectSingleNode(
@@ -253,7 +253,7 @@ wstring getAppManifestDescriptionString(){
             const auto visualElements{visualElementsNode.as<XmlElement>()};
             const auto manifestDescription{visualElements.GetAttribute(L"Description")};
             if(!manifestDescription.empty()){
-                return manifestDescription.c_str();
+                co_return manifestDescription;
             }
         }
     }catch(...){
@@ -262,7 +262,7 @@ wstring getAppManifestDescriptionString(){
     try{
         const auto appDescription{AppInfo::Current().DisplayInfo().Description()};
         if(!appDescription.empty()){
-            return appDescription.c_str();
+            co_return appDescription;
         }
     }catch(...){
     }
@@ -270,12 +270,12 @@ wstring getAppManifestDescriptionString(){
     try{
         const auto packageDescription{Package::Current().Description()};
         if(!packageDescription.empty()){
-            return packageDescription.c_str();
+            co_return packageDescription;
         }
     }catch(...){
     }
 
-    return L"No description available.";
+    co_return L"No description available.";
 }
 
 bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
@@ -2429,9 +2429,10 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
 
 AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
     const auto manifestVersion{getAppManifestVersionString()};
-    const auto manifestDescription{getAppManifestDescriptionString()};
+    const auto manifestDescription{co_await getAppManifestDescriptionAsync()};
+    const wstring manifestDescriptionText{manifestDescription.c_str()};
     const wstring aboutText{
-        manifestDescription
+        manifestDescriptionText
         + L"\n\n"
         + wstring{L"Version "}
         + manifestVersion
