@@ -249,6 +249,7 @@ private:
     wstring buildSourcePropertiesText() const;
     void applyAudioSettingsToPlayer();
     void syncAudioCrossfadeComboSelection();
+    void updatePreviewPlaceholderVisibility();
     void setStatusMessage(const wstring& message);
     void setErrorMessage(const wstring& message);
     void clearErrorMessage();

@@ -69,8 +69,16 @@
         </controls:MenuBar>
 
         <Grid Grid.Row="1">
-            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="8">
-                <controls:MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="8" Background="#FF080808">
+                <Grid>
+                    <Image x:Name="PreviewSplashImage"
+                           Source="ms-appx:///Assets/SplashScreen.png"
+                           Opacity="0.22"
+                           Stretch="Uniform"
+                           IsHitTestVisible="False"
+                           Visibility="Visible"/>
+                    <controls:MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
+                </Grid>
             </Border>
 
             <Button x:Name="VideoDetailsOpenMarker" Width="26" Height="64" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0" Padding="0"

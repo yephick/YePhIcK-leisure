@@ -634,6 +634,7 @@ MainWindow::MainWindow(const hstring& launchArguments){
 
     m_player = MediaPlayer();
     PreviewPlayer().SetMediaPlayer(m_player);
+    updatePreviewPlaceholderVisibility();
 
     m_naturalDurationChangedRevoker = m_player.PlaybackSession().NaturalDurationChanged(auto_revoke, {this, &MainWindow::onNaturalDurationChanged});
 
@@ -2594,6 +2595,7 @@ void MainWindow::resetProjectState(){
         m_player.Pause();
     }
     m_player.Source(nullptr);
+    updatePreviewPlaceholderVisibility();
 
     ++m_timelineRenderVersion;
     m_projectPath.clear();
@@ -2785,6 +2787,11 @@ wstring MainWindow::formatDateTimeText(const winrt::Windows::Foundation::DateTim
     }
 
     return timestamp;
+}
+
+void MainWindow::updatePreviewPlaceholderVisibility(){
+    const auto hasLoadedVideo{m_prj.videoFile() && !m_prj.videoFile().Path().empty()};
+    PreviewSplashImage().Visibility(hasLoadedVideo ? Visibility::Collapsed : Visibility::Visible);
 }
 
 void MainWindow::setStatusMessage(const wstring& message){
@@ -3206,6 +3213,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
 
     const auto source{Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
     m_player.Source(source);
+    updatePreviewPlaceholderVisibility();
     m_player.IsMuted(false);
     m_prj.videoFile(file);
     refreshVideoDetailsPanel();
