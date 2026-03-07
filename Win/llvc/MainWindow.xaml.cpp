@@ -246,11 +246,13 @@ IAsyncOperation<hstring> getAppManifestDescriptionAsync(){
         XmlDocument manifestDocument{};
         co_await manifestDocument.LoadFromFileAsync(manifestFile);
 
-        const auto visualElementsNode{
-            manifestDocument.SelectSingleNode(
-                L"/*[local-name()='Package']/*[local-name()='Applications']/*[local-name()='Application']/*[local-name()='VisualElements']")};
-        if(visualElementsNode){
-            const auto visualElements{visualElementsNode.as<XmlElement>()};
+        auto visualElementsNodes{manifestDocument.GetElementsByTagName(L"uap:VisualElements")};
+        if(visualElementsNodes.Length() == 0){
+            visualElementsNodes = manifestDocument.GetElementsByTagName(L"VisualElements");
+        }
+
+        if(visualElementsNodes.Length() > 0){
+            const auto visualElements{visualElementsNodes.Item(0).as<XmlElement>()};
             const auto manifestDescription{visualElements.GetAttribute(L"Description")};
             if(!manifestDescription.empty()){
                 co_return manifestDescription;
