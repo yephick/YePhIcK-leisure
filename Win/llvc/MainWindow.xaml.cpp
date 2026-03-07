@@ -32,6 +32,7 @@
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Windows.Data.Xml.Dom.h>
 
 import std;
 import llvc.Export;
@@ -49,6 +50,7 @@ using namespace Microsoft::UI::Xaml::Controls;
 using namespace Microsoft::UI::Xaml::Input;
 using namespace Windows::Foundation;
 using namespace Windows::ApplicationModel;
+using namespace Windows::Data::Xml::Dom;
 using namespace Windows::Media::Playback;
 using namespace Windows::Storage;
 using namespace Windows::Storage::Pickers;
@@ -238,6 +240,25 @@ wstring getAppManifestVersionString(){
 }
 
 wstring getAppManifestDescriptionString(){
+    try{
+        const auto installedLocation{Package::Current().InstalledLocation()};
+        const auto manifestFile{installedLocation.GetFileAsync(L"AppxManifest.xml").get()};
+        XmlDocument manifestDocument{};
+        manifestDocument.LoadFromFileAsync(manifestFile).get();
+
+        const auto visualElementsNode{
+            manifestDocument.SelectSingleNode(
+                L"/*[local-name()='Package']/*[local-name()='Applications']/*[local-name()='Application']/*[local-name()='VisualElements']")};
+        if(visualElementsNode){
+            const auto visualElements{visualElementsNode.as<XmlElement>()};
+            const auto manifestDescription{visualElements.GetAttribute(L"Description")};
+            if(!manifestDescription.empty()){
+                return manifestDescription.c_str();
+            }
+        }
+    }catch(...){
+    }
+
     try{
         const auto appDescription{AppInfo::Current().DisplayInfo().Description()};
         if(!appDescription.empty()){
@@ -2410,11 +2431,10 @@ AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
     const auto manifestVersion{getAppManifestVersionString()};
     const auto manifestDescription{getAppManifestDescriptionString()};
     const wstring aboutText{
-        L"ClipRazor: Lossless Video Cutter\n"
+        manifestDescription
+        + L"\n\n"
         + wstring{L"Version "}
         + manifestVersion
-        + L"\n\n"
-        + manifestDescription
         + L"\n\n"
         + L"\xA9 02'2026 YePhIcK"};
     co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", hstring{aboutText.c_str()});
