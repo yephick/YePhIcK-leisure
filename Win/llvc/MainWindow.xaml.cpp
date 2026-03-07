@@ -3,21 +3,6 @@
 #include "MainWindow.g.cpp"
 #include "MainWindow.Helpers.h"
 
-#include <algorithm>
-#include <array>
-#include <chrono>
-#include <cmath>
-#include <cstring>
-#include <ctime>
-#include <cwctype>
-#include <cwchar>
-#include <fstream>
-#include <format>
-#include <limits>
-#include <optional>
-#include <string_view>
-#include <functional>
-#include <vector>
 
 #include <mfapi.h>
 #include <mferror.h>
@@ -47,6 +32,7 @@
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.System.h>
 
+import std;
 import llvc.Export;
 import llvc.Utils;
 
