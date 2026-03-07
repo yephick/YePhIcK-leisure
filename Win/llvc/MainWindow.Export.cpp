@@ -2,7 +2,6 @@
 #include "MainWindow.xaml.h"
 #include "MainWindow.Helpers.h"
 
-#include <filesystem>
 #include <limits>
 
 #include <algorithm>
