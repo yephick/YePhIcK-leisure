@@ -1,15 +1,6 @@
-module;
-
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <utility>
-#include <vector>
-
 export module llvc.Timeline;
 
+import std;
 import llvc.Project;
 
 export namespace llvc{
