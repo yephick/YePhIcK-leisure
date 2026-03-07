@@ -32,7 +32,6 @@
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.System.h>
-#include <winrt/Windows.Data.Xml.Dom.h>
 
 import std;
 import llvc.Export;
@@ -50,7 +49,6 @@ using namespace Microsoft::UI::Xaml::Controls;
 using namespace Microsoft::UI::Xaml::Input;
 using namespace Windows::Foundation;
 using namespace Windows::ApplicationModel;
-using namespace Windows::Data::Xml::Dom;
 using namespace Windows::Media::Playback;
 using namespace Windows::Storage;
 using namespace Windows::Storage::Pickers;
@@ -239,45 +237,17 @@ wstring getAppManifestVersionString(){
     }
 }
 
-IAsyncOperation<hstring> getAppManifestDescriptionAsync(){
+wstring getAppManifestDescriptionString(){
     try{
-        const auto installedLocation{Package::Current().InstalledLocation()};
-        const auto manifestFile{co_await installedLocation.GetFileAsync(L"AppxManifest.xml")};
-        XmlDocument manifestDocument{};
-        co_await manifestDocument.LoadFromFileAsync(manifestFile);
-
-        auto visualElementsNodes{manifestDocument.GetElementsByTagName(L"uap:VisualElements")};
-        if(visualElementsNodes.Length() == 0){
-            visualElementsNodes = manifestDocument.GetElementsByTagName(L"VisualElements");
+        const auto description{Package::Current().Description()};
+        if(description.empty()){
+            return L"No description available.";
         }
 
-        if(visualElementsNodes.Length() > 0){
-            const auto visualElements{visualElementsNodes.Item(0).as<XmlElement>()};
-            const auto manifestDescription{visualElements.GetAttribute(L"Description")};
-            if(!manifestDescription.empty()){
-                co_return manifestDescription;
-            }
-        }
+        return description.c_str();
     }catch(...){
+        return L"No description available.";
     }
-
-    try{
-        const auto appDescription{AppInfo::Current().DisplayInfo().Description()};
-        if(!appDescription.empty()){
-            co_return appDescription;
-        }
-    }catch(...){
-    }
-
-    try{
-        const auto packageDescription{Package::Current().Description()};
-        if(!packageDescription.empty()){
-            co_return packageDescription;
-        }
-    }catch(...){
-    }
-
-    co_return L"No description available.";
 }
 
 bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
@@ -2431,13 +2401,13 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
 
 AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
     const auto manifestVersion{getAppManifestVersionString()};
-    const auto manifestDescription{co_await getAppManifestDescriptionAsync()};
-    const wstring manifestDescriptionText{manifestDescription.c_str()};
+    const auto manifestDescription{getAppManifestDescriptionString()};
     const wstring aboutText{
-        manifestDescriptionText
-        + L"\n\n"
+        L"ClipRazor: Lossless Video Cutter\n"
         + wstring{L"Version "}
         + manifestVersion
+        + L"\n\n"
+        + manifestDescription
         + L"\n\n"
         + L"\xA9 02'2026 YePhIcK"};
     co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", hstring{aboutText.c_str()});
@@ -2674,21 +2644,7 @@ AAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& mes
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(Content().XamlRoot());
     dialog.Title(box_value(title));
-
-    Controls::TextBlock messageText{};
-    messageText.Text(message);
-    messageText.TextWrapping(TextWrapping::Wrap);
-
-    Controls::ScrollViewer messageScroll{};
-    messageScroll.Content(messageText);
-    messageScroll.VerticalScrollBarVisibility(Controls::ScrollBarVisibility::Auto);
-    messageScroll.VerticalScrollMode(Controls::ScrollMode::Enabled);
-    messageScroll.HorizontalScrollBarVisibility(Controls::ScrollBarVisibility::Disabled);
-    messageScroll.HorizontalScrollMode(Controls::ScrollMode::Disabled);
-    messageScroll.MaxHeight(360);
-    messageScroll.MinWidth(420);
-
-    dialog.Content(messageScroll);
+    dialog.Content(box_value(message));
     dialog.CloseButtonText(L"OK");
     co_await dialog.ShowAsync();
 }
