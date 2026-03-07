@@ -1850,16 +1850,6 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
     const auto ctrlState{InputKeyboardSource::GetKeyStateForCurrentThread(VirtualKey::Control)};
     const auto ctrlDown{(ctrlState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down};
 
-    const auto restoreTimelineFocusAsync{[weakThis{get_weak()}]{
-        if(const auto self{weakThis.get()}){
-            self->DispatcherQueue().TryEnqueue([weakThis]{
-                if(const auto queuedSelf{weakThis.get()}){
-                    queuedSelf->tryFocusTimelineCanvas(FocusState::Programmatic);
-                }
-            });
-        }
-    }};
-
     if(!focusInDialog && ctrlDown){
         if(args.Key() == VirtualKey::Z){
             (void)undoLastEdit();
@@ -1888,7 +1878,6 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         }
         if(args.Key() == VirtualKey::M){
             (void)toggleCutMarkerAtCursor();
-            restoreTimelineFocusAsync();
             args.Handled(true);
             return true;
         }
@@ -1981,11 +1970,8 @@ void MainWindow::window_PreviewKeyDown(const Control&, const KRArgs& args){
     (void)handleStorylineKeyDown(args);
 }
 
-void MainWindow::window_KeyDown(const Control&, const KRArgs& args){
-    if(args.Handled()){
-        return;
-    }
-    (void)handleStorylineKeyDown(args);
+void MainWindow::window_KeyDown(const Control&, const KRArgs&){
+    // Keyboard shortcuts are dispatched from PreviewKeyDown to avoid duplicate handling.
 }
 
 void MainWindow::separatePreviewWindowMenuItem_Click(const Control&, const REArgs&){
