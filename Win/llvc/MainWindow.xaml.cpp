@@ -2036,6 +2036,14 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         Controls::Grid root{};
         root.Background(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0xFF, 0x08, 0x08, 0x08)));
 
+        Controls::Image detachedSplash{};
+        detachedSplash.Source(Media::Imaging::BitmapImage(Uri{L"ms-appx:///Assets/SplashScreen.png"}));
+        detachedSplash.Opacity(0.22);
+        detachedSplash.Stretch(Media::Stretch::UniformToFill);
+        detachedSplash.IsHitTestVisible(false);
+        detachedSplash.HorizontalAlignment(HorizontalAlignment::Stretch);
+        detachedSplash.VerticalAlignment(VerticalAlignment::Stretch);
+
         Controls::MediaPlayerElement detachedPreview{};
         detachedPreview.AreTransportControlsEnabled(true);
         detachedPreview.HorizontalAlignment(HorizontalAlignment::Stretch);
@@ -2061,6 +2069,7 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         root.PreviewKeyDown(detachedKeyHandler);
         root.KeyDown(detachedKeyHandler);
 
+        root.Children().Append(detachedSplash);
         root.Children().Append(detachedPreview);
 
         previewWindow.Content(root);
@@ -2082,10 +2091,13 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
 
         m_separatePreviewClosedRevoker = previewWindow.Closed(auto_revoke, {this, &MainWindow::onSeparatePreviewWindowClosed});
         m_separatePreviewWindow = previewWindow;
+        m_detachedPreviewPlayer = detachedPreview;
+        m_detachedPreviewSplashImage = detachedSplash;
         m_isSeparatePreviewWindowOpen = true;
         m_isSeparatePreviewFullscreen = false;
         m_restorePreviewDetachedOnStartup = true;
         PreviewPlayer().SetMediaPlayer(nullptr);
+        updatePreviewPlaceholderVisibility();
 
         if(m_restorePreviewFullscreenOnStartup){
             (void)toggleSeparatePreviewFullscreen();
@@ -2108,9 +2120,12 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
     }
 
     PreviewPlayer().SetMediaPlayer(m_player);
+    m_detachedPreviewPlayer = nullptr;
+    m_detachedPreviewSplashImage = nullptr;
     m_isSeparatePreviewWindowOpen = false;
     m_isSeparatePreviewFullscreen = false;
     m_restorePreviewDetachedOnStartup = false;
+    updatePreviewPlaceholderVisibility();
     SeparatePreviewWindowMenuItem().IsChecked(false);
     setStatusMessage(L"Preview restored to main window");
     return true;
@@ -2132,6 +2147,9 @@ void MainWindow::onSeparatePreviewWindowClosed(const Control&, const WEArgs&){
         m_restorePreviewDetachedOnStartup = false;
     }
     PreviewPlayer().SetMediaPlayer(m_player);
+    m_detachedPreviewPlayer = nullptr;
+    m_detachedPreviewSplashImage = nullptr;
+    updatePreviewPlaceholderVisibility();
     SeparatePreviewWindowMenuItem().IsChecked(false);
     setStatusMessage(L"Preview restored to main window");
 }
@@ -2791,7 +2809,11 @@ wstring MainWindow::formatDateTimeText(const winrt::Windows::Foundation::DateTim
 
 void MainWindow::updatePreviewPlaceholderVisibility(){
     const auto hasLoadedVideo{m_prj.videoFile() && !m_prj.videoFile().Path().empty()};
-    PreviewSplashImage().Visibility(hasLoadedVideo ? Visibility::Collapsed : Visibility::Visible);
+
+    if(m_detachedPreviewPlayer && m_detachedPreviewSplashImage){
+        m_detachedPreviewPlayer.Visibility(hasLoadedVideo ? Visibility::Visible : Visibility::Collapsed);
+        m_detachedPreviewSplashImage.Visibility(hasLoadedVideo ? Visibility::Collapsed : Visibility::Visible);
+    }
 }
 
 void MainWindow::setStatusMessage(const wstring& message){

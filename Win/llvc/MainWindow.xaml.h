@@ -176,6 +176,8 @@ private:
     LONG_PTR m_separatePreviewRestoreExStyle{0};
     winrt::Microsoft::UI::Xaml::Window m_separatePreviewWindow{nullptr};
     winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_separatePreviewClosedRevoker{};
+    winrt::Microsoft::UI::Xaml::Controls::MediaPlayerElement m_detachedPreviewPlayer{nullptr};
+    winrt::Microsoft::UI::Xaml::Controls::Image m_detachedPreviewSplashImage{nullptr};
     ::llvc::Project m_prj{};
     ::llvc::Timeline m_tl{};
 
