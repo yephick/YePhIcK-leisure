@@ -192,19 +192,6 @@ vector<int64_t> collectCleanPointTimes100ns(const wstring& filePath){
     return rapTimes;
 }
 
-bool isTimeInsideRanges(int64_t time100ns, const vector<pair<int64_t, int64_t>>& ranges){
-    for(const auto& [start100ns, end100ns]: ranges){
-        if(time100ns < start100ns){
-            return false;
-        }
-        if(time100ns < end100ns){
-            return true;
-        }
-    }
-
-    return false;
-}
-
 wstring guidToVideoCodecName(const GUID& subtype){
     if(subtype == MFVideoFormat_H264){
         return L"H.264";
@@ -877,7 +864,7 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
     vector<uint32_t> scenes;
     for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
         const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
-        if(isTimeInsideRanges(midpoint, previousCutRanges)){
+        if(m_tl.isTimeInsideRanges(midpoint, previousCutRanges)){
             scenes.push_back(static_cast<uint32_t>(i));
         }
     }
@@ -1035,21 +1022,14 @@ void MainWindow::timelineCanvas_PointerMoved(const Control&, const PREArgs& e){
 
     const auto scrollViewer{TimelineScrollViewer()};
     const auto viewportWidth{scrollViewer.ViewportWidth()};
-    const auto maxOffset{max(0.0, TimelineCanvas().Width() - viewportWidth)};
-    const auto target{clamp(m_timelineDragStartOffset - deltaX, 0.0, maxOffset)};
+    const auto target{m_tl.dragTargetOffset(m_timelineDragStartOffset, deltaX, TimelineCanvas().Width(), viewportWidth)};
     const auto targetOffset{box_value(target).as<IReference<double>>()};
     scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     e.Handled(true);
 }
 
 std::optional<int64_t> MainWindow::timelinePointToTime100ns(double pointerX, double width) const{
-    const auto duration100ns{m_prj.timelineDuration100ns()};
-    if(duration100ns <= 0 || width <= 0){
-        return std::nullopt;
-    }
-
-    const auto clampedX{clamp(pointerX, 0.0, width)};
-    return static_cast<int64_t>((clampedX / width) * duration100ns);
+    return m_tl.pointToTime100ns(pointerX, width, m_prj.timelineDuration100ns());
 }
 
 bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
@@ -1215,9 +1195,12 @@ void MainWindow::seekTimelineToCanvasX(double pointerX){
         return;
     }
 
-    const auto x{clamp(pointerX, 0.0, TimelineCanvas().Width())};
-    const auto ratio{x / TimelineCanvas().Width()};
-    const auto target100ns{static_cast<int64_t>(ratio * (m_timelineDurationSeconds * 10'000'000.0))};
+    const auto duration100ns{m_prj.timelineDuration100ns()};
+    const auto target100nsOpt{m_tl.pointToTime100ns(pointerX, TimelineCanvas().Width(), duration100ns)};
+    if(!target100nsOpt){
+        return;
+    }
+    const auto target100ns{*target100nsOpt};
 
     m_player.PlaybackSession().Position(TimeSpan{target100ns});
     updateTimelineCursorFromPlayback();
@@ -1236,16 +1219,8 @@ void MainWindow::ensureTimelineCursorVisible(double cursorLeft){
         return;
     }
 
-    constexpr auto cursorPadding{48.0};
-    const auto minVisible{currentOffset + cursorPadding};
-    const auto maxVisible{currentOffset + viewportWidth - cursorPadding};
-    const auto maxOffset{max(0.0, TimelineCanvas().Width() - viewportWidth)};
-
-    if(cursorLeft < minVisible){
-        const auto targetOffset{box_value(clamp(cursorLeft - cursorPadding, 0.0, maxOffset)).as<IReference<double>>()};
-        scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
-    }else if(cursorLeft > maxVisible){
-        const auto targetOffset{box_value(clamp(cursorLeft + cursorPadding - viewportWidth, 0.0, maxOffset)).as<IReference<double>>()};
+    if(const auto targetOffsetValue{m_tl.cursorOffsetToEnsureVisible(cursorLeft, currentOffset, viewportWidth, TimelineCanvas().Width())}){
+        const auto targetOffset{box_value(*targetOffsetValue).as<IReference<double>>()};
         scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     }
 }
@@ -1270,15 +1245,10 @@ void MainWindow::renderTimelineTicks(){
         return;
     }
 
-    const auto majorTickCount{clamp(static_cast<int>(ceil(width / 120.0)), 6, 36)};
-
-    for(int i{0}; i <= majorTickCount; ++i){
-        const auto ratio{static_cast<double>(i) / majorTickCount};
-        const auto x{ratio * width};
-
+    for(const auto& tickData: m_tl.buildMajorTicks(width, m_timelineDurationSeconds)){
         Shapes::Line majorTick{};
-        majorTick.X1(x);
-        majorTick.X2(x);
+        majorTick.X1(tickData.x);
+        majorTick.X2(tickData.x);
         majorTick.Y1(7);
         majorTick.Y2(23);
         majorTick.Stroke(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 180, 180, 180)));
@@ -1286,19 +1256,10 @@ void MainWindow::renderTimelineTicks(){
         TimelineTickCanvas().Children().Append(majorTick);
 
         Controls::TextBlock label{};
-        const auto totalSeconds{static_cast<int>(ratio * m_timelineDurationSeconds + 0.5)};
-        const auto minutes{totalSeconds / 60};
-        const auto seconds{totalSeconds % 60};
-        auto text{to_wstring(minutes)};
-        text += L":";
-        if(seconds < 10){
-            text += L"0";
-        }
-        text += to_wstring(seconds);
-        label.Text(text);
+        label.Text(tickData.label);
         label.FontSize(11);
         label.Foreground(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 200, 200, 200)));
-        Controls::Canvas::SetLeft(label, max(0.0, x + 3.0));
+        Controls::Canvas::SetLeft(label, max(0.0, tickData.x + 3.0));
         Controls::Canvas::SetTop(label, 0);
         TimelineTickCanvas().Children().Append(label);
     }
@@ -1310,14 +1271,8 @@ void MainWindow::renderKeyframeTicks(){
     }
 
     const auto width {TimelineTickCanvas().Width()};
-    const auto total100ns {m_timelineDurationSeconds * 10'000'000.0};
 
-    for(const auto& frame: m_prj.frameIndex()){
-        if(!frame.cleanPoint){
-            continue;
-        }
-
-        const auto x {clamp((frame.time100ns / total100ns) * width, 0.0, width)};
+    for(const auto x: m_tl.buildKeyframeTickPositions(m_prj.frameIndex(), width, m_timelineDurationSeconds)){
 
         Shapes::Line tick{};
         tick.X1(x);
@@ -1340,18 +1295,11 @@ void MainWindow::renderCutOverlays(){
         return;
     }
 
-    const auto cutRanges100ns{m_prj.buildCutRanges100ns()};
     const auto overlayColor {Windows::UI::ColorHelper::FromArgb(180, 0, 0, 0)};
     const auto crossColor {Windows::UI::ColorHelper::FromArgb(220, 255, 48, 48)};
-    for(const auto& [startTime100ns, endTime100ns]: cutRanges100ns){
-        const auto start{clamp((static_cast<double>(startTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
-        const auto end{clamp((static_cast<double>(endTime100ns) / 10'000'000.0) / m_timelineDurationSeconds, 0.0, 1.0)};
-        if(end <= start){
-            continue;
-        }
-
-        const auto left{start * width};
-        const auto blockWidth{max(1.0, (end - start) * width)};
+    for(const auto& overlay: m_tl.buildCutOverlays(m_prj.buildCutRanges100ns(), width, m_timelineDurationSeconds)){
+        const auto left{overlay.left};
+        const auto blockWidth{overlay.width};
 
         Shapes::Rectangle block{};
         block.Width(blockWidth);
@@ -1556,7 +1504,7 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
     vector<uint32_t> scenes;
     for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
         const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
-        if(isTimeInsideRanges(midpoint, previousCutRanges)){
+        if(m_tl.isTimeInsideRanges(midpoint, previousCutRanges)){
             scenes.push_back(static_cast<uint32_t>(i));
         }
     }
@@ -1600,7 +1548,7 @@ void MainWindow::stepByFrame(int delta){
     }
 
     const auto durationFromProject100ns{m_prj.timelineDuration100ns()};
-    const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * 10'000'000.0)};
+    const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
     const auto duration100ns{max(durationFromProject100ns, durationFromTimeline100ns)};
     if(duration100ns <= 0){
         return;
@@ -1613,17 +1561,8 @@ void MainWindow::stepByFrame(int delta){
         current = *cursor100ns;
     }
 
-    constexpr auto fallbackFrameDuration100ns{333'667LL}; // ~29.97 fps
-    int64_t frameStep100ns{fallbackFrameDuration100ns};
-    if(m_mediaInfo.frameRate.num > 0 && m_mediaInfo.frameRate.den > 0){
-        const auto exactDuration100ns{(10'000'000LL * static_cast<int64_t>(m_mediaInfo.frameRate.den)) / static_cast<int64_t>(m_mediaInfo.frameRate.num)};
-        if(exactDuration100ns > 0){
-            frameStep100ns = exactDuration100ns;
-        }
-    }
-
-    const auto direction{delta < 0 ? -1 : 1};
-    const auto target{clamp(current + (direction * frameStep100ns), 0LL, duration100ns)};
+    const auto frameStep100ns{m_tl.frameStep100ns(m_mediaInfo.frameRate.num, m_mediaInfo.frameRate.den)};
+    const auto target{m_tl.applyFrameStep(current, delta, duration100ns, frameStep100ns)};
 
     if(m_player){
         m_player.PlaybackSession().Position(TimeSpan{target});
@@ -1637,8 +1576,7 @@ void MainWindow::stepByFrame(int delta){
         return;
     }
 
-    const auto ratio{clamp(static_cast<double>(target) / duration100ns, 0.0, 1.0)};
-    const auto left{ratio * width};
+    const auto left{m_tl.timeToCanvasX(target, duration100ns, width)};
     Controls::Canvas::SetLeft(TimelineCursor(), left);
     ensureTimelineCursorVisible(left);
     syncTimelineHorizontalScrollBar();
@@ -1667,31 +1605,13 @@ bool MainWindow::moveCursorToMarker(int direction){
         current100ns = *cursor100ns;
     }
 
-    int64_t target100ns{current100ns};
-    if(direction < 0){
-        auto candidateFound{false};
-        for(const auto& marker: markers){
-            if(marker.time100ns >= current100ns){
-                break;
-            }
-            target100ns = marker.time100ns;
-            candidateFound = true;
-        }
-        if(!candidateFound){
-            return false;
-        }
-    }else{
-        const auto it{find_if(markers.begin(), markers.end(), [current100ns](const auto& marker){
-            return marker.time100ns > current100ns;
-        })};
-        if(it == markers.end()){
-            return false;
-        }
-        target100ns = it->time100ns;
+    const auto target100ns{m_tl.markerNavigationTarget100ns(markers, current100ns, direction)};
+    if(!target100ns){
+        return false;
     }
 
     if(m_player){
-        m_player.PlaybackSession().Position(TimeSpan{target100ns});
+        m_player.PlaybackSession().Position(TimeSpan{*target100ns});
         updateTimelineCursorFromPlayback();
         ensureCurrentTimelineCursorVisible();
         return true;
@@ -1699,8 +1619,7 @@ bool MainWindow::moveCursorToMarker(int direction){
 
     const auto width{TimelineCanvas().Width()};
     if(width > 0){
-        const auto ratio{clamp(static_cast<double>(target100ns) / duration100ns, 0.0, 1.0)};
-        const auto left{ratio * width};
+        const auto left{m_tl.timeToCanvasX(*target100ns, duration100ns, width)};
         Controls::Canvas::SetLeft(TimelineCursor(), left);
         ensureTimelineCursorVisible(left);
         syncTimelineHorizontalScrollBar();
