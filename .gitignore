@@ -1,4 +1,8 @@
 .vs
 x64
+Release
+Debug
 packages
 Generated Files
+AppPackages
+BundleArtifacts
