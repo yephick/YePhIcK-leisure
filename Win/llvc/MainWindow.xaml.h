@@ -208,6 +208,7 @@ private:
     AAction openProjectFileAsync(const SFile& file);
     AAction saveProjectFileAsync(const SFile& file);
     void resetProjectState();
+    std::wstring currentProjectDisplayName() const;
     void updateWindowTitle();
     IOpBool ensureProjectSavedBeforeContinuingAsync();
     static MediaInspectionResult inspectMediaFile(const wstring& filePath);
