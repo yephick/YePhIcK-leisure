@@ -505,7 +505,6 @@ constexpr auto P_RAP_MARKERS{L"rap_markers"};
 constexpr auto P_CUT_SCENES{L"cut_scenes"};
 
 constexpr auto PROJECT_KEY{L"llvc project"};
-constexpr auto UNNAMED_PROJECT{L"Untitled video cut"};
 constexpr auto PROJECT_EXT{L".llvc"};
 
 bool isControlModifierActive(VirtualKeyModifiers modifiers){
@@ -2366,7 +2365,7 @@ AAction MainWindow::saveProjectMenuItem_Click(const Control&, const REArgs&){
         FileSavePicker picker{};
         picker.SuggestedStartLocation(PickerLocationId::DocumentsLibrary);
         picker.FileTypeChoices().Insert(PROJECT_KEY, single_threaded_vector<hstring>({PROJECT_EXT}));
-        picker.SuggestedFileName(UNNAMED_PROJECT);
+        picker.SuggestedFileName(hstring(currentProjectDisplayName()));
 
         auto initWithWindow{picker.as<IInitializeWithWindow>()};
         check_hresult(initWithWindow->Initialize(getWindowHandle()));
@@ -2384,7 +2383,7 @@ AAction MainWindow::saveProjectAsMenuItem_Click(const Control&, const REArgs&){
     FileSavePicker picker{};
     picker.SuggestedStartLocation(PickerLocationId::DocumentsLibrary);
     picker.FileTypeChoices().Insert(PROJECT_KEY, single_threaded_vector<hstring>({PROJECT_EXT}));
-    picker.SuggestedFileName(UNNAMED_PROJECT);
+    picker.SuggestedFileName(hstring(currentProjectDisplayName()));
 
     auto initWithWindow{picker.as<IInitializeWithWindow>()};
     check_hresult(initWithWindow->Initialize(getWindowHandle()));
@@ -2648,16 +2647,30 @@ void MainWindow::resetProjectState(){
     updateWindowTitle();
 }
 
-void MainWindow::updateWindowTitle(){
-    wstring projectName{L"Untitled"};
+std::wstring MainWindow::currentProjectDisplayName() const{
     if(!m_projectPath.empty()){
         const auto projectPath{filesystem::path(m_projectPath.c_str())};
         const auto stem{projectPath.stem().wstring()};
-        projectName = stem.empty() ? projectPath.filename().wstring() : stem;
-        if(projectName.empty()){
-            projectName = L"Untitled";
+        const auto fromProjectPath{stem.empty() ? projectPath.filename().wstring() : stem};
+        if(!fromProjectPath.empty()){
+            return fromProjectPath;
         }
     }
+
+    if(m_prj.videoFile() && !m_prj.videoFile().Name().empty()){
+        const auto videoPath{filesystem::path(m_prj.videoFile().Name().c_str())};
+        const auto stem{videoPath.stem().wstring()};
+        const auto fromVideoPath{stem.empty() ? videoPath.filename().wstring() : stem};
+        if(!fromVideoPath.empty()){
+            return fromVideoPath;
+        }
+    }
+
+    return L"Untitled";
+}
+
+void MainWindow::updateWindowTitle(){
+    auto projectName{currentProjectDisplayName()};
 
     if(m_prj.isDirty()){
         projectName += L"*";
