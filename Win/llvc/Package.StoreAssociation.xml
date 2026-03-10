@@ -366,8 +366,6 @@
       <ReservedName>ClipRazor: Lossless Video Cutter</ReservedName>
     </ReservedNames>
   </ProductReservedInfo>
-  <AccountPackageIdentityNames>
-    <MainPackageIdentityName>YePhIcK.ClipRazorLosslessVideoCutter</MainPackageIdentityName>
-  </AccountPackageIdentityNames>
+  <AccountPackageIdentityNames />
   <PackageInfoList LandingUrl="https://devcenterapi.dce.mp.microsoft.com/dashboard/Application?appId=9NXH4R82P6VW" />
 </StoreAssociation>
