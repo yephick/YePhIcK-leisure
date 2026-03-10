@@ -83,6 +83,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void timelineHorizontalScrollBar_ValueChanged(const Control& sender, const RBVArgs& args);
     void timelineScrollViewer_ViewChanged(const Control& sender, const SVVCArgs& args);
     void timelineScrollViewer_SizeChanged(const Control& sender, const SCArgs& args);
+    void timelineScrollViewer_PointerWheelChanged(const Control& sender, const PREArgs& args);
     void timelineCanvas_PointerPressed(const Control& sender, const PREArgs& args);
     void timelineCanvas_PointerMoved(const Control& sender, const PREArgs& args);
     void timelineCanvas_PointerReleased(const Control& sender, const PREArgs& args);

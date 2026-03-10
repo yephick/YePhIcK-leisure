@@ -172,7 +172,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="timelineScrollViewer_ViewChanged" SizeChanged="timelineScrollViewer_SizeChanged">
+                    <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="timelineScrollViewer_ViewChanged" SizeChanged="timelineScrollViewer_SizeChanged" PointerWheelChanged="timelineScrollViewer_PointerWheelChanged">
                         <StackPanel Spacing="4">
                             <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#222222" PointerReleased="timelineTickCanvas_PointerReleased"/>
                             <Canvas x:Name="TimelineCanvas" Height="86" IsTabStop="True" Loaded="timelineCanvas_Loaded" PointerPressed="timelineCanvas_PointerPressed" PointerMoved="timelineCanvas_PointerMoved" PointerReleased="timelineCanvas_PointerReleased" PointerCanceled="timelineCanvas_PointerCanceled" PointerCaptureLost="timelineCanvas_PointerCaptureLost" Background="#111111">

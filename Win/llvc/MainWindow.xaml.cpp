@@ -1076,6 +1076,21 @@ void MainWindow::timelineScrollViewer_SizeChanged(const Control&, const SCArgs&)
     syncTimelineHorizontalScrollBar();
 }
 
+void MainWindow::timelineScrollViewer_PointerWheelChanged(const Control&, const PREArgs& args){
+    if(!isControlModifierActive(args.KeyModifiers())){
+        return;
+    }
+
+    const auto point{args.GetCurrentPoint(TimelineScrollViewer())};
+    const auto delta{point.Properties().MouseWheelDelta()};
+    if(delta == 0){
+        return;
+    }
+
+    adjustTimelineZoomBy(delta > 0 ? 1 : -1);
+    args.Handled(true);
+}
+
 void MainWindow::timelineCanvas_PointerPressed(const Control&, const PREArgs& e){
     if(m_timelineDurationSeconds <= 0 || TimelineCanvas().Width() <= 0){
         return;
