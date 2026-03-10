@@ -1,0 +1,224 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="llvc.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="ClipRazor: Lossless Video Cutter">
+
+    <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="window_DragOver" Drop="window_Drop" PreviewKeyDown="window_PreviewKeyDown" KeyDown="window_KeyDown" PointerReleased="rootGrid_PointerReleased">
+        <Grid.Background>
+            <ImageBrush ImageSource="ms-appx:///Assets/SplashScreen.png" Stretch="UniformToFill" Opacity="0.10"/>
+        </Grid.Background>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <controls:MenuBar x:Name="MainMenuBar" Grid.Row="0" IsTabStop="False">
+            <controls:MenuBarItem Title="File">
+                <MenuFlyoutItem Text="New project (Ctrl+N)" Click="newProjectMenuItem_Click"/>
+                <MenuFlyoutItem Text="Open project... (Ctrl+O)" Click="openProjectMenuItem_Click"/>
+                <MenuFlyoutItem Text="Save project (Ctrl+S)" Click="saveProjectMenuItem_Click"/>
+                <MenuFlyoutItem Text="Save project as... (Ctrl+Shift+S)" Click="saveProjectAsMenuItem_Click"/>
+                <MenuFlyoutItem Text="Close project" Click="closeProjectMenuItem_Click"/>
+                <MenuFlyoutSeparator/>
+                <MenuFlyoutItem Text="Load video... (Ctrl+L)" Click="loadVideoMenuItem_Click"/>
+                <MenuFlyoutItem Text="Export video... (F7)" Click="exportVideoMenuItem_Click"/>
+                <MenuFlyoutSeparator/>
+                <MenuFlyoutSubItem x:Name="RecentProjectsMenu" Text="Recent projects"/>
+                <MenuFlyoutSubItem x:Name="RecentVideosMenu" Text="Recent videos"/>
+                <MenuFlyoutSeparator/>
+                <MenuFlyoutItem Text="Exit" Click="exitMenuItem_Click"/>
+            </controls:MenuBarItem>
+
+            <controls:MenuBarItem Title="Edit">
+                <MenuFlyoutItem Text="Undo (Ctrl+Z)" Click="undoMenuItem_Click"/>
+                <MenuFlyoutItem Text="Redo (Ctrl+Y)" Click="redoMenuItem_Click"/>
+                <MenuFlyoutSeparator/>
+                <MenuFlyoutItem Text="Reevaluate clear cut markers (Ctrl+R)" Click="reevaluateClearCutMarkersButton_Click"/>
+                <MenuFlyoutSeparator/>
+                <MenuFlyoutItem Text="Toggle cut mark (Ctrl+M)" Click="toggleCutMarkerAtCursorMenuItem_Click"/>
+                <MenuFlyoutItem Text="Mark scene cut (Delete)" Click="markSceneCutAtCursorMenuItem_Click"/>
+                <MenuFlyoutItem Text="Mark scene kept (Insert)" Click="markSceneKeptAtCursorMenuItem_Click"/>
+                <MenuFlyoutItem Text="Shrink scene to RAP (Ctrl+&lt;)" Click="shrinkSceneToRapMenuItem_Click"/>
+                <MenuFlyoutItem Text="Expand scene to RAP (Ctrl+&gt;)" Click="expandSceneToRapMenuItem_Click"/>
+            </controls:MenuBarItem>
+            <controls:MenuBarItem Title="View">
+                <MenuFlyoutItem Text="Zoom in timeline (Ctrl++)" Click="zoomInTimelineMenuItem_Click"/>
+                <MenuFlyoutItem Text="Zoom out timeline (Ctrl+-)" Click="zoomOutTimelineMenuItem_Click"/>
+                <MenuFlyoutSeparator/>
+                <ToggleMenuFlyoutItem x:Name="SeparatePreviewWindowMenuItem" Text="Preview in separate window" Click="separatePreviewWindowMenuItem_Click"/>
+                <MenuFlyoutItem Text="Toggle preview full-screen (F11)" Click="toggleSeparatePreviewFullscreenMenuItem_Click"/>
+            </controls:MenuBarItem>
+
+            <controls:MenuBarItem Title="Tools">
+                <MenuFlyoutItem Text="Options" Click="optionsMenuItem_Click"/>
+            </controls:MenuBarItem>
+
+            <controls:MenuBarItem Title="Help">
+                <MenuFlyoutItem Text="Manual" Click="manualMenuItem_Click"/>
+                <MenuFlyoutItem Text="About" Click="aboutMenuItem_Click"/>
+            </controls:MenuBarItem>
+        </controls:MenuBar>
+
+        <Grid Grid.Row="1">
+            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="8">
+                <controls:MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
+            </Border>
+
+            <Button x:Name="VideoDetailsOpenMarker" Width="26" Height="64" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0" Padding="0"
+                    Content="❯" Click="videoDetailsOpenMarker_Click" ToolTipService.ToolTip="Show source video details"/>
+
+            <Border x:Name="VideoDetailsPanel" Width="340" HorizontalAlignment="Left" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
+                    BorderBrush="#707070" BorderThickness="1" Background="#E6101010" Visibility="Collapsed">
+                <Grid>
+                    <ScrollViewer Margin="0,0,30,0" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Source video details" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="VideoDetailsText" Text="No video is currently loaded." TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <Button x:Name="VideoDetailsCollapseMarker" Width="24" HorizontalAlignment="Right" VerticalAlignment="Stretch" Padding="0"
+                            Content="❮" Click="videoDetailsCollapseMarker_Click" ToolTipService.ToolTip="Collapse details panel"/>
+                </Grid>
+            </Border>
+            <Button x:Name="CheatSheetOpenMarker" Width="26" Height="64" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0" Padding="0"
+                    Content="❮" Click="cheatSheetOpenMarker_Click" ToolTipService.ToolTip="Show quick actions" IsTabStop="False"/>
+
+            <Border x:Name="CheatSheetPanel" Width="242" HorizontalAlignment="Right" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
+                    BorderBrush="#707070" BorderThickness="1" Background="#E6101010" IsTabStop="False" Visibility="Collapsed">
+                <Grid IsTabStop="False">
+                    <Button x:Name="CheatSheetCollapseMarker" Width="24" HorizontalAlignment="Left" VerticalAlignment="Stretch" Padding="0"
+                            Content="❯" Click="cheatSheetCollapseMarker_Click" ToolTipService.ToolTip="Hide quick actions" IsTabStop="False"/>
+
+                    <ScrollViewer Margin="30,0,0,0" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" IsTabStop="False">
+                        <StackPanel Spacing="4" IsTabStop="False">
+                            <TextBlock Text="Actions cheat-sheet" FontWeight="SemiBold"/>
+                            <TextBlock Text=""/>
+                            <TextBlock Text="Space: play/pause video" TextWrapping="Wrap"/>
+                            <TextBlock Text="Left Arrow: prev. frame" TextWrapping="Wrap"/>
+                            <TextBlock Text="Right Arrow: next frame" TextWrapping="Wrap"/>
+                            <TextBlock Text="Up Arrow: prev. marker" TextWrapping="Wrap"/>
+                            <TextBlock Text="Down Arrow: next marker" TextWrapping="Wrap"/>
+                            <TextBlock Text="Ctrl+M: toggle cut mark" TextWrapping="Wrap"/>
+                            <TextBlock Text="Ctrl+&lt;: shrink scene to RAP" TextWrapping="Wrap"/>
+                            <TextBlock Text="Ctrl+&gt;: expand scene to RAP" TextWrapping="Wrap"/>
+                            <TextBlock Text="Ctrl++: zoom in timeline" TextWrapping="Wrap"/>
+                            <TextBlock Text="Ctrl+-: zoom out timeline" TextWrapping="Wrap"/>
+                            <TextBlock Text="Delete: cut scene" TextWrapping="Wrap"/>
+                            <TextBlock Text="Insert: keep scene" TextWrapping="Wrap"/>
+                            <TextBlock Text="F7: export video" TextWrapping="Wrap"/>
+                            <TextBlock Text=""/>
+                            <TextBlock Text="Timeline click: set cursor"/>
+                            <TextBlock Text="Right-click: toggle mark"/>
+                            <TextBlock Text="Ctrl+click: toggle scene" TextWrapping="Wrap"/>
+                            <TextBlock Text="File drop: load video"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="2" RowSpacing="6">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Grid ColumnSpacing="10" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <CheckBox x:Name="KeepAudioCheckBox" Content="Keep audio" IsEnabled="False" VerticalAlignment="Center" Checked="keepAudioCheckBox_Changed" Unchecked="keepAudioCheckBox_Changed"/>
+                    <TextBlock Text="Audio cross-fade:" MinWidth="112" Margin="4,0,2,0" VerticalAlignment="Center"/>
+                    <ComboBox x:Name="AudioCrossfadeComboBox" Width="128" IsEnabled="False" SelectionChanged="audioCrossfadeComboBox_SelectionChanged">
+                        <ComboBoxItem Content="None (0 ms)" Tag="0"/>
+                        <ComboBoxItem Content="50 ms" Tag="50"/>
+                        <ComboBoxItem Content="100 ms" Tag="100"/>
+                        <ComboBoxItem Content="250 ms" Tag="250"/>
+                        <ComboBoxItem Content="500 ms" Tag="500"/>
+                        <ComboBoxItem Content="750 ms" Tag="750"/>
+                        <ComboBoxItem Content="1 s" Tag="1000"/>
+                        <ComboBoxItem Content="2 s" Tag="2000"/>
+                        <ComboBoxItem Content="5 s" Tag="5000"/>
+                    </ComboBox>
+                    <TextBlock x:Name="AudioVolumeIconText" Text="🔉" VerticalAlignment="Center"/>
+                    <Slider x:Name="AudioVolumeSlider" Width="120" IsEnabled="False" Minimum="0" Maximum="250" SmallChange="5" LargeChange="5" StepFrequency="5" Value="100" ValueChanged="audioVolumeSlider_ValueChanged" ToolTipService.ToolTip="Preview uses MediaPlayer volume (max 100%); export applies full boost."/>
+                    <TextBlock x:Name="AudioPreviewBoostHintText" Text="Preview audio is capped at 100%; boosted volume is export-only." Foreground="#FFDAA520" VerticalAlignment="Center" Visibility="Collapsed"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button x:Name="ReevaluateClearCutMarkersButton" Content="⟳" Width="34" IsTabStop="False" Click="reevaluateClearCutMarkersButton_Click" ToolTipService.ToolTip="Reevaluate clear cut markers"/>
+                    <TextBlock Text="Zoom" VerticalAlignment="Center"/>
+                    <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="24" Value="4" SmallChange="1" LargeChange="4" ValueChanged="timelineZoomSlider_ValueChanged" PointerWheelChanged="timelineZoomSlider_PointerWheelChanged"/>
+                </StackPanel>
+            </Grid>
+
+            <Border Grid.Row="1" BorderThickness="1" BorderBrush="#404040" Background="#111111" CornerRadius="4" Padding="6">
+                <Grid RowSpacing="4">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="timelineScrollViewer_ViewChanged" SizeChanged="timelineScrollViewer_SizeChanged" PointerWheelChanged="timelineScrollViewer_PointerWheelChanged">
+                        <StackPanel Spacing="4">
+                            <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#222222" PointerReleased="timelineTickCanvas_PointerReleased"/>
+                            <Canvas x:Name="TimelineCanvas" Height="86" IsTabStop="True" Loaded="timelineCanvas_Loaded" PointerPressed="timelineCanvas_PointerPressed" PointerMoved="timelineCanvas_PointerMoved" PointerReleased="timelineCanvas_PointerReleased" PointerCanceled="timelineCanvas_PointerCanceled" PointerCaptureLost="timelineCanvas_PointerCaptureLost" Background="#111111">
+                                <Canvas x:Name="ThumbnailLayer" Height="86"/>
+                                <Canvas x:Name="CutOverlayLayer" Height="86"/>
+                                <Rectangle x:Name="TimelineCursor" Canvas.Left="0" Width="3" Height="86" Fill="Green"/>
+                            </Canvas>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <Border Grid.Row="1" Margin="0,4,0,0" Padding="0" MinHeight="28" Background="#2f2f2f" BorderBrush="#6A6A6A" BorderThickness="1" CornerRadius="2">
+                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" IsTabStop="False" Height="28" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="6,2" Background="#2A2A2A" Foreground="#CFCFCF" Visibility="Visible" ValueChanged="timelineHorizontalScrollBar_ValueChanged"/>
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+            <Button x:Name="StartButton" Content="▶" FontFamily="Segoe UI Symbol" IsTabStop="False" Click="startButton_Click" ToolTipService.ToolTip="Start"/>
+            <Button x:Name="PauseButton" Content="⏸︎" FontFamily="Segoe UI Symbol" IsTabStop="False" Click="pauseButton_Click" ToolTipService.ToolTip="Pause"/>
+            <Button x:Name="StopButton" Content="⏹︎" FontFamily="Segoe UI Symbol" IsTabStop="False" Click="stopButton_Click" ToolTipService.ToolTip="Stop"/>
+        </StackPanel>
+
+        <Border Grid.Row="4" BorderThickness="1" BorderBrush="#4A4A4A" CornerRadius="4" Background="#141414" Padding="8,6">
+            <Grid ColumnSpacing="12" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Grid Grid.Column="0" RowSpacing="2" VerticalAlignment="Center">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock x:Name="StatusText" Grid.Row="0" Text="Load or drag-and-drop an .mp4/.mov/.avi (H.264 only) file to preview." TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="ErrorText" Grid.Row="1" Foreground="#FFFF8585" Text="" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+                </Grid>
+
+                <TextBlock x:Name="InfoText" Grid.Column="1" Margin="0,0,10,0" Text="Estimated output: --:--.---" VerticalAlignment="Center" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"/>
+                <ProgressBar x:Name="OperationProgressBar" Grid.Column="2" Width="170" Height="16" Minimum="0" Maximum="100" Value="0" Visibility="Collapsed" HorizontalAlignment="Right"/>
+                <Button x:Name="CancelExportButton" Grid.Column="3" Margin="8,0,0,0" Content="Cancel" Click="cancelExportButton_Click" Visibility="Collapsed" IsEnabled="False"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

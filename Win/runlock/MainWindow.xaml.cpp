@@ -1,11 +1,23 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "MainWindow.xaml.h"
-#if __has_include("MainWindow.g.cpp")
+//#if __has_include("MainWindow.g.cpp")
 #include "MainWindow.g.cpp"
-#endif
+//#endif
 
 #include <thread>
+#include <vector>
+#include <string>
+#include <sstream>
+#include <algorithm>
+
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
+#include <winrt/Windows.Storage.h>
+#include <winrt/Windows.Storage.Pickers.h>
+#include <winrt/Windows.Storage.Streams.h>
+#include <winrt/Windows.System.h>
+#include <winrt/Microsoft.UI.Dispatching.h>
+#include <shobjidl_core.h>
+#include <windows.h>
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -23,9 +35,7 @@ namespace winrt::runlock::implementation
         uint32_t cores = std::thread::hardware_concurrency();
         if (cores == 0) { cores = 1; }
         for (uint32_t i = 1; i <= cores; ++i)
-        {
             CpuCoresComboBox().Items().Append(box_value(i));
-        }
         CpuCoresComboBox().SelectedIndex(0);
     }
 
@@ -54,18 +64,40 @@ namespace winrt::runlock::implementation
         // TODO: Populate password rules from dropped text file
     }
 
-    void MainWindow::GeneratePasswords_Click(IInspectable const&, RoutedEventArgs const&)
+    Windows::Foundation::IAsyncAction MainWindow::GeneratePasswords_Click(IInspectable const&, RoutedEventArgs const&)
     {
-        // TODO: Generate list of passwords
+        Windows::Storage::Pickers::FileSavePicker picker;
+        picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::DocumentsLibrary);
+        picker.FileTypeChoices().Insert(L"Text", single_threaded_vector<hstring>({ L".tia" }));
+
+        auto initialize = picker.as<::IInitializeWithWindow>();
+        if (initialize)
+        {
+            HWND hwnd = ::GetActiveWindow();
+            initialize->Initialize(hwnd);
+        }
+
+        auto file = co_await picker.PickSaveFileAsync();
+        if (!file)
+        {
+            co_return;
+        }
+
+        m_cancelGenerate = false;
         CancelGenerateButton().IsEnabled(true);
         GenerateButton().IsEnabled(false);
+        StatusText().Text(L"Generating...");
+
+        co_await GeneratePasswordFileAsync(file);
+
+        CancelGenerateButton().IsEnabled(false);
+        GenerateButton().IsEnabled(true);
+        StatusText().Text(m_cancelGenerate ? L"Cancelled" : L"Done");
     }
 
     void MainWindow::CancelGenerate_Click(IInspectable const&, RoutedEventArgs const&)
     {
-        // TODO: Cancel password generation
-        CancelGenerateButton().IsEnabled(false);
-        GenerateButton().IsEnabled(true);
+        m_cancelGenerate = true;
     }
 
     void MainWindow::UnlockButton_Click(IInspectable const&, RoutedEventArgs const&)
@@ -108,5 +140,108 @@ namespace winrt::runlock::implementation
     void MainWindow::MyProperty(int32_t /* value */)
     {
         throw hresult_not_implemented();
+    }
+
+    Windows::Foundation::IAsyncAction MainWindow::GeneratePasswordFileAsync(Windows::Storage::StorageFile const& file)
+    {
+        using namespace Windows::Storage;
+        using namespace Windows::Storage::Streams;
+
+        winrt::apartment_context ui_thread;
+
+        auto rulesText = PasswordRulesBox().Text();
+        int minLen = static_cast<int>(MinLengthBox().Value());
+        int maxLen = static_cast<int>(MaxLengthBox().Value());
+
+        co_await winrt::resume_background();
+
+        auto stream = co_await file.OpenAsync(FileAccessMode::ReadWrite);
+        DataWriter writer(stream);
+
+        std::vector<std::vector<std::wstring>> groups;
+        std::wstring rules = rulesText.c_str();
+        std::wstringstream ss(rules);
+        std::wstring line;
+        while (std::getline(ss, line))
+        {
+            if (!line.empty() && line.back() == L'\r')
+            {
+                line.pop_back();
+            }
+            if (line.empty())
+            {
+                continue;
+            }
+            std::wstringstream ls(line);
+            std::wstring token;
+            std::vector<std::wstring> options;
+            while (std::getline(ls, token, L'\n'))
+            {
+                if (!token.empty())
+                {
+                    options.push_back(token);
+                }
+            }
+            options.push_back(L"");
+            groups.push_back(std::move(options));
+        }
+
+        std::wstring current;
+        size_t bufferedBytes = 0;
+        GenerateRecursive(groups, 0, current, minLen, maxLen, writer, bufferedBytes);
+
+        co_await writer.StoreAsync();
+        writer.DetachStream();
+        stream.Close();
+
+        co_await ui_thread;
+    }
+
+    void MainWindow::GenerateRecursive(
+        std::vector<std::vector<std::wstring>> const& groups,
+        size_t index,
+        std::wstring& current,
+        int minLen,
+        int maxLen,
+        Windows::Storage::Streams::DataWriter& writer,
+        size_t& bufferedBytes)
+    {
+        if (m_cancelGenerate)
+        {
+            return;
+        }
+
+        if (index == groups.size())
+        {
+            if (static_cast<int>(current.size()) >= minLen && static_cast<int>(current.size()) <= maxLen)
+            {
+                auto toWrite = current + L"\n";
+                writer.WriteString(hstring(toWrite));
+                bufferedBytes += toWrite.size() * sizeof(std::wstring::value_type);
+
+                constexpr size_t flushThreshold = 2 * 1024 * 1024;
+                if (bufferedBytes >= flushThreshold)
+                {
+                    writer.StoreAsync().get();
+                    bufferedBytes = 0;
+                }
+            }
+            return;
+        }
+
+        for (auto const& part : groups[index])
+        {
+            auto prevLen = current.size();
+            current += part;
+            if (static_cast<int>(current.size()) <= maxLen)
+            {
+                GenerateRecursive(groups, index + 1, current, minLen, maxLen, writer, bufferedBytes);
+            }
+            current.resize(prevLen);
+            if (m_cancelGenerate)
+            {
+                return;
+            }
+        }
     }
 }

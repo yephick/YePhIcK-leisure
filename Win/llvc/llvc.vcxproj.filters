@@ -11,37 +11,41 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp" />
-    <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
+    <ClCompile Include="Generated Files\module.g.cpp" />
+    <ClCompile Include="Project.ixx" />
+    <ClCompile Include="Timeline.ixx" />
+    <ClCompile Include="Utils.ixx" />
+    <ClCompile Include="Export.ixx" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Assets\Wide310x150Logo.scale-200.png">
+    <Image Include="Assets\Wide310x150Logo.png">
       <Filter>Assets</Filter>
     </Image>
     <Image Include="Assets\StoreLogo.png">
       <Filter>Assets</Filter>
     </Image>
-    <Image Include="Assets\Square150x150Logo.scale-200.png">
+    <Image Include="Assets\Square150x150Logo.png">
       <Filter>Assets</Filter>
     </Image>
     <Image Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png">
       <Filter>Assets</Filter>
     </Image>
-    <Image Include="Assets\Square44x44Logo.scale-200.png">
+    <Image Include="Assets\Square44x44Logo.png">
       <Filter>Assets</Filter>
     </Image>
-    <Image Include="Assets\SplashScreen.scale-200.png">
+    <Image Include="Assets\SplashScreen.png">
       <Filter>Assets</Filter>
     </Image>
-    <Image Include="Assets\LockScreenLogo.scale-200.png">
+    <Image Include="Assets\LockScreenLogo.png">
       <Filter>Assets</Filter>
     </Image>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Assets">
-      <UniqueIdentifier>{525f32ee-f364-4e33-9273-6aa16b31e2e9}</UniqueIdentifier>
+      <UniqueIdentifier>{64a424dd-1f1e-46b5-92a8-449f64bf0458}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
