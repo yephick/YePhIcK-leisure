@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <winrt/base.h>
 
@@ -186,6 +186,48 @@ void appendEbmlFloat64Element(vector<uint8_t>& out, uint32_t id, double value){
     appendEbmlElement(out, id, encodeFloat64EbmlValue(value));
 }
 
+void appendVoidElement(vector<uint8_t>& out, size_t payloadSize){
+    appendEbmlId(out, 0xEC);
+    appendEbmlSize(out, payloadSize);
+    out.insert(out.end(), payloadSize, 0x00);
+}
+
+void appendExactSizedVoidPadding(vector<uint8_t>& out, size_t totalBytes){
+    if(totalBytes == 0){
+        return;
+    }
+    if(totalBytes == 1){
+        throw hresult_error(E_INVALIDARG, L"Cannot encode a one-byte WebM Void padding region");
+    }
+
+    switch(totalBytes % 3){
+    case 1:
+        if(totalBytes < 4){
+            throw hresult_error(E_INVALIDARG, L"Cannot encode requested WebM Void padding");
+        }
+        out.push_back(0xEC);
+        out.push_back(0x80);
+        out.push_back(0xEC);
+        out.push_back(0x80);
+        totalBytes -= 4;
+        break;
+    case 2:
+        out.push_back(0xEC);
+        out.push_back(0x80);
+        totalBytes -= 2;
+        break;
+    default:
+        break;
+    }
+
+    while(totalBytes > 0){
+        out.push_back(0xEC);
+        out.push_back(0x81);
+        out.push_back(0x00);
+        totalBytes -= 3;
+    }
+}
+
 class WebmVp9Writer final{
 public:
     WebmVp9Writer(const wstring& outputPath, int64_t outputDuration100ns, uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen):
@@ -196,8 +238,23 @@ public:
 
         writeEbmlHeader();
         writeSegmentHeader();
+        reserveSeekHeadSpace();
         writeInfo(outputDuration100ns);
         writeTracks(width, height, fpsNum, fpsDen);
+    }
+
+    void finalize(){
+        if(m_finalized){
+            return;
+        }
+
+        writeCues();
+        rewriteSeekHead();
+        m_stream.flush();
+        if(!m_stream){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_WRITE_FAULT), L"Failed while finalizing WebM output");
+        }
+        m_finalized = true;
     }
 
     void writeSample(const uint8_t* data, size_t size, int64_t time100ns, bool keyframe){
@@ -206,20 +263,40 @@ public:
         }
 
         auto blockTimeMs{round100nsToWebmMs(time100ns)};
-        if(!m_clusterOpen || blockTimeMs < m_clusterTimeMs || (blockTimeMs - m_clusterTimeMs) > 30'000){
-            startCluster(blockTimeMs);
+        const auto clusterAgeMs{m_clusterOpen ? (blockTimeMs - m_clusterTimeMs) : 0};
+        const auto needNewCluster{
+            !m_clusterOpen
+            || blockTimeMs < m_clusterTimeMs
+            || (keyframe && m_clusterHasBlocks)
+            || clusterAgeMs > 30'000};
+        if(needNewCluster){
+            startCluster(blockTimeMs, keyframe);
         }
 
         auto relativeTimeMs{blockTimeMs - m_clusterTimeMs};
         if(relativeTimeMs < (numeric_limits<int16_t>::min)() || relativeTimeMs > (numeric_limits<int16_t>::max)()){
-            startCluster(blockTimeMs);
+            startCluster(blockTimeMs, keyframe);
             relativeTimeMs = 0;
         }
 
         writeSimpleBlock(data, size, static_cast<int16_t>(relativeTimeMs), keyframe);
+        m_clusterHasBlocks = true;
     }
 
 private:
+    struct CuePoint final{
+        uint64_t timeMs{};
+        uint64_t clusterPosition{};
+    };
+
+    uint64_t currentOffset(){
+        const auto pos{m_stream.tellp()};
+        if(pos == streampos(-1)){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_WRITE_FAULT), L"Failed to query WebM output position");
+        }
+        return static_cast<uint64_t>(pos);
+    }
+
     void writeBytes(const vector<uint8_t>& bytes){
         if(bytes.empty()){
             return;
@@ -262,9 +339,19 @@ private:
         appendEbmlId(segmentHeader, 0x18538067);
         appendEbmlUnknownSize8(segmentHeader);
         writeBytes(segmentHeader);
+        m_segmentDataStartOffset = currentOffset();
+    }
+
+    void reserveSeekHeadSpace(){
+        vector<uint8_t> reservedSeekHead;
+        appendVoidElement(reservedSeekHead, 512);
+        m_seekHeadOffset = currentOffset();
+        m_seekHeadReservedBytes = reservedSeekHead.size();
+        writeBytes(reservedSeekHead);
     }
 
     void writeInfo(int64_t outputDuration100ns){
+        const auto infoOffset{currentOffset()};
         vector<uint8_t> info;
         appendEbmlUnsignedElement(info, 0x2AD7B1, static_cast<uint64_t>(WEBM_TIMECODE_SCALE_NS), 3);
         appendEbmlStringElement(info, 0x4D80, "llvc");
@@ -276,9 +363,13 @@ private:
         appendEbmlSize(infoElement, info.size());
         infoElement.insert(infoElement.end(), info.begin(), info.end());
         writeBytes(infoElement);
+        if(infoOffset >= m_segmentDataStartOffset){
+            m_infoPosition = infoOffset - m_segmentDataStartOffset;
+        }
     }
 
     void writeTracks(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen){
+        const auto tracksOffset{currentOffset()};
         vector<uint8_t> video;
         appendEbmlUnsignedElement(video, 0xB0, width ? width : 1);
         appendEbmlUnsignedElement(video, 0xBA, height ? height : 1);
@@ -316,9 +407,13 @@ private:
         appendEbmlSize(tracksElement, tracks.size());
         tracksElement.insert(tracksElement.end(), tracks.begin(), tracks.end());
         writeBytes(tracksElement);
+        if(tracksOffset >= m_segmentDataStartOffset){
+            m_tracksPosition = tracksOffset - m_segmentDataStartOffset;
+        }
     }
 
-    void startCluster(int64_t clusterTimeMs){
+    void startCluster(int64_t clusterTimeMs, bool cueable){
+        const auto clusterOffset{currentOffset()};
         vector<uint8_t> clusterHeader;
         appendEbmlId(clusterHeader, 0x1F43B675);
         appendEbmlUnknownSize8(clusterHeader);
@@ -330,6 +425,15 @@ private:
 
         m_clusterOpen = true;
         m_clusterTimeMs = clusterTimeMs;
+        m_clusterHasBlocks = false;
+        if(cueable && clusterOffset >= m_segmentDataStartOffset){
+            const auto relativeClusterOffset{clusterOffset - m_segmentDataStartOffset};
+            if(m_cues.empty() || m_cues.back().timeMs != static_cast<uint64_t>(clusterTimeMs)){
+                m_cues.push_back(CuePoint{
+                    .timeMs = static_cast<uint64_t>(clusterTimeMs),
+                    .clusterPosition = relativeClusterOffset});
+            }
+        }
     }
 
     void writeSimpleBlock(const uint8_t* data, size_t size, int16_t relativeTimecodeMs, bool keyframe){
@@ -348,10 +452,126 @@ private:
         writeBytes(data, size);
     }
 
+    void writeCues(){
+        if(m_cues.empty()){
+            return;
+        }
+
+        const auto cuesOffset{currentOffset()};
+        vector<uint8_t> cuesPayload;
+        for(const auto& cue: m_cues){
+            vector<uint8_t> cueTrackPositions;
+            appendEbmlUnsignedElement(cueTrackPositions, 0xF7, 1);
+            appendEbmlUnsignedElement(cueTrackPositions, 0xF1, cue.clusterPosition);
+            appendEbmlUnsignedElement(cueTrackPositions, 0xF0, 0);
+
+            vector<uint8_t> cueTrackPositionsMaster;
+            appendEbmlId(cueTrackPositionsMaster, 0xB7);
+            appendEbmlSize(cueTrackPositionsMaster, cueTrackPositions.size());
+            cueTrackPositionsMaster.insert(cueTrackPositionsMaster.end(), cueTrackPositions.begin(), cueTrackPositions.end());
+
+            vector<uint8_t> cuePoint;
+            appendEbmlUnsignedElement(cuePoint, 0xB3, cue.timeMs);
+            cuePoint.insert(cuePoint.end(), cueTrackPositionsMaster.begin(), cueTrackPositionsMaster.end());
+
+            vector<uint8_t> cuePointMaster;
+            appendEbmlId(cuePointMaster, 0xBB);
+            appendEbmlSize(cuePointMaster, cuePoint.size());
+            cuePointMaster.insert(cuePointMaster.end(), cuePoint.begin(), cuePoint.end());
+
+            cuesPayload.insert(cuesPayload.end(), cuePointMaster.begin(), cuePointMaster.end());
+        }
+
+        vector<uint8_t> cuesElement;
+        appendEbmlId(cuesElement, 0x1C53BB6B);
+        appendEbmlSize(cuesElement, cuesPayload.size());
+        cuesElement.insert(cuesElement.end(), cuesPayload.begin(), cuesPayload.end());
+        writeBytes(cuesElement);
+        if(cuesOffset >= m_segmentDataStartOffset){
+            m_cuesPosition = cuesOffset - m_segmentDataStartOffset;
+        }
+    }
+
+    void rewriteSeekHead(){
+        if(m_seekHeadReservedBytes == 0){
+            return;
+        }
+
+        struct SeekHeadEntry final{
+            uint32_t id{};
+            uint64_t position{};
+        };
+
+        vector<SeekHeadEntry> entries;
+        if(m_infoPosition){
+            entries.push_back(SeekHeadEntry{.id = 0x1549A966, .position = *m_infoPosition});
+        }
+        if(m_tracksPosition){
+            entries.push_back(SeekHeadEntry{.id = 0x1654AE6B, .position = *m_tracksPosition});
+        }
+        if(m_cuesPosition){
+            entries.push_back(SeekHeadEntry{.id = 0x1C53BB6B, .position = *m_cuesPosition});
+        }
+        if(entries.empty()){
+            return;
+        }
+
+        vector<uint8_t> seekHeadPayload;
+        for(const auto& entry: entries){
+            vector<uint8_t> seekIdPayload;
+            appendEbmlId(seekIdPayload, entry.id);
+
+            vector<uint8_t> seekEntry;
+            appendEbmlElement(seekEntry, 0x53AB, seekIdPayload);
+            appendEbmlUnsignedElement(seekEntry, 0x53AC, entry.position);
+
+            vector<uint8_t> seekEntryMaster;
+            appendEbmlId(seekEntryMaster, 0x4DBB);
+            appendEbmlSize(seekEntryMaster, seekEntry.size());
+            seekEntryMaster.insert(seekEntryMaster.end(), seekEntry.begin(), seekEntry.end());
+
+            seekHeadPayload.insert(seekHeadPayload.end(), seekEntryMaster.begin(), seekEntryMaster.end());
+        }
+
+        vector<uint8_t> seekHead;
+        appendEbmlId(seekHead, 0x114D9B74);
+        appendEbmlSize(seekHead, seekHeadPayload.size());
+        seekHead.insert(seekHead.end(), seekHeadPayload.begin(), seekHeadPayload.end());
+
+        if(seekHead.size() > m_seekHeadReservedBytes){
+            throw hresult_error(E_INVALIDARG, L"Reserved WebM SeekHead space was too small");
+        }
+
+        vector<uint8_t> replacement{seekHead};
+        appendExactSizedVoidPadding(replacement, static_cast<size_t>(m_seekHeadReservedBytes - replacement.size()));
+
+        const auto endOffset{currentOffset()};
+        m_stream.seekp(static_cast<streamoff>(m_seekHeadOffset));
+        if(!m_stream){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_WRITE_FAULT), L"Failed while seeking to rewrite WebM SeekHead");
+        }
+
+        writeBytes(replacement);
+
+        m_stream.seekp(static_cast<streamoff>(endOffset));
+        if(!m_stream){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_WRITE_FAULT), L"Failed while restoring WebM output position");
+        }
+    }
+
 private:
     ofstream m_stream;
+    uint64_t m_segmentDataStartOffset{};
+    uint64_t m_seekHeadOffset{};
+    uint64_t m_seekHeadReservedBytes{};
+    optional<uint64_t> m_infoPosition{};
+    optional<uint64_t> m_tracksPosition{};
+    optional<uint64_t> m_cuesPosition{};
     bool m_clusterOpen{};
+    bool m_clusterHasBlocks{};
     int64_t m_clusterTimeMs{};
+    vector<CuePoint> m_cues{};
+    bool m_finalized{};
 };
 
 }
@@ -1269,6 +1489,8 @@ VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>
             progressCallback(pct);
         }
     }
+
+    writer.finalize();
 
     if(progressCallback){
         progressCallback(100.0);
