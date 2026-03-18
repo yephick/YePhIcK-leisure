@@ -73,6 +73,7 @@ void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>
 void writePcmAudioFramesToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, const vector<float>& audioFrames, uint32_t audioChannels, uint32_t audioSampleRate, uint64_t& writtenFrames);
 void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs, float gain, const function<bool()>& shouldCancel = {});
 VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel = {});
+VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, int64_t outputDuration100ns, uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel = {});
 void applyExportFileMetadata(const std::wstring& sourcePath, const std::wstring& outputPath, const std::wstring& exportComment);
 
 }
@@ -81,6 +82,279 @@ namespace llvc{
 
 using namespace ::std;
 using namespace ::winrt;
+
+namespace{
+
+constexpr int64_t WEBM_TIMECODE_SCALE_NS{1'000'000LL};
+constexpr int64_t HNS_PER_MILLISECOND{10'000LL};
+
+uint64_t clampWebmElementSize(uint64_t value){
+    constexpr auto maxKnownEbmlSize{0x00FF'FFFF'FFFF'FFFFULL - 1};
+    return min(value, maxKnownEbmlSize);
+}
+
+int64_t round100nsToWebmMs(int64_t value100ns){
+    return max<int64_t>(0, (value100ns + (HNS_PER_MILLISECOND / 2)) / HNS_PER_MILLISECOND);
+}
+
+void appendEbmlId(vector<uint8_t>& out, uint32_t id){
+    if(id > 0xFFFFFF){
+        out.push_back(static_cast<uint8_t>((id >> 24) & 0xFF));
+    }
+    if(id > 0xFFFF){
+        out.push_back(static_cast<uint8_t>((id >> 16) & 0xFF));
+    }
+    if(id > 0xFF){
+        out.push_back(static_cast<uint8_t>((id >> 8) & 0xFF));
+    }
+    out.push_back(static_cast<uint8_t>(id & 0xFF));
+}
+
+void appendEbmlSize(vector<uint8_t>& out, uint64_t value){
+    const auto safeValue{clampWebmElementSize(value)};
+    for(int length{1}; length <= 8; ++length){
+        const auto usableBits{7 * length};
+        const auto maxValue{usableBits >= 63 ? (numeric_limits<uint64_t>::max)() : ((uint64_t{1} << usableBits) - 2)};
+        if(safeValue > maxValue){
+            continue;
+        }
+
+        vector<uint8_t> bytes(static_cast<size_t>(length), 0);
+        auto remaining{safeValue};
+        for(int i{length - 1}; i >= 0; --i){
+            bytes[static_cast<size_t>(i)] = static_cast<uint8_t>(remaining & 0xFF);
+            remaining >>= 8;
+        }
+        bytes[0] |= static_cast<uint8_t>(1u << (8 - length));
+        out.insert(out.end(), bytes.begin(), bytes.end());
+        return;
+    }
+
+    throw hresult_error(E_INVALIDARG, L"EBML size is too large");
+}
+
+void appendEbmlUnknownSize8(vector<uint8_t>& out){
+    out.push_back(0x01);
+    out.insert(out.end(), 7, 0xFF);
+}
+
+vector<uint8_t> encodeUnsignedEbmlValue(uint64_t value, size_t minBytes = 1){
+    size_t byteCount{1};
+    auto remaining{value};
+    while((remaining >>= 8) != 0){
+        ++byteCount;
+    }
+    byteCount = max(byteCount, minBytes);
+
+    vector<uint8_t> bytes(byteCount, 0);
+    for(size_t i{}; i < byteCount; ++i){
+        const auto shift{8 * (byteCount - 1 - i)};
+        bytes[i] = static_cast<uint8_t>((value >> shift) & 0xFF);
+    }
+    return bytes;
+}
+
+vector<uint8_t> encodeFloat64EbmlValue(double value){
+    uint64_t bits{};
+    static_assert(sizeof(bits) == sizeof(value));
+    memcpy(&bits, &value, sizeof(bits));
+
+    vector<uint8_t> bytes(8, 0);
+    for(size_t i{}; i < bytes.size(); ++i){
+        const auto shift{8 * (bytes.size() - 1 - i)};
+        bytes[i] = static_cast<uint8_t>((bits >> shift) & 0xFF);
+    }
+    return bytes;
+}
+
+void appendEbmlElement(vector<uint8_t>& out, uint32_t id, const vector<uint8_t>& payload){
+    appendEbmlId(out, id);
+    appendEbmlSize(out, payload.size());
+    out.insert(out.end(), payload.begin(), payload.end());
+}
+
+void appendEbmlStringElement(vector<uint8_t>& out, uint32_t id, string_view value){
+    vector<uint8_t> payload(value.begin(), value.end());
+    appendEbmlElement(out, id, payload);
+}
+
+void appendEbmlUnsignedElement(vector<uint8_t>& out, uint32_t id, uint64_t value, size_t minBytes = 1){
+    appendEbmlElement(out, id, encodeUnsignedEbmlValue(value, minBytes));
+}
+
+void appendEbmlFloat64Element(vector<uint8_t>& out, uint32_t id, double value){
+    appendEbmlElement(out, id, encodeFloat64EbmlValue(value));
+}
+
+class WebmVp9Writer final{
+public:
+    WebmVp9Writer(const wstring& outputPath, int64_t outputDuration100ns, uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen):
+        m_stream{filesystem::path{outputPath}, ios::binary | ios::trunc}{
+        if(!m_stream){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_OPEN_FAILED), L"Failed to create WebM output file");
+        }
+
+        writeEbmlHeader();
+        writeSegmentHeader();
+        writeInfo(outputDuration100ns);
+        writeTracks(width, height, fpsNum, fpsDen);
+    }
+
+    void writeSample(const uint8_t* data, size_t size, int64_t time100ns, bool keyframe){
+        if(!data || size == 0){
+            return;
+        }
+
+        auto blockTimeMs{round100nsToWebmMs(time100ns)};
+        if(!m_clusterOpen || blockTimeMs < m_clusterTimeMs || (blockTimeMs - m_clusterTimeMs) > 30'000){
+            startCluster(blockTimeMs);
+        }
+
+        auto relativeTimeMs{blockTimeMs - m_clusterTimeMs};
+        if(relativeTimeMs < (numeric_limits<int16_t>::min)() || relativeTimeMs > (numeric_limits<int16_t>::max)()){
+            startCluster(blockTimeMs);
+            relativeTimeMs = 0;
+        }
+
+        writeSimpleBlock(data, size, static_cast<int16_t>(relativeTimeMs), keyframe);
+    }
+
+private:
+    void writeBytes(const vector<uint8_t>& bytes){
+        if(bytes.empty()){
+            return;
+        }
+        m_stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<streamsize>(bytes.size()));
+        if(!m_stream){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_WRITE_FAULT), L"Failed while writing WebM output");
+        }
+    }
+
+    void writeBytes(const uint8_t* data, size_t size){
+        if(!data || size == 0){
+            return;
+        }
+        m_stream.write(reinterpret_cast<const char*>(data), static_cast<streamsize>(size));
+        if(!m_stream){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_WRITE_FAULT), L"Failed while writing WebM output");
+        }
+    }
+
+    void writeEbmlHeader(){
+        vector<uint8_t> ebml;
+        appendEbmlUnsignedElement(ebml, 0x4286, 1);
+        appendEbmlUnsignedElement(ebml, 0x42F7, 1);
+        appendEbmlUnsignedElement(ebml, 0x42F2, 4);
+        appendEbmlUnsignedElement(ebml, 0x42F3, 8);
+        appendEbmlStringElement(ebml, 0x4282, "webm");
+        appendEbmlUnsignedElement(ebml, 0x4287, 4);
+        appendEbmlUnsignedElement(ebml, 0x4285, 2);
+
+        vector<uint8_t> header;
+        appendEbmlId(header, 0x1A45DFA3);
+        appendEbmlSize(header, ebml.size());
+        header.insert(header.end(), ebml.begin(), ebml.end());
+        writeBytes(header);
+    }
+
+    void writeSegmentHeader(){
+        vector<uint8_t> segmentHeader;
+        appendEbmlId(segmentHeader, 0x18538067);
+        appendEbmlUnknownSize8(segmentHeader);
+        writeBytes(segmentHeader);
+    }
+
+    void writeInfo(int64_t outputDuration100ns){
+        vector<uint8_t> info;
+        appendEbmlUnsignedElement(info, 0x2AD7B1, static_cast<uint64_t>(WEBM_TIMECODE_SCALE_NS), 3);
+        appendEbmlStringElement(info, 0x4D80, "llvc");
+        appendEbmlStringElement(info, 0x5741, "llvc");
+        appendEbmlFloat64Element(info, 0x4489, static_cast<double>(max<int64_t>(0, outputDuration100ns)) / HNS_PER_MILLISECOND);
+
+        vector<uint8_t> infoElement;
+        appendEbmlId(infoElement, 0x1549A966);
+        appendEbmlSize(infoElement, info.size());
+        infoElement.insert(infoElement.end(), info.begin(), info.end());
+        writeBytes(infoElement);
+    }
+
+    void writeTracks(uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen){
+        vector<uint8_t> video;
+        appendEbmlUnsignedElement(video, 0xB0, width ? width : 1);
+        appendEbmlUnsignedElement(video, 0xBA, height ? height : 1);
+
+        vector<uint8_t> trackEntry;
+        appendEbmlUnsignedElement(trackEntry, 0xD7, 1);
+        appendEbmlUnsignedElement(trackEntry, 0x73C5, 1);
+        appendEbmlUnsignedElement(trackEntry, 0x83, 1);
+        appendEbmlUnsignedElement(trackEntry, 0x9C, 0);
+        appendEbmlStringElement(trackEntry, 0x86, "V_VP9");
+        if(fpsNum > 0 && fpsDen > 0){
+            const auto defaultDurationNs{
+                static_cast<uint64_t>((1'000'000'000LL * static_cast<int64_t>(fpsDen) + (fpsNum / 2)) / static_cast<int64_t>(fpsNum))};
+            if(defaultDurationNs > 0){
+                appendEbmlUnsignedElement(trackEntry, 0x23E383, defaultDurationNs);
+            }
+        }
+
+        vector<uint8_t> videoMaster;
+        appendEbmlId(videoMaster, 0xE0);
+        appendEbmlSize(videoMaster, video.size());
+        videoMaster.insert(videoMaster.end(), video.begin(), video.end());
+        trackEntry.insert(trackEntry.end(), videoMaster.begin(), videoMaster.end());
+
+        vector<uint8_t> trackEntryMaster;
+        appendEbmlId(trackEntryMaster, 0xAE);
+        appendEbmlSize(trackEntryMaster, trackEntry.size());
+        trackEntryMaster.insert(trackEntryMaster.end(), trackEntry.begin(), trackEntry.end());
+
+        vector<uint8_t> tracks;
+        tracks.insert(tracks.end(), trackEntryMaster.begin(), trackEntryMaster.end());
+
+        vector<uint8_t> tracksElement;
+        appendEbmlId(tracksElement, 0x1654AE6B);
+        appendEbmlSize(tracksElement, tracks.size());
+        tracksElement.insert(tracksElement.end(), tracks.begin(), tracks.end());
+        writeBytes(tracksElement);
+    }
+
+    void startCluster(int64_t clusterTimeMs){
+        vector<uint8_t> clusterHeader;
+        appendEbmlId(clusterHeader, 0x1F43B675);
+        appendEbmlUnknownSize8(clusterHeader);
+        writeBytes(clusterHeader);
+
+        vector<uint8_t> timecodeElement;
+        appendEbmlUnsignedElement(timecodeElement, 0xE7, static_cast<uint64_t>(max<int64_t>(0, clusterTimeMs)));
+        writeBytes(timecodeElement);
+
+        m_clusterOpen = true;
+        m_clusterTimeMs = clusterTimeMs;
+    }
+
+    void writeSimpleBlock(const uint8_t* data, size_t size, int16_t relativeTimecodeMs, bool keyframe){
+        vector<uint8_t> simpleBlock;
+        simpleBlock.reserve(size + 4);
+        simpleBlock.push_back(0x81);
+        simpleBlock.push_back(static_cast<uint8_t>((relativeTimecodeMs >> 8) & 0xFF));
+        simpleBlock.push_back(static_cast<uint8_t>(relativeTimecodeMs & 0xFF));
+        simpleBlock.push_back(static_cast<uint8_t>(keyframe ? 0x80 : 0x00));
+
+        vector<uint8_t> blockHeader;
+        appendEbmlId(blockHeader, 0xA3);
+        appendEbmlSize(blockHeader, simpleBlock.size() + size);
+        writeBytes(blockHeader);
+        writeBytes(simpleBlock);
+        writeBytes(data, size);
+    }
+
+private:
+    ofstream m_stream;
+    bool m_clusterOpen{};
+    int64_t m_clusterTimeMs{};
+};
+
+}
 
 MFLifetime::MFLifetime(){
     check_hresult(MFStartup(MF_VERSION, MFSTARTUP_FULL));
@@ -511,7 +785,15 @@ wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wc
     check_hresult(saveDialog->GetOptions(&options));
     check_hresult(saveDialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT));
 
-    if(mp4Only){
+    const auto isWebmDefault{_wcsicmp(defaultExt, L".webm") == 0};
+    if(isWebmDefault){
+        const COMDLG_FILTERSPEC fileTypes[]{
+            {L"WebM video", L"*.webm"},
+        };
+        check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(size(fileTypes)), fileTypes));
+        check_hresult(saveDialog->SetFileTypeIndex(1));
+        check_hresult(saveDialog->SetDefaultExtension(L"webm"));
+    }else if(mp4Only){
         const COMDLG_FILTERSPEC fileTypes[]{
             {L"MP4 video", L"*.mp4"},
         };
@@ -885,6 +1167,104 @@ VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reade
         ++stats.writtenSampleCount;
 
         if(progressCallback && sourceDuration100ns > 0 && (stats.readSampleCount % 24 == 0)) {
+            const auto pct{(100.0 * inTime100ns) / sourceDuration100ns};
+            progressCallback(pct);
+        }
+    }
+
+    if(progressCallback){
+        progressCallback(100.0);
+    }
+    return stats;
+}
+
+VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, int64_t outputDuration100ns, uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel){
+    if(videoSubtype != MFVideoFormat_VP90){
+        throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WebM stream-copy export currently requires VP9 video");
+    }
+
+    auto waitingForCleanPoint{false};
+    int64_t lastInTime100ns{-1};
+    VideoWriteStats stats{};
+    WebmVp9Writer writer(outputPath, outputDuration100ns, width, height, fpsNum, fpsDen);
+
+    if(progressCallback){
+        progressCallback(0.0);
+    }
+
+    for(;;){
+        if(shouldCancel && shouldCancel()){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+        }
+
+        DWORD actualStream{};
+        DWORD flags{};
+        LONGLONG timestamp{};
+        com_ptr<IMFSample> sample;
+        const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+        if(FAILED(hr)){
+            check_hresult(hr);
+        }
+        if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+            break;
+        }
+        if(!sample){
+            continue;
+        }
+
+        ++stats.readSampleCount;
+
+        LONGLONG sampleTime100ns{};
+        if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
+            sampleTime100ns = timestamp;
+        }
+        const auto inTime100ns{max<int64_t>(0, sampleTime100ns)};
+        if(inTime100ns > lastInTime100ns){
+            lastInTime100ns = inTime100ns;
+        }
+
+        auto dropped{false};
+        for(const auto& [start, end] : effectiveCutRanges100ns){
+            if(inTime100ns < start){
+                break;
+            }
+            if(inTime100ns < end){
+                dropped = true;
+                break;
+            }
+        }
+        if(dropped){
+            ++stats.droppedByCutCount;
+            waitingForCleanPoint = true;
+            continue;
+        }
+
+        if(waitingForCleanPoint){
+            const auto isContainerSync{isContainerSyncSample(sample)};
+            const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
+            if(!(isContainerSync && isBitstreamRap)){
+                ++stats.droppedWaitingRapCount;
+                continue;
+            }
+            waitingForCleanPoint = false;
+        }
+
+        const auto outTime100ns{inTime100ns - removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
+        const auto keyframe{isContainerSyncSample(sample) && isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
+
+        com_ptr<IMFMediaBuffer> contiguousBuffer;
+        check_hresult(sample->ConvertToContiguousBuffer(contiguousBuffer.put()));
+
+        BYTE* data{};
+        DWORD maxLength{};
+        DWORD currentLength{};
+        check_hresult(contiguousBuffer->Lock(&data, &maxLength, &currentLength));
+        writer.writeSample(data, currentLength, outTime100ns, keyframe);
+        check_hresult(contiguousBuffer->Unlock());
+
+        ++stats.writtenSampleCount;
+
+        if(progressCallback && sourceDuration100ns > 0 && (stats.readSampleCount % 24 == 0)){
             const auto pct{(100.0 * inTime100ns) / sourceDuration100ns};
             progressCallback(pct);
         }

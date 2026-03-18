@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "MainWindow.xaml.h"
 #include "MainWindow.g.cpp"
 
@@ -188,6 +188,9 @@ wstring guidToVideoCodecName(const GUID& subtype){
     }
     if(subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265){
         return L"HEVC";
+    }
+    if(subtype == MFVideoFormat_VP90){
+        return L"VP9";
     }
 
     const auto hasMfSubtypeBase{
@@ -687,7 +690,7 @@ AAction MainWindow::openFromLaunchArgumentsAsync(const hstring& arguments){
     wstring lowerExt{std::filesystem::path(launchPath).extension().wstring()};
     transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::towlower);
 
-    if(lowerExt != PROJECT_EXT && lowerExt != L".mp4" && lowerExt != L".mov" && lowerExt != L".avi"){
+    if(lowerExt != PROJECT_EXT && lowerExt != L".mp4" && lowerExt != L".mov" && lowerExt != L".avi" && lowerExt != L".webm"){
         setStatusMessage(L"Launch argument is not a supported media/project file");
         co_return;
     }
@@ -2488,7 +2491,7 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
     co_await showInfoDialogAsync(
         L"Quick manual",
         L"Functions:\n"
-        L"• Load video: Open .mp4/.mov/.avi source footage for timeline editing.\n"
+        L"• Load video: Open .mp4/.mov/.avi/.webm source footage for timeline editing.\n"
         L"• Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
         L"• Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
         L"• Boundary RAP nudging: Ctrl+< shrinks the current scene by nudging both scene edges inward to RAPs, Ctrl+> expands by nudging both edges outward to RAPs.\n"
@@ -2554,6 +2557,7 @@ AAction MainWindow::pickAndLoadVideoAsync(){
     picker.FileTypeFilter().Append(L".mp4");
     picker.FileTypeFilter().Append(L".mov");
     picker.FileTypeFilter().Append(L".avi");
+    picker.FileTypeFilter().Append(L".webm");
 
     const auto hwnd{getWindowHandle()};
     auto initWithWindow{picker.as<IInitializeWithWindow>()};
@@ -2656,7 +2660,7 @@ void MainWindow::resetProjectState(){
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
     syncTimelineHorizontalScrollBar();
 
-    setStatusMessage(L"Load or drag-and-drop a .llvc/.mp4/.mov/.avi file to begin.");
+    setStatusMessage(L"Load or drag-and-drop a .llvc/.mp4/.mov/.avi/.webm file to begin.");
     clearErrorMessage();
     refreshStatusInfoSection();
     updateWindowTitle();
@@ -2951,7 +2955,7 @@ AAction MainWindow::showOptionsDialogAsync(){
 }
 
 bool MainWindow::isSupportedVideoSubtype(const GUID& subtype){
-    return subtype == MFVideoFormat_H264 || subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265;
+    return subtype == MFVideoFormat_H264 || subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265 || subtype == MFVideoFormat_VP90;
 }
 
 wstring MainWindow::guidToCodecName(const GUID& subtype, bool isVideo){
@@ -2961,6 +2965,9 @@ wstring MainWindow::guidToCodecName(const GUID& subtype, bool isVideo){
         }
         if(subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265){
             return L"HEVC";
+        }
+        if(subtype == MFVideoFormat_VP90){
+            return L"VP9";
         }
     }else{
         if(subtype == MFAudioFormat_AAC){
@@ -3007,6 +3014,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::towlower);
     const auto sourceIsMp4{lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mp4"};
     const auto sourceIsMov{lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mov"};
+    const auto sourceIsWebm{lowerPath.size() >= 5 && lowerPath.substr(lowerPath.size() - 5) == L".webm"};
 
     for(DWORD streamIndex{0};; ++streamIndex){
         com_ptr<IMFMediaType> type;
@@ -3079,6 +3087,8 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         vector<GUID> allowedVideoSubtypes;
         if(sourceIsMp4 || sourceIsMov){
             allowedVideoSubtypes = {MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_H265};
+        }else if(sourceIsWebm){
+            allowedVideoSubtypes = {MFVideoFormat_VP90};
         }
 
         if(auto bestVideoType{sourceIsAvi ? aviNativeH264Type : chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, allowedVideoSubtypes)}){
@@ -3098,6 +3108,9 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         }else if(sourceIsMp4 || sourceIsMov){
             result.errorMessage = L"No stream-copy video media type found. Require H.264 or HEVC in MP4/MOV.";
             return result;
+        }else if(sourceIsWebm){
+            result.errorMessage = L"No stream-copy video media type found. Require VP9 in WebM.";
+            return result;
         }
     }
 
@@ -3114,7 +3127,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         return result;
     }
     if(!isSupportedVideoSubtype(videoSubtype)){
-        result.errorMessage = L"Video codec not supported. Only H.264 and HEVC are allowed";
+        result.errorMessage = L"Video codec not supported. Only H.264, HEVC, and VP9 are allowed";
         return result;
     }
 
@@ -3124,8 +3137,10 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         result.container = L"MOV";
     }else if(sourceIsAvi){
         result.container = L"AVI";
+    }else if(sourceIsWebm){
+        result.container = L"WEBM";
     }else{
-        result.errorMessage = L"Container not supported. Only MP4, MOV, and AVI (H.264 only) are allowed";
+        result.errorMessage = L"Container not supported. Only MP4, MOV, AVI (H.264 only), and WEBM (VP9 only) are allowed";
         return result;
     }
 
@@ -3168,6 +3183,10 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         result.audioDisabledForThisSource = true;
         result.audioDisabledReason = L"AVI audio passthrough is disabled in v1. Export will keep video only";
     }
+    if(sourceIsWebm && audioCount > 0){
+        result.audioDisabledForThisSource = true;
+        result.audioDisabledReason = L"WebM export currently keeps VP9 video only; audio passthrough is not implemented yet";
+    }
 
     result.sourceEncodedBy = readShellStringProperty(filePath, PKEY_Media_EncodedBy);
     result.sourceComment = readShellStringProperty(filePath, PKEY_Comment);
@@ -3188,7 +3207,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
 
     const auto items{co_await view.GetStorageItemsAsync()};
     if(items.Size() != 1){
-        setStatusMessage(L"Only support a single .llvc/.mp4/.mov/.avi file");
+        setStatusMessage(L"Only support a single .llvc/.mp4/.mov/.avi/.webm file");
         co_return;
     }
 
@@ -3208,8 +3227,8 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
         co_return;
     }
 
-    if(lower != L".mp4" && lower != L".mov" && lower != L".avi"){
-        setStatusMessage(L"Only .llvc, .mp4, .mov, and .avi (H.264) files are supported");
+    if(lower != L".mp4" && lower != L".mov" && lower != L".avi" && lower != L".webm"){
+        setStatusMessage(L"Only .llvc, .mp4, .mov, .avi (H.264), and .webm (VP9) files are supported");
         co_return;
     }
 
@@ -3544,7 +3563,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     };
     const auto sourceExt{sourceFsPath.extension().wstring()};
     const auto sourceIsAvi{isAviPath(sourcePath)};
-    const auto defaultExt{sourceIsAvi ? L".mp4" : (_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4")};
+    const auto sourceIsWebm{_wcsicmp(sourceExt.c_str(), L".webm") == 0};
+    const auto defaultExt{
+        sourceIsWebm
+            ? L".webm"
+            : (sourceIsAvi ? L".mp4" : (_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4"))};
 
     const auto outputPath{pickExportOutputPath(sourceFsPath, defaultExt, outputDuration100ns, getWindowHandle(), sourceIsAvi)};
     if(outputPath.empty()){
@@ -3601,7 +3624,12 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
         check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
-        const vector<GUID> streamCopySubtypes{MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_H265};
+        vector<GUID> streamCopySubtypes;
+        if(sourceIsWebm){
+            streamCopySubtypes = {MFVideoFormat_VP90};
+        }else{
+            streamCopySubtypes = {MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_H265};
+        }
         auto sourceVideoType{chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, streamCopySubtypes)};
         if(sourceIsAvi){
             sourceVideoType = nullptr;
@@ -3624,6 +3652,9 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
         }
         if(!sourceVideoType){
+            if(sourceIsWebm){
+                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require VP9 in WebM)");
+            }
             throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require H.264 or HEVC)");
         }
         check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, sourceVideoType.get()));
@@ -3647,7 +3678,16 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             if(FAILED(seqReadHr) || bytesWritten == 0){
                 throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI H.264 stream lacks codec configuration (SPS/PPS). Convert to MP4 first.");
             }
+        }else if(sourceIsWebm && videoSubtype != MFVideoFormat_VP90){
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WebM stream-copy export currently requires VP9 video");
         }
+
+        uint32_t width{};
+        uint32_t height{};
+        uint32_t fpsNum{};
+        uint32_t fpsDen{};
+        (void)MFGetAttributeSize(sourceVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
+        (void)MFGetAttributeRatio(sourceVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
 
         vector<int64_t> rapTimes100ns;
         rapTimes100ns.reserve(2048);
@@ -3696,7 +3736,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         DWORD audioStreamIndex{};
         constexpr auto invalidAudioStream{numeric_limits<DWORD>::max()};
 
-        if(!sourceIsAvi && m_prj.keepAudio() && sourceHasAudio()){
+        if(!sourceIsAvi && !sourceIsWebm && m_prj.keepAudio() && sourceHasAudio()){
             com_ptr<IMFSourceReader> audioProbeReader;
             check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioProbeReader.put()));
 
@@ -3733,89 +3773,125 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
         }
 
-        com_ptr<IMFSinkWriter> writer;
-        DWORD writerVideoStreamIndex{};
-        auto configureWriter = [&]() -> HRESULT {
-            writer = nullptr;
-            writerVideoStreamIndex = 0;
-            writerAudioStreamIndex = 0;
-
-            com_ptr<IMFAttributes> writerAttributes;
-            check_hresult(MFCreateAttributes(writerAttributes.put(), 1));
-            check_hresult(writerAttributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
-            check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, writerAttributes.get(), writer.put()));
-            check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
-            check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
-
-            if(!hasAudioForExport){
-                return S_OK;
+        if(sourceIsWebm){
+            if(m_prj.keepAudio() && sourceHasAudio()){
+                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WebM export currently keeps VP9 video only; disable audio first.");
             }
 
-            const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
-            auto hr = writer->AddStream(aacType.get(), &writerAudioStreamIndex);
-            if(SUCCEEDED(hr)){
-                hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
+            const auto videoStats{writeWebmVp9VideoSamplesForExport(
+                reader,
+                videoStreamIndex,
+                outputPath,
+                effectiveCutRanges100ns,
+                videoSubtype,
+                nalLengthFieldSize,
+                sourceDuration100ns,
+                outputDuration100ns,
+                width,
+                height,
+                fpsNum,
+                fpsDen,
+                [self = get_weak()](double pct){
+                    if(const auto strong = self.get()){
+                        strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct](){
+                            if(const auto ui = weak.get()){
+                                ui->setOperationProgress(pct);
+                            }
+                        });
+                    }
+                },
+                [self = get_weak()](){
+                    if(const auto strong = self.get()){
+                        return strong->m_cancelExportRequested.load();
+                    }
+                    return false;
+                })};
+            (void)videoStats;
+        }else{
+            com_ptr<IMFSinkWriter> writer;
+            DWORD writerVideoStreamIndex{};
+            auto configureWriter = [&]() -> HRESULT {
+                writer = nullptr;
+                writerVideoStreamIndex = 0;
+                writerAudioStreamIndex = 0;
+
+                com_ptr<IMFAttributes> writerAttributes;
+                check_hresult(MFCreateAttributes(writerAttributes.put(), 1));
+                check_hresult(writerAttributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
+                check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, writerAttributes.get(), writer.put()));
+                check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
+                check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
+
+                if(!hasAudioForExport){
+                    return S_OK;
+                }
+
+                const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
+                auto hr = writer->AddStream(aacType.get(), &writerAudioStreamIndex);
+                if(SUCCEEDED(hr)){
+                    hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
+                }
+                return hr;
+            };
+
+            const auto writerConfigHr{configureWriter()};
+            if(FAILED(writerConfigHr)){
+                if(sourceIsAvi){
+                    throw hresult_error(writerConfigHr, L"System cannot mux H.264 into MP4 via Media Foundation.");
+                }
+                check_hresult(writerConfigHr);
             }
-            return hr;
-        };
 
-        const auto writerConfigHr{configureWriter()};
-        if(FAILED(writerConfigHr)){
-            if(sourceIsAvi){
-                throw hresult_error(writerConfigHr, L"System cannot mux H.264 into MP4 via Media Foundation.");
+            check_hresult(writer->BeginWriting());
+
+            const auto videoStats{writeVideoSamplesForExport(
+                reader,
+                videoStreamIndex,
+                writer,
+                writerVideoStreamIndex,
+                effectiveCutRanges100ns,
+                videoSubtype,
+                nalLengthFieldSize,
+                sourceDuration100ns,
+                [self = get_weak()](double pct){
+                    if(const auto strong = self.get()){
+                        strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct](){
+                            if(const auto ui = weak.get()){
+                                ui->setOperationProgress(pct);
+                            }
+                        });
+                    }
+                },
+                [self = get_weak()](){
+                    if(const auto strong = self.get()){
+                        return strong->m_cancelExportRequested.load();
+                    }
+                    return false;
+                })};
+            (void)videoStats;
+
+            if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
+                com_ptr<IMFSourceReader> audioReader;
+                check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioReader.put()));
+                check_hresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+                check_hresult(audioReader->SetStreamSelection(audioStreamIndex, TRUE));
+                check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
+
+                const auto keepRanges100ns{invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
+                writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer, writerAudioStreamIndex, audioChannels, audioSampleRate, m_prj.audioXfadeMs(), m_prj.audioVolumePct() / 100.0f, [self = get_weak()](){
+                    if(const auto strong = self.get()){
+                        return strong->m_cancelExportRequested.load();
+                    }
+                    return false;
+                });
             }
-            check_hresult(writerConfigHr);
+
+            if(m_cancelExportRequested){
+                throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+            }
+
+            check_hresult(writer->Finalize());
         }
-
-        check_hresult(writer->BeginWriting());
-
-        const auto videoStats{writeVideoSamplesForExport(
-            reader,
-            videoStreamIndex,
-            writer,
-            writerVideoStreamIndex,
-            effectiveCutRanges100ns,
-            videoSubtype,
-            nalLengthFieldSize,
-            sourceDuration100ns,
-            [self = get_weak()](double pct){
-                if(const auto strong = self.get()){
-                    strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct](){
-                        if(const auto ui = weak.get()){
-                            ui->setOperationProgress(pct);
-                        }
-                    });
-                }
-            },
-            [self = get_weak()](){
-                if(const auto strong = self.get()){
-                    return strong->m_cancelExportRequested.load();
-                }
-                return false;
-            })};
-        (void)videoStats;
-
-        if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
-            com_ptr<IMFSourceReader> audioReader;
-            check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioReader.put()));
-            check_hresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
-            check_hresult(audioReader->SetStreamSelection(audioStreamIndex, TRUE));
-            check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
-
-            const auto keepRanges100ns{invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
-            writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer, writerAudioStreamIndex, audioChannels, audioSampleRate, m_prj.audioXfadeMs(), m_prj.audioVolumePct() / 100.0f, [self = get_weak()](){
-                if(const auto strong = self.get()){
-                    return strong->m_cancelExportRequested.load();
-                }
-                return false;
-            });
-        }
-
-        if(m_cancelExportRequested){
-            throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
-        }
-
-        check_hresult(writer->Finalize());
         applyExportFileMetadata(sourcePath, outputPath, exportComment);
         exportSucceeded = true;
     }catch(const hresult_error& ex){
