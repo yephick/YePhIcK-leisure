@@ -62,25 +62,25 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\llvc\Assets\SplashScreen.png">
-      <Link>Images\SplashScreen.scale-200.png</Link>
+      <Link>Assets\SplashScreen.scale-200.png</Link>
     </Content>
     <Content Include="..\llvc\Assets\LockScreenLogo.png">
-      <Link>Images\LockScreenLogo.scale-200.png</Link>
+      <Link>Assets\LockScreenLogo.scale-200.png</Link>
     </Content>
     <Content Include="..\llvc\Assets\Square150x150Logo.png">
-      <Link>Images\Square150x150Logo.scale-200.png</Link>
+      <Link>Assets\Square150x150Logo.scale-200.png</Link>
     </Content>
     <Content Include="..\llvc\Assets\Square44x44Logo.png">
-      <Link>Images\Square44x44Logo.scale-200.png</Link>
+      <Link>Assets\Square44x44Logo.scale-200.png</Link>
     </Content>
     <Content Include="..\llvc\Assets\Square44x44Logo.targetsize-24_altform-unplated.png">
-      <Link>Images\Square44x44Logo.targetsize-24_altform-unplated.png</Link>
+      <Link>Assets\Square44x44Logo.targetsize-24_altform-unplated.png</Link>
     </Content>
     <Content Include="..\llvc\Assets\StoreLogo.png">
-      <Link>Images\StoreLogo.png</Link>
+      <Link>Assets\StoreLogo.png</Link>
     </Content>
     <Content Include="..\llvc\Assets\Wide310x150Logo.png">
-      <Link>Images\Wide310x150Logo.scale-200.png</Link>
+      <Link>Assets\Wide310x150Logo.scale-200.png</Link>
     </Content>
   </ItemGroup>
   <ItemGroup>

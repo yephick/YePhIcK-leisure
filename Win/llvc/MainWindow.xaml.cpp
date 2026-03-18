@@ -2491,22 +2491,22 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
     co_await showInfoDialogAsync(
         L"Quick manual",
         L"Functions:\n"
-        L"• Load video: Open .mp4/.mov/.avi/.webm source footage for timeline editing.\n"
-        L"• Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
-        L"• Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
-        L"• Boundary RAP nudging: Ctrl+< shrinks the current scene by nudging both scene edges inward to RAPs, Ctrl+> expands by nudging both edges outward to RAPs.\n"
-        L"• Preview start/pause/stop skipping cut scenes.\n"
-        L"• Preview window: Tools → Preview in separate window opens a movable second window; use F11 to toggle full-screen.\n"
-        L"• Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
-        L"• Project files: Save and reopen .llvc projects with timeline state.\n"
-        L"• Export: Render a lossless cut based on your selected ranges (auto-adjusting to proper cut points if necessary). Use F7 as a shortcut.\n\n"
+        L"* Load video: Open .mp4/.mov/.avi/.webm source footage for timeline editing.\n"
+        L"* Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
+        L"* Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
+        L"* Boundary RAP nudging: Ctrl+< shrinks the current scene by nudging both scene edges inward to RAPs, Ctrl+> expands by nudging both edges outward to RAPs.\n"
+        L"* Preview start/pause/stop skipping cut scenes.\n"
+        L"* Preview window: Tools -> Preview in separate window opens a movable second window; use F11 to toggle full-screen.\n"
+        L"* Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
+        L"* Project files: Save and reopen .llvc projects with timeline state.\n"
+        L"* Export: Render a lossless cut based on your selected ranges (auto-adjusting to proper cut points if necessary). Use F7 as a shortcut.\n\n"
         L"Usage workflow:\n"
-        L"1) File → Load video (or drag and drop a supported file).\n"
+        L"1) File -> Load video (or drag and drop a supported file).\n"
         L"2) Right-click to place boundary markers around scenes you may want to remove.\n"
         L"3) Reevaluate cut markers to land on proper RAP frames.\n"
         L"4) Ctrl+Left-Click scene blocks to toggle which scenes are cut (dark = cut, clear = kept).\n"
         L"5) Optionally adjust Keep audio and Audio cross-fade settings, then preview playback.\n"
-        L"6) Use File → Save project, then File → Export video (or press F7) to generate the final cut.");
+        L"6) Use File -> Save project, then File -> Export video (or press F7) to generate the final cut.");
 }
 
 AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
