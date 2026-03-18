@@ -6,3 +6,5 @@ packages
 Generated Files
 AppPackages
 BundleArtifacts
+obj
+*.assets.cache
