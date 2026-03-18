@@ -1,9 +1,11 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
 VisualStudioVersion = 18.4.11612.150 stable
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "llvc", "llvc\llvc.vcxproj", "{64A424DD-1F1E-46B5-92A8-449F64BF0458}"
+EndProject
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "llvc-installer", "llvc-installer\llvc-installer.wapproj", "{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -33,6 +35,24 @@ Global
 		{64A424DD-1F1E-46B5-92A8-449F64BF0458}.Release|x86.ActiveCfg = Release|Win32
 		{64A424DD-1F1E-46B5-92A8-449F64BF0458}.Release|x86.Build.0 = Release|Win32
 		{64A424DD-1F1E-46B5-92A8-449F64BF0458}.Release|x86.Deploy.0 = Release|Win32
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Debug|ARM64.ActiveCfg = Debug|ARM64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Debug|ARM64.Build.0 = Debug|ARM64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Debug|ARM64.Deploy.0 = Debug|ARM64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Debug|x64.ActiveCfg = Debug|x64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Debug|x64.Build.0 = Debug|x64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Debug|x64.Deploy.0 = Debug|x64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Debug|x86.ActiveCfg = Debug|x86
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Debug|x86.Build.0 = Debug|x86
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Debug|x86.Deploy.0 = Debug|x86
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Release|ARM64.ActiveCfg = Release|ARM64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Release|ARM64.Build.0 = Release|ARM64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Release|ARM64.Deploy.0 = Release|ARM64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Release|x64.ActiveCfg = Release|x64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Release|x64.Build.0 = Release|x64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Release|x64.Deploy.0 = Release|x64
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Release|x86.ActiveCfg = Release|x86
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Release|x86.Build.0 = Release|x86
+		{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}.Release|x86.Deploy.0 = Release|x86
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
