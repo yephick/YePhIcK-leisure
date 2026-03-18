@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition="'$(VisualStudioVersion)' == '' or '$(VisualStudioVersion)' &lt; '15.0'">
+    <VisualStudioVersion>15.0</VisualStudioVersion>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x86">
+      <Configuration>Debug</Configuration>
+      <Platform>x86</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x86">
+      <Configuration>Release</Configuration>
+      <Platform>x86</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|ARM64">
+      <Configuration>Debug</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|ARM64">
+      <Configuration>Release</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup>
+    <WapProjPath Condition="'$(WapProjPath)'==''">$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\</WapProjPath>
+    <DebuggerType>NativeOnly</DebuggerType>
+    <BackgroundTaskDebugEngines>NativeOnly</BackgroundTaskDebugEngines>
+    <WinUISDKReferences>false</WinUISDKReferences>
+  </PropertyGroup>
+  <Import Project="$(WapProjPath)\Microsoft.DesktopBridge.props" />
+  <PropertyGroup>
+    <ProjectGuid>{49F13EBE-60F4-4FAD-A7E3-7C050EA46B76}</ProjectGuid>
+    <TargetPlatformVersion>10.0.19041.0</TargetPlatformVersion>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <DefaultLanguage>en-US</DefaultLanguage>
+    <EntryPointProjectUniqueName>..\llvc\llvc.vcxproj</EntryPointProjectUniqueName>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
+    <GenerateTestArtifacts>true</GenerateTestArtifacts>
+    <AppxBundle>Always</AppxBundle>
+    <AppxBundlePlatforms>x86|x64|arm64</AppxBundlePlatforms>
+    <NoWarn>$(NoWarn);NU1702</NoWarn>
+    <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
+    <AppxAutoIncrementPackageRevision>True</AppxAutoIncrementPackageRevision>
+    <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
+  </PropertyGroup>
+  <ItemGroup>
+    <AppxManifest Include="Package.appxmanifest">
+      <SubType>Designer</SubType>
+    </AppxManifest>
+    <None Include="..\llvc\Package.StoreAssociation.xml">
+      <Link>Package.StoreAssociation.xml</Link>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\llvc\Assets\SplashScreen.png">
+      <Link>Assets\SplashScreen.scale-200.png</Link>
+    </Content>
+    <Content Include="..\llvc\Assets\LockScreenLogo.png">
+      <Link>Assets\LockScreenLogo.scale-200.png</Link>
+    </Content>
+    <Content Include="..\llvc\Assets\Square150x150Logo.png">
+      <Link>Assets\Square150x150Logo.scale-200.png</Link>
+    </Content>
+    <Content Include="..\llvc\Assets\Square44x44Logo.png">
+      <Link>Assets\Square44x44Logo.scale-200.png</Link>
+    </Content>
+    <Content Include="..\llvc\Assets\Square44x44Logo.targetsize-24_altform-unplated.png">
+      <Link>Assets\Square44x44Logo.targetsize-24_altform-unplated.png</Link>
+    </Content>
+    <Content Include="..\llvc\Assets\StoreLogo.png">
+      <Link>Assets\StoreLogo.png</Link>
+    </Content>
+    <Content Include="..\llvc\Assets\Wide310x150Logo.png">
+      <Link>Assets\Wide310x150Logo.scale-200.png</Link>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\llvc\llvc.vcxproj">
+      <SkipGetTargetFrameworkProperties>True</SkipGetTargetFrameworkProperties>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(WapProjPath)\Microsoft.DesktopBridge.targets" />
+</Project>
