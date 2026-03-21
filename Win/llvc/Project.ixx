@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -20,7 +20,19 @@ struct IndexedFrameSample{
     uint32_t sampleIndex{};
 };
 
+struct EffectiveExportPlan{
+    vector<pair<int64_t, int64_t>> requestedCutRanges100ns{};
+    vector<pair<int64_t, int64_t>> effectiveCutRanges100ns{};
+    int64_t sourceDuration100ns{};
+    int64_t requestedOutputDuration100ns{};
+    int64_t effectiveOutputDuration100ns{};
+    bool hasRequestedCuts{false};
+    bool emptyAfterAlignment{false};
+    bool materiallyDifferent{false};
+};
+
 vector<int64_t> buildCleanKeyframeTimes100ns(const vector<IndexedFrameSample>& index);
+int64_t calculateOutputDuration100ns(int64_t totalDuration100ns, const vector<pair<int64_t, int64_t>>& cutRanges100ns);
 
 struct Project final{
     using AAction = ::winrt::Windows::Foundation::IAsyncAction;
@@ -53,6 +65,7 @@ struct Project final{
     vector<IndexedFrameSample> buildRapMarkersFromSelection() const;
     vector<pair<int64_t, int64_t>> buildCutRanges100ns() const;
     vector<int64_t> buildSceneBoundaries100ns() const;
+    EffectiveExportPlan buildEffectiveExportPlanWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const;
     vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const;
     int64_t outputDuration100ns() const;
     void refreshSelectedMarkers();
@@ -102,6 +115,16 @@ vector<int64_t> buildCleanKeyframeTimes100ns(const vector<IndexedFrameSample>& i
         }
     }
     return times;
+}
+
+int64_t calculateOutputDuration100ns(int64_t totalDuration100ns, const vector<pair<int64_t, int64_t>>& cutRanges100ns){
+    int64_t removedTotal100ns{};
+    for(const auto& [start, end]: cutRanges100ns){
+        if(end > start){
+            removedTotal100ns += (end - start);
+        }
+    }
+    return max<int64_t>(0, totalDuration100ns - removedTotal100ns);
 }
 
 using namespace winrt;
@@ -321,7 +344,18 @@ vector<int64_t> Project::buildSceneBoundaries100ns() const{
     return boundaries;
 }
 
-vector<pair<int64_t, int64_t>> Project::buildEffectiveCutRangesWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const{
+EffectiveExportPlan Project::buildEffectiveExportPlanWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const{
+    EffectiveExportPlan plan{};
+    plan.sourceDuration100ns = max<int64_t>(0, totalDuration100ns);
+    plan.requestedCutRanges100ns = buildCutRanges100ns();
+    plan.hasRequestedCuts = !plan.requestedCutRanges100ns.empty();
+    plan.requestedOutputDuration100ns = calculateOutputDuration100ns(plan.sourceDuration100ns, plan.requestedCutRanges100ns);
+
+    if(!plan.hasRequestedCuts){
+        plan.effectiveOutputDuration100ns = plan.requestedOutputDuration100ns;
+        return plan;
+    }
+
     const auto markers{buildRapMarkersFromSelection()};
     vector<int64_t> boundaries;
     boundaries.reserve(markers.size() + 2);
@@ -339,7 +373,10 @@ vector<pair<int64_t, int64_t>> Project::buildEffectiveCutRangesWithRapPreroll(in
         boundaries.push_back(totalDuration100ns);
     }
     if(boundaries.size() < 2){
-        return {};
+        plan.emptyAfterAlignment = true;
+        plan.materiallyDifferent = true;
+        plan.effectiveOutputDuration100ns = plan.sourceDuration100ns;
+        return plan;
     }
 
     const auto sceneCount{boundaries.size() - 1};
@@ -375,25 +412,40 @@ vector<pair<int64_t, int64_t>> Project::buildEffectiveCutRangesWithRapPreroll(in
     vector<pair<int64_t, int64_t>> cutRanges;
     cutRanges.reserve(rawCutBlocks.size());
     for(const auto& [start, end]: rawCutBlocks){
-        const auto startRapIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), start)};
-        if(startRapIt == rapTimes100ns.end()){
-            continue;
+        int64_t alignedStart{};
+        if(start <= 0){
+            alignedStart = 0;
+        }else if(end >= totalDuration100ns){
+            alignedStart = start;
+        }else{
+            const auto startRapIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), start)};
+            if(startRapIt == rapTimes100ns.end()){
+                continue;
+            }
+            alignedStart = *startRapIt;
         }
 
-        const auto endRapIt{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), end)};
-        if(endRapIt == rapTimes100ns.begin()){
-            continue;
+        int64_t alignedEnd{};
+        if(end >= totalDuration100ns){
+            alignedEnd = totalDuration100ns;
+        }else{
+            const auto endRapIt{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), end)};
+            if(endRapIt == rapTimes100ns.begin()){
+                continue;
+            }
+            alignedEnd = *(endRapIt - 1);
         }
 
-        const auto alignedStart{*startRapIt};
-        const auto alignedEnd{*(endRapIt - 1)};
         if(alignedEnd > alignedStart){
             cutRanges.emplace_back(alignedStart, alignedEnd);
         }
     }
 
     if(cutRanges.empty()){
-        return {};
+        plan.emptyAfterAlignment = true;
+        plan.materiallyDifferent = true;
+        plan.effectiveOutputDuration100ns = plan.sourceDuration100ns;
+        return plan;
     }
 
     sort(cutRanges.begin(), cutRanges.end());
@@ -405,18 +457,19 @@ vector<pair<int64_t, int64_t>> Project::buildEffectiveCutRangesWithRapPreroll(in
             mergedCuts.back().second = max(mergedCuts.back().second, range.second);
         }
     }
-    return mergedCuts;
+
+    plan.effectiveCutRanges100ns = std::move(mergedCuts);
+    plan.effectiveOutputDuration100ns = calculateOutputDuration100ns(plan.sourceDuration100ns, plan.effectiveCutRanges100ns);
+    plan.materiallyDifferent = plan.requestedCutRanges100ns != plan.effectiveCutRanges100ns;
+    return plan;
+}
+
+vector<pair<int64_t, int64_t>> Project::buildEffectiveCutRangesWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const{
+    return buildEffectiveExportPlanWithRapPreroll(totalDuration100ns, rapTimes100ns).effectiveCutRanges100ns;
 }
 
 int64_t Project::outputDuration100ns() const{
-    const auto sourceDuration100ns{m_timelineDuration100ns};
-    const auto cutRanges100ns{buildCutRanges100ns()};
-
-    int64_t removedTotal100ns{};
-    for(const auto& [start, end]: cutRanges100ns){
-        removedTotal100ns += (end - start);
-    }
-    return max<int64_t>(0, sourceDuration100ns - removedTotal100ns);
+    return calculateOutputDuration100ns(m_timelineDuration100ns, buildCutRanges100ns());
 }
 
 void Project::refreshSelectedMarkers(){

@@ -68,7 +68,7 @@ com_ptr<IMFMediaType> createPcmFloatAudioType(uint32_t sampleRate, uint32_t chan
 com_ptr<IMFMediaType> createAacOutputType(uint32_t sampleRate, uint32_t channels);
 vector<float> decodeAudioRangeToFloat(const com_ptr<IMFSourceReader>& reader, DWORD audioStreamIndex, int64_t rangeStart100ns, int64_t rangeEnd100ns, uint32_t channels, uint32_t sampleRate);
 
-wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow, bool mp4Only);
+wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const vector<wstring>& allowedExtensions, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow);
 void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>& segmentAudio, uint32_t audioChannels, size_t fadeFrames);
 void writePcmAudioFramesToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, const vector<float>& audioFrames, uint32_t audioChannels, uint32_t audioSampleRate, uint64_t& writtenFrames);
 void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs, float gain, const function<bool()>& shouldCancel = {});
@@ -997,7 +997,11 @@ vector<float> decodeAudioRangeToFloat(const com_ptr<IMFSourceReader>& reader, DW
     return out;
 }
 
-wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow, bool mp4Only){
+wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const vector<wstring>& allowedExtensions, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow){
+    if(allowedExtensions.empty()){
+        return {};
+    }
+
     com_ptr<IFileSaveDialog> saveDialog;
     check_hresult(::CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(saveDialog.put())));
 
@@ -1005,32 +1009,61 @@ wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const wc
     check_hresult(saveDialog->GetOptions(&options));
     check_hresult(saveDialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT));
 
-    const auto isWebmDefault{_wcsicmp(defaultExt, L".webm") == 0};
-    if(isWebmDefault){
-        const COMDLG_FILTERSPEC fileTypes[]{
-            {L"WebM video", L"*.webm"},
-        };
-        check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(size(fileTypes)), fileTypes));
-        check_hresult(saveDialog->SetFileTypeIndex(1));
-        check_hresult(saveDialog->SetDefaultExtension(L"webm"));
-    }else if(mp4Only){
-        const COMDLG_FILTERSPEC fileTypes[]{
-            {L"MP4 video", L"*.mp4"},
-        };
-        check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(size(fileTypes)), fileTypes));
-        check_hresult(saveDialog->SetFileTypeIndex(1));
-        check_hresult(saveDialog->SetDefaultExtension(L"mp4"));
-    }else{
-        const COMDLG_FILTERSPEC fileTypes[]{
-            {L"MP4 video", L"*.mp4"},
-            {L"MOV video", L"*.mov"},
-        };
-        check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(size(fileTypes)), fileTypes));
-
-        const auto isMovDefault{_wcsicmp(defaultExt, L".mov") == 0};
-        check_hresult(saveDialog->SetFileTypeIndex(isMovDefault ? 2U : 1U));
-        check_hresult(saveDialog->SetDefaultExtension(isMovDefault ? L"mov" : L"mp4"));
+    const auto requestedDefaultExt{defaultExt && *defaultExt ? wstring{defaultExt} : allowedExtensions.front()};
+    auto defaultExtensionIndex{size_t{}};
+    auto foundDefaultExtension{false};
+    for(size_t i{}; i < allowedExtensions.size(); ++i){
+        if(_wcsicmp(allowedExtensions[i].c_str(), requestedDefaultExt.c_str()) == 0){
+            defaultExtensionIndex = i;
+            foundDefaultExtension = true;
+            break;
+        }
     }
+    if(!foundDefaultExtension){
+        defaultExtensionIndex = 0;
+    }
+
+    vector<wstring> labels;
+    labels.reserve(allowedExtensions.size());
+    vector<wstring> patterns;
+    patterns.reserve(allowedExtensions.size());
+    vector<COMDLG_FILTERSPEC> fileTypes;
+    fileTypes.reserve(allowedExtensions.size());
+
+    for(const auto& extension: allowedExtensions){
+        auto normalizedExtension{extension};
+        if(normalizedExtension.empty()){
+            continue;
+        }
+        if(normalizedExtension.front() != L'.'){
+            normalizedExtension.insert(normalizedExtension.begin(), L'.');
+        }
+
+        auto label{normalizedExtension.substr(1)};
+        ranges::transform(label, label.begin(), [](wchar_t c){
+            return static_cast<wchar_t>(towupper(c));
+        });
+        label += L" video";
+
+        labels.push_back(std::move(label));
+        patterns.push_back(L"*" + normalizedExtension);
+    }
+
+    for(size_t i{}; i < labels.size(); ++i){
+        fileTypes.push_back(COMDLG_FILTERSPEC{
+            .pszName = labels[i].c_str(),
+            .pszSpec = patterns[i].c_str()});
+    }
+
+    check_hresult(saveDialog->SetFileTypes(static_cast<UINT>(fileTypes.size()), fileTypes.data()));
+    check_hresult(saveDialog->SetFileTypeIndex(static_cast<UINT>(defaultExtensionIndex + 1)));
+
+    const auto& selectedDefaultExtension{allowedExtensions[defaultExtensionIndex]};
+    const auto defaultExtensionWithoutDot{
+        !selectedDefaultExtension.empty() && selectedDefaultExtension.front() == L'.'
+            ? selectedDefaultExtension.substr(1)
+            : selectedDefaultExtension};
+    check_hresult(saveDialog->SetDefaultExtension(defaultExtensionWithoutDot.c_str()));
 
     const auto suggestedName{sourceFsPath.stem().wstring() + L" - " + formatDurationFileTag(outputDuration100ns)};
     check_hresult(saveDialog->SetFileName(suggestedName.c_str()));

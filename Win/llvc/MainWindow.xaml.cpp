@@ -104,12 +104,283 @@ LRESULT CALLBACK MainWindowSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 
 constexpr int64_t HNS_PER_SECOND{10'000'000LL};
 
-bool isAviPath(const wstring& filePath){
-    if(filePath.size() < 4){
+constexpr uint32_t makeFourCc(char a, char b, char c, char d){
+    return static_cast<uint32_t>(static_cast<uint8_t>(a))
+        | (static_cast<uint32_t>(static_cast<uint8_t>(b)) << 8)
+        | (static_cast<uint32_t>(static_cast<uint8_t>(c)) << 16)
+        | (static_cast<uint32_t>(static_cast<uint8_t>(d)) << 24);
+}
+
+constexpr GUID makeMfVideoSubtype(uint32_t fourcc){
+    return GUID{
+        fourcc,
+        0x0000,
+        0x0010,
+        {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}};
+}
+
+constexpr GUID VC1_VIDEO_SUBTYPE{makeMfVideoSubtype(makeFourCc('W', 'V', 'C', '1'))};
+
+enum class SourceFormatId : uint8_t{
+    Unknown,
+    Mp4,
+    Mov,
+    Avi,
+    Webm,
+    Wmv
+};
+
+enum class AudioExportPolicy : uint8_t{
+    Disabled,
+    Allowed
+};
+
+enum class ExportProbeKind : uint8_t{
+    None,
+    MediaFoundationSinkWriter,
+    CustomWriter
+};
+
+bool hasPathExtension(const wstring& filePath, const wchar_t* extension){
+    if(!extension){
         return false;
     }
-    const auto ext{filePath.substr(filePath.size() - 4)};
-    return _wcsicmp(ext.c_str(), L".avi") == 0;
+
+    const wstring expected{extension};
+    if(filePath.size() < expected.size()){
+        return false;
+    }
+
+    const auto ext{filePath.substr(filePath.size() - expected.size())};
+    return _wcsicmp(ext.c_str(), expected.c_str()) == 0;
+}
+
+struct FormatProfile final{
+    SourceFormatId id{SourceFormatId::Unknown};
+    const wchar_t* extension{};
+    span<const GUID> allowedVideoSubtypes{};
+    array<const wchar_t*, 2> candidateExportExtensions{};
+    size_t candidateExportExtensionCount{};
+    AudioExportPolicy audioExportPolicy{AudioExportPolicy::Disabled};
+    ExportProbeKind exportProbeKind{ExportProbeKind::None};
+    bool requiresAviValidation{false};
+};
+
+const array<GUID, 3> MP4_MOV_ALLOWED_VIDEO_SUBTYPES{
+    MFVideoFormat_H264,
+    MFVideoFormat_HEVC,
+    MFVideoFormat_H265};
+const array<GUID, 1> AVI_ALLOWED_VIDEO_SUBTYPES{
+    MFVideoFormat_H264};
+const array<GUID, 1> WEBM_ALLOWED_VIDEO_SUBTYPES{
+    MFVideoFormat_VP90};
+const array<GUID, 1> WMV_ALLOWED_VIDEO_SUBTYPES{
+    VC1_VIDEO_SUBTYPE};
+
+const array<FormatProfile, 5>& supportedFormatProfiles(){
+    static const array<FormatProfile, 5> profiles{{
+        FormatProfile{
+            .id = SourceFormatId::Mp4,
+            .extension = L".mp4",
+            .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES,
+            .candidateExportExtensions = {L".mp4", L".mov"},
+            .candidateExportExtensionCount = 2,
+            .audioExportPolicy = AudioExportPolicy::Allowed,
+            .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
+        FormatProfile{
+            .id = SourceFormatId::Mov,
+            .extension = L".mov",
+            .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES,
+            .candidateExportExtensions = {L".mp4", L".mov"},
+            .candidateExportExtensionCount = 2,
+            .audioExportPolicy = AudioExportPolicy::Allowed,
+            .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
+        FormatProfile{
+            .id = SourceFormatId::Avi,
+            .extension = L".avi",
+            .allowedVideoSubtypes = AVI_ALLOWED_VIDEO_SUBTYPES,
+            .candidateExportExtensions = {L".mp4", nullptr},
+            .candidateExportExtensionCount = 1,
+            .audioExportPolicy = AudioExportPolicy::Disabled,
+            .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter,
+            .requiresAviValidation = true},
+        FormatProfile{
+            .id = SourceFormatId::Webm,
+            .extension = L".webm",
+            .allowedVideoSubtypes = WEBM_ALLOWED_VIDEO_SUBTYPES,
+            .candidateExportExtensions = {L".webm", nullptr},
+            .candidateExportExtensionCount = 1,
+            .audioExportPolicy = AudioExportPolicy::Disabled,
+            .exportProbeKind = ExportProbeKind::CustomWriter},
+        FormatProfile{
+            .id = SourceFormatId::Wmv,
+            .extension = L".wmv",
+            .allowedVideoSubtypes = WMV_ALLOWED_VIDEO_SUBTYPES,
+            .candidateExportExtensions = {L".wmv", nullptr},
+            .candidateExportExtensionCount = 1,
+            .audioExportPolicy = AudioExportPolicy::Disabled,
+            .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
+    }};
+    return profiles;
+}
+
+const FormatProfile* tryGetFormatProfileForPath(const wstring& filePath){
+    for(const auto& profile: supportedFormatProfiles()){
+        if(hasPathExtension(filePath, profile.extension)){
+            return &profile;
+        }
+    }
+    return nullptr;
+}
+
+bool isSupportedMediaPath(const wstring& filePath){
+    return tryGetFormatProfileForPath(filePath) != nullptr;
+}
+
+bool formatAllowsVideoSubtype(const FormatProfile& profile, const GUID& subtype){
+    return ranges::find(profile.allowedVideoSubtypes, subtype) != profile.allowedVideoSubtypes.end();
+}
+
+vector<GUID> getAllowedVideoSubtypeVector(const FormatProfile& profile){
+    return vector<GUID>(profile.allowedVideoSubtypes.begin(), profile.allowedVideoSubtypes.end());
+}
+
+vector<wstring> getCandidateExportExtensions(const FormatProfile& profile){
+    vector<wstring> extensions;
+    extensions.reserve(profile.candidateExportExtensionCount);
+    for(size_t i{}; i < profile.candidateExportExtensionCount; ++i){
+        if(profile.candidateExportExtensions[i] && *profile.candidateExportExtensions[i]){
+            extensions.emplace_back(profile.candidateExportExtensions[i]);
+        }
+    }
+    return extensions;
+}
+
+wstring chooseDefaultExportExtension(const FormatProfile& profile, const wstring& sourcePath, const vector<wstring>& supportedExtensions){
+    if(supportedExtensions.empty()){
+        return {};
+    }
+
+    const auto sourceExtension{filesystem::path{sourcePath}.extension().wstring()};
+    for(const auto& extension: supportedExtensions){
+        if(_wcsicmp(extension.c_str(), sourceExtension.c_str()) == 0){
+            return extension;
+        }
+    }
+
+    if(profile.id == SourceFormatId::Mov){
+        for(const auto& extension: supportedExtensions){
+            if(_wcsicmp(extension.c_str(), L".mov") == 0){
+                return extension;
+            }
+        }
+    }
+
+    return supportedExtensions.front();
+}
+
+wstring capabilityStateToText(const CapabilityState state){
+    switch(state){
+    case CapabilityState::Supported:
+        return L"yes";
+    case CapabilityState::Unsupported:
+        return L"no";
+    case CapabilityState::NotApplicable:
+        return L"n/a";
+    default:
+        return L"unknown";
+    }
+}
+
+wstring joinExtensions(const vector<wstring>& extensions){
+    if(extensions.empty()){
+        return L"-";
+    }
+
+    wstring text;
+    for(size_t i{}; i < extensions.size(); ++i){
+        if(i > 0){
+            text += L", ";
+        }
+        text += extensions[i];
+    }
+    return text;
+}
+
+wstring buildTemporaryProbeOutputPath(const wchar_t* extension){
+    if(!extension || !*extension){
+        return {};
+    }
+
+    wchar_t tempDirectory[MAX_PATH + 1]{};
+    const auto tempDirectoryLen{GetTempPathW(MAX_PATH, tempDirectory)};
+    if(tempDirectoryLen == 0 || tempDirectoryLen > MAX_PATH){
+        return {};
+    }
+
+    wchar_t tempFilePath[MAX_PATH + 1]{};
+    if(GetTempFileNameW(tempDirectory, L"llv", 0, tempFilePath) == 0){
+        return {};
+    }
+
+    filesystem::path probePath{tempFilePath};
+    std::error_code ec;
+    filesystem::remove(probePath, ec);
+    probePath.replace_extension(extension);
+    return probePath.wstring();
+}
+
+bool probeMediaFoundationVideoSinkSupport(const com_ptr<IMFMediaType>& sourceVideoType, const wchar_t* outputExtension){
+    if(!sourceVideoType || !outputExtension || !*outputExtension){
+        return false;
+    }
+
+    const auto probeOutputPath{buildTemporaryProbeOutputPath(outputExtension)};
+    if(probeOutputPath.empty()){
+        return false;
+    }
+
+    const auto cleanupProbeOutput = [&](){
+        std::error_code ec;
+        filesystem::remove(probeOutputPath, ec);
+    };
+
+    try{
+        com_ptr<IMFAttributes> writerAttributes;
+        check_hresult(MFCreateAttributes(writerAttributes.put(), 1));
+        check_hresult(writerAttributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
+
+        com_ptr<IMFSinkWriter> writer;
+        check_hresult(MFCreateSinkWriterFromURL(probeOutputPath.c_str(), nullptr, writerAttributes.get(), writer.put()));
+
+        DWORD writerVideoStreamIndex{};
+        check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
+        check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
+        cleanupProbeOutput();
+        return true;
+    }catch(...){
+        cleanupProbeOutput();
+        return false;
+    }
+}
+
+vector<wstring> probeSupportedExportExtensions(const FormatProfile& profile, const com_ptr<IMFMediaType>& sourceVideoType){
+    const auto candidateExtensions{getCandidateExportExtensions(profile)};
+    if(candidateExtensions.empty()){
+        return {};
+    }
+
+    if(profile.exportProbeKind == ExportProbeKind::CustomWriter){
+        return candidateExtensions;
+    }
+
+    vector<wstring> supportedExtensions;
+    for(const auto& extension: candidateExtensions){
+        if(probeMediaFoundationVideoSinkSupport(sourceVideoType, extension.c_str())){
+            supportedExtensions.push_back(extension);
+        }
+    }
+    return supportedExtensions;
 }
 
 
@@ -191,6 +462,9 @@ wstring guidToVideoCodecName(const GUID& subtype){
     }
     if(subtype == MFVideoFormat_VP90){
         return L"VP9";
+    }
+    if(subtype == VC1_VIDEO_SUBTYPE){
+        return L"VC-1";
     }
 
     const auto hasMfSubtypeBase{
@@ -598,6 +872,7 @@ bool MainWindow::applyUndoRedoState(const UndoRedoState& state, bool fromUndo){
     renderTimelineTicks();
     renderKeyframeTicks();
     renderCutOverlays();
+    refreshVideoDetailsPanel();
     updateWindowTitle();
     refreshStatusInfoSection();
 
@@ -642,7 +917,7 @@ MainWindow::MainWindow(const hstring& launchArguments){
 
     m_positionTimer = DispatcherTimer();
     m_positionTimer.Interval(chrono::milliseconds(80));
-    m_positionTimer.Tick({this, &MainWindow::onPositionTimerTick});
+    m_positionTimerTickToken = m_positionTimer.Tick({this, &MainWindow::onPositionTimerTick});
     m_positionTimer.Start();
 
     syncAudioCrossfadeComboSelection();
@@ -654,7 +929,7 @@ MainWindow::MainWindow(const hstring& launchArguments){
     const auto hwnd{getWindowHandle()};
     SetWindowSubclass(hwnd, MainWindowSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
     loadAppSettings();
-    Closed({this, &MainWindow::onClosed});
+    m_mainWindowClosedRevoker = Closed(auto_revoke, {this, &MainWindow::onClosed});
     m_mainWindowActivatedRevoker = Activated(auto_revoke, {this, &MainWindow::onWindowActivated});
     refreshRecentVideosMenu();
     refreshRecentProjectsMenu();
@@ -690,7 +965,7 @@ AAction MainWindow::openFromLaunchArgumentsAsync(const hstring& arguments){
     wstring lowerExt{std::filesystem::path(launchPath).extension().wstring()};
     transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::towlower);
 
-    if(lowerExt != PROJECT_EXT && lowerExt != L".mp4" && lowerExt != L".mov" && lowerExt != L".avi" && lowerExt != L".webm"){
+    if(lowerExt != PROJECT_EXT && !isSupportedMediaPath(launchPath)){
         setStatusMessage(L"Launch argument is not a supported media/project file");
         co_return;
     }
@@ -831,14 +1106,32 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
     RemoveWindowSubclass(hwnd, MainWindowSubclassProc, 1);
 
     if(m_positionTimer){
+        m_positionTimer.Tick(m_positionTimerTickToken);
         m_positionTimer.Stop();
+        m_positionTimer = nullptr;
     }
 
     m_naturalDurationChangedRevoker.revoke();
     m_mainWindowActivatedRevoker.revoke();
+    m_mainWindowClosedRevoker.revoke();
 
     m_restorePreviewDetachedOnStartup = m_isSeparatePreviewWindowOpen;
     m_restorePreviewFullscreenOnStartup = m_isSeparatePreviewWindowOpen && m_isSeparatePreviewFullscreen;
+
+    if(m_detachedPreviewPlayer){
+        m_detachedPreviewPlayer.SetMediaPlayer(nullptr);
+        m_detachedPreviewPlayer = nullptr;
+    }
+
+    if(PreviewPlayer()){
+        PreviewPlayer().SetMediaPlayer(nullptr);
+    }
+
+    if(m_player){
+        m_player.Pause();
+        m_player.Source(nullptr);
+        m_player = nullptr;
+    }
 
     if(m_separatePreviewWindow){
         HWND previewHwnd{};
@@ -851,6 +1144,7 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
         m_separatePreviewWindow = nullptr;
     }
 
+    m_detachedPreviewSplashImage = nullptr;
     saveWindowPlacement();
     saveAppSettings();
 }
@@ -923,9 +1217,25 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
     const auto hasUndoSnapshot{pushUndoStateIfChanged()};
     vector<IndexedFrameSample> updatedMarkers;
     updatedMarkers.reserve(originalMarkers.size() * 2);
+    std::optional<int64_t> preservedTailCutStartTime100ns;
+    if(!previousCutRanges.empty()){
+        const auto totalDuration100ns{m_prj.timelineDuration100ns()};
+        const auto& tailCutRange{previousCutRanges.back()};
+        if(tailCutRange.second >= totalDuration100ns && !originalMarkers.empty()){
+            const auto lastMarkerTime100ns{originalMarkers.back().time100ns};
+            if(lastMarkerTime100ns == tailCutRange.first){
+                preservedTailCutStartTime100ns = lastMarkerTime100ns;
+            }
+        }
+    }
 
     auto replacedCount{0u};
     for(const auto& marker: originalMarkers){
+        if(preservedTailCutStartTime100ns && marker.time100ns == *preservedTailCutStartTime100ns){
+            updatedMarkers.push_back(marker);
+            continue;
+        }
+
         if(binary_search(rapTimes100ns.begin(), rapTimes100ns.end(), marker.time100ns)){
             updatedMarkers.push_back(marker);
             continue;
@@ -962,6 +1272,7 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
     renderTimelineTicks();
     renderKeyframeTicks();
     renderCutOverlays();
+    refreshVideoDetailsPanel();
     updateWindowTitle();
 
     wstring status{L"Reevaluated clear cut markers against RAP frames"};
@@ -1148,6 +1459,7 @@ bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
     renderTimelineTicks();
     renderKeyframeTicks();
     renderCutOverlays();
+    refreshVideoDetailsPanel();
     updateWindowTitle();
     return true;
 }
@@ -1449,6 +1761,7 @@ bool MainWindow::toggleCutBlockAtTime100ns(int64_t time100ns){
     }
 
     renderCutOverlays();
+    refreshVideoDetailsPanel();
     updateWindowTitle();
     return true;
 }
@@ -1460,6 +1773,7 @@ bool MainWindow::setCutBlockAtTime100ns(int64_t time100ns, bool cutScene){
     }
 
     renderCutOverlays();
+    refreshVideoDetailsPanel();
     updateWindowTitle();
     return true;
 }
@@ -1620,6 +1934,7 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
     renderTimelineTicks();
     renderKeyframeTicks();
     renderCutOverlays();
+    refreshVideoDetailsPanel();
     updateWindowTitle();
     return true;
 }
@@ -1743,7 +2058,7 @@ void MainWindow::tryFocusTimelineCanvas(FState focusState){
     }
 }
 
-bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns){
+bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns) const{
     rapTimes100ns.clear();
 
     if(!m_prj.videoFile()){
@@ -1757,6 +2072,28 @@ bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns){
 
     rapTimes100ns = m_cachedRapTimes100ns;
     return !rapTimes100ns.empty();
+}
+
+bool MainWindow::projectHasRequestedCuts() const{
+    return !m_prj.buildCutRanges100ns().empty();
+}
+
+std::optional<::llvc::EffectiveExportPlan> MainWindow::tryBuildEffectiveExportPlan() const{
+    const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
+    if(sourceDuration100ns <= 0){
+        return std::nullopt;
+    }
+
+    if(!projectHasRequestedCuts()){
+        return m_prj.buildEffectiveExportPlanWithRapPreroll(sourceDuration100ns, {});
+    }
+
+    vector<int64_t> rapTimes100ns;
+    if(!tryGetRapTimes100ns(rapTimes100ns)){
+        return std::nullopt;
+    }
+
+    return m_prj.buildEffectiveExportPlanWithRapPreroll(sourceDuration100ns, rapTimes100ns);
 }
 
 void MainWindow::queueRapLookup(bool queueReevaluate, int nudgeDirection){
@@ -1785,53 +2122,88 @@ void MainWindow::queueRapLookup(bool queueReevaluate, int nudgeDirection){
     runRapLookupAsync();
 }
 
-fire_and_forget MainWindow::runRapLookupAsync(){
-    const auto weakSelf{get_weak()};
-    winrt::apartment_context uiThread;
-    const hstring sourcePath{m_prj.videoFile() ? m_prj.videoFile().Path() : hstring{}};
-    if(sourcePath.empty()){
-        co_return;
+IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage){
+    if(!m_prj.videoFile() || m_prj.videoFile().Path().empty()){
+        co_return false;
     }
 
+    MFLifetime mf{};
+    const hstring sourcePath{m_prj.videoFile().Path()};
+    vector<int64_t> rapTimes100ns;
+    if(tryGetRapTimes100ns(rapTimes100ns)){
+        co_return true;
+    }
+
+    while(m_isRapLookupInProgress){
+        if(tryGetRapTimes100ns(rapTimes100ns)){
+            co_return true;
+        }
+        if(!m_prj.videoFile() || m_prj.videoFile().Path() != sourcePath){
+            co_return false;
+        }
+
+        setOperationInProgress(true, true);
+        setStatusMessage(statusMessage);
+        co_await winrt::resume_after(std::chrono::milliseconds(50));
+    }
+
+    if(tryGetRapTimes100ns(rapTimes100ns)){
+        co_return true;
+    }
+    if(m_cachedRapLookupAttempted && sourcePath == m_cachedRapSourcePath && !m_cachedRapLookupSucceeded){
+        co_return false;
+    }
+
+    winrt::apartment_context uiThread;
     m_isRapLookupInProgress = true;
     setOperationInProgress(true, true);
-    setStatusMessage(L"Scanning source for RAP markers...");
+    setStatusMessage(statusMessage);
 
-    vector<int64_t> rapTimes100ns;
     auto lookupSucceeded{false};
-
     co_await resume_background();
     try{
         rapTimes100ns = collectCleanPointTimes100ns(sourcePath.c_str());
         sort(rapTimes100ns.begin(), rapTimes100ns.end());
         rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
         lookupSucceeded = !rapTimes100ns.empty();
-    }catch(const winrt::hresult_error&){
+    }catch(...){
         rapTimes100ns.clear();
         lookupSucceeded = false;
     }
 
     co_await uiThread;
 
+    const auto sameSourceLoaded{m_prj.videoFile() && m_prj.videoFile().Path() == sourcePath};
+    if(sameSourceLoaded){
+        m_cachedRapSourcePath = sourcePath;
+        m_cachedRapTimes100ns = lookupSucceeded ? rapTimes100ns : vector<int64_t>{};
+        m_cachedRapLookupAttempted = true;
+        m_cachedRapLookupSucceeded = lookupSucceeded;
+    }
+
+    m_isRapLookupInProgress = false;
+    if(!m_isExportInProgress){
+        setOperationInProgress(false);
+    }
+    if(sameSourceLoaded){
+        refreshStatusInfoSection();
+        refreshVideoDetailsPanel();
+    }
+
+    co_return sameSourceLoaded && lookupSucceeded;
+}
+
+fire_and_forget MainWindow::runRapLookupAsync(){
+    const auto weakSelf{get_weak()};
+    const auto lookupSucceeded{co_await ensureRapMarkersAvailableAsync(L"Scanning source for RAP markers and aligning cut plan...")};
+
     if(const auto self{weakSelf.get()}){
-        const auto sameSourceLoaded{self->m_prj.videoFile() && self->m_prj.videoFile().Path() == sourcePath};
-
-        if(sameSourceLoaded){
-            self->m_cachedRapSourcePath = sourcePath;
-            self->m_cachedRapTimes100ns = lookupSucceeded ? rapTimes100ns : vector<int64_t>{};
-            self->m_cachedRapLookupAttempted = true;
-            self->m_cachedRapLookupSucceeded = lookupSucceeded;
-        }
-
-        self->m_isRapLookupInProgress = false;
-        self->setOperationInProgress(false);
-
         const auto runReevaluate{self->m_pendingReevaluateAfterRapLookup};
         const auto nudgeDirection{self->m_pendingNudgeDirectionAfterRapLookup};
         self->m_pendingReevaluateAfterRapLookup = false;
         self->m_pendingNudgeDirectionAfterRapLookup = 0;
 
-        if(!sameSourceLoaded){
+        if(!self->m_prj.videoFile() || self->m_prj.videoFile().Path().empty()){
             co_return;
         }
 
@@ -1841,6 +2213,8 @@ fire_and_forget MainWindow::runRapLookupAsync(){
         }
 
         self->setStatusMessage(L"RAP markers ready");
+        self->refreshStatusInfoSection();
+        self->refreshVideoDetailsPanel();
         if(runReevaluate){
             self->reevaluateClearCutMarkersButton_Click(nullptr, {});
         }
@@ -2491,7 +2865,7 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
     co_await showInfoDialogAsync(
         L"Quick manual",
         L"Functions:\n"
-        L"* Load video: Open .mp4/.mov/.avi/.webm source footage for timeline editing.\n"
+        L"* Load video: Open .mp4/.mov/.avi/.webm/.wmv source footage for timeline editing.\n"
         L"* Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
         L"* Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
         L"* Boundary RAP nudging: Ctrl+< shrinks the current scene by nudging both scene edges inward to RAPs, Ctrl+> expands by nudging both edges outward to RAPs.\n"
@@ -2554,10 +2928,9 @@ AAction MainWindow::expandSceneToRapMenuItem_Click(const Control&, const REArgs&
 AAction MainWindow::pickAndLoadVideoAsync(){
     FileOpenPicker picker{};
     picker.SuggestedStartLocation(PickerLocationId::VideosLibrary);
-    picker.FileTypeFilter().Append(L".mp4");
-    picker.FileTypeFilter().Append(L".mov");
-    picker.FileTypeFilter().Append(L".avi");
-    picker.FileTypeFilter().Append(L".webm");
+    for(const auto& profile: supportedFormatProfiles()){
+        picker.FileTypeFilter().Append(profile.extension);
+    }
 
     const auto hwnd{getWindowHandle()};
     auto initWithWindow{picker.as<IInitializeWithWindow>()};
@@ -2643,6 +3016,7 @@ void MainWindow::resetProjectState(){
     m_cachedRapLookupAttempted = false;
     m_cachedRapLookupSucceeded = false;
     m_isRapLookupInProgress = false;
+    m_hasTimelineRenderCompleted = false;
     m_pendingReevaluateAfterRapLookup = false;
     m_pendingNudgeDirectionAfterRapLookup = 0;
     m_timelineDurationSeconds = 0;
@@ -2660,7 +3034,7 @@ void MainWindow::resetProjectState(){
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
     syncTimelineHorizontalScrollBar();
 
-    setStatusMessage(L"Load or drag-and-drop a .llvc/.mp4/.mov/.avi/.webm file to begin.");
+    setStatusMessage(L"Load or drag-and-drop a .llvc/.mp4/.mov/.avi/.webm/.wmv file to begin.");
     clearErrorMessage();
     refreshStatusInfoSection();
     updateWindowTitle();
@@ -2774,11 +3148,39 @@ AAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& mes
     co_await dialog.ShowAsync();
 }
 
+IOpBool MainWindow::confirmAdjustedExportPlanAsync(const ::llvc::EffectiveExportPlan& plan){
+    if(!plan.hasRequestedCuts || !plan.materiallyDifferent || plan.emptyAfterAlignment){
+        co_return true;
+    }
+
+    wstring message{
+        L"Your requested cuts need to be narrowed to safe random-access points before lossless export.\n\n"
+        L"Requested output: "
+        + formatTimelineDurationText(plan.requestedOutputDuration100ns)
+        + L"\nRAP-aligned output: "
+        + formatTimelineDurationText(plan.effectiveOutputDuration100ns)
+        + L"\n\nContinue with the RAP-aligned export plan?"};
+
+    Controls::ContentDialog dialog{};
+    dialog.XamlRoot(Content().XamlRoot());
+    dialog.Title(box_value(L"Export will be RAP-aligned"));
+    dialog.Content(box_value(message));
+    dialog.PrimaryButtonText(L"Continue export");
+    dialog.CloseButtonText(L"Cancel");
+
+    const auto choice{co_await dialog.ShowAsync()};
+    co_return choice == Controls::ContentDialogResult::Primary;
+}
+
 
 wstring MainWindow::buildSourcePropertiesText() const{
     if(!m_prj.videoFile() || !m_mediaInfo.isValid){
         return L"No video is currently loaded.";
     }
+
+    const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
+    const auto requestedOutputDuration100ns{m_prj.outputDuration100ns()};
+    const auto effectivePlan{tryBuildEffectiveExportPlan()};
 
     wstring content;
     content += L"File: "; content += m_prj.videoFile().Path().c_str(); content += L"\n";
@@ -2797,10 +3199,44 @@ wstring MainWindow::buildSourcePropertiesText() const{
     content += L"Random access interval: "; content += m_mediaInfo.keyFrameInterval; content += L"\n";
     content += L"All samples independent: "; content += m_mediaInfo.allSamplesIndependent; content += L"\n";
     content += L"Max random access spacing: "; content += m_mediaInfo.maxKeyFrameSpacing; content += L"\n";
+    content += L"Openable: "; content += capabilityStateToText(m_mediaInfo.openSupport); content += L"\n";
+    content += L"Previewable: "; content += capabilityStateToText(m_mediaInfo.previewSupport); content += L"\n";
+    content += L"Lossless export here: "; content += capabilityStateToText(m_mediaInfo.losslessExportSupport); content += L"\n";
+    content += L"Audio on export: "; content += capabilityStateToText(m_mediaInfo.audioExportSupport); content += L"\n";
+    content += L"Export containers here: "; content += joinExtensions(m_mediaInfo.supportedExportExtensions); content += L"\n";
     content += L"Audio codec: "; content += m_mediaInfo.audioCodec; content += L"\n";
     content += L"Audio bitrate: "; content += m_mediaInfo.audioBitrate;
     if(m_mediaInfo.audioDisabledForThisSource && !m_mediaInfo.audioDisabledReason.empty()){
         content += L"\nAudio note: "; content += m_mediaInfo.audioDisabledReason;
+    }
+    content += L"\nRequested output: ";
+    if(sourceDuration100ns > 0){
+        content += formatTimelineDurationText(requestedOutputDuration100ns);
+    }else{
+        content += L"waiting for story line";
+    }
+    content += L"\nRAP-aligned output: ";
+    if(sourceDuration100ns <= 0){
+        content += L"waiting for story line";
+    }else if(effectivePlan){
+        if(effectivePlan->emptyAfterAlignment){
+            content += L"no safe cut range";
+        }else{
+            content += formatTimelineDurationText(effectivePlan->effectiveOutputDuration100ns);
+            if(effectivePlan->materiallyDifferent){
+                content += L" (adjusted)";
+            }
+        }
+    }else if(projectHasRequestedCuts()){
+        if(m_isRapLookupInProgress){
+            content += L"analyzing...";
+        }else if(m_cachedRapLookupAttempted && !m_cachedRapLookupSucceeded){
+            content += L"unavailable";
+        }else{
+            content += L"pending analysis";
+        }
+    }else{
+        content += formatTimelineDurationText(sourceDuration100ns);
     }
     return content;
 }
@@ -2867,9 +3303,55 @@ void MainWindow::refreshStatusInfoSection(){
         return;
     }
 
-    const auto outputDuration100ns{m_prj.outputDuration100ns()};
+    if(!m_prj.videoFile() || !m_mediaInfo.isValid){
+        InfoText().Text(L"Estimated output: --");
+        return;
+    }
+
+    const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
+    if(sourceDuration100ns <= 0){
+        InfoText().Text(L"Estimated output: waiting for story line...");
+        return;
+    }
+
     wstring text{L"Estimated output: "};
-    text += formatTimelineDurationText(outputDuration100ns);
+    if(const auto effectivePlan{tryBuildEffectiveExportPlan()}){
+        if(effectivePlan->emptyAfterAlignment){
+            text += L"no safe RAP-aligned cut range";
+        }else{
+            text += formatTimelineDurationText(effectivePlan->effectiveOutputDuration100ns);
+            if(effectivePlan->materiallyDifferent){
+                text += L" (requested ";
+                text += formatTimelineDurationText(effectivePlan->requestedOutputDuration100ns);
+                text += L")";
+            }
+        }
+        InfoText().Text(text);
+        return;
+    }
+
+    if(projectHasRequestedCuts()){
+        if(m_hasTimelineRenderCompleted && !m_isRapLookupInProgress && !m_cachedRapLookupAttempted){
+            const auto weakSelf{get_weak()};
+            DispatcherQueue().TryEnqueue([weakSelf]{
+                if(const auto self{weakSelf.get()}; self && self->projectHasRequestedCuts()){
+                    self->queueRapLookup(false, 0);
+                }
+            });
+        }
+
+        if(m_isRapLookupInProgress){
+            text += L"analyzing RAP-aligned cut plan...";
+        }else if(m_cachedRapLookupAttempted && !m_cachedRapLookupSucceeded){
+            text += L"unavailable until RAP analysis succeeds";
+        }else{
+            text += L"pending RAP analysis";
+        }
+        InfoText().Text(text);
+        return;
+    }
+
+    text += formatTimelineDurationText(sourceDuration100ns);
     InfoText().Text(text);
 }
 
@@ -2954,10 +3436,6 @@ AAction MainWindow::showOptionsDialogAsync(){
     saveAppSettings();
 }
 
-bool MainWindow::isSupportedVideoSubtype(const GUID& subtype){
-    return subtype == MFVideoFormat_H264 || subtype == MFVideoFormat_HEVC || subtype == MFVideoFormat_H265 || subtype == MFVideoFormat_VP90;
-}
-
 wstring MainWindow::guidToCodecName(const GUID& subtype, bool isVideo){
     if(isVideo){
         if(subtype == MFVideoFormat_H264){
@@ -2968,6 +3446,9 @@ wstring MainWindow::guidToCodecName(const GUID& subtype, bool isVideo){
         }
         if(subtype == MFVideoFormat_VP90){
             return L"VP9";
+        }
+        if(subtype == VC1_VIDEO_SUBTYPE){
+            return L"VC-1";
         }
     }else{
         if(subtype == MFAudioFormat_AAC){
@@ -2989,6 +3470,12 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
                                   .keyFrameInterval      = L"unknown",
                                   .allSamplesIndependent = L"unknown",
                                   .maxKeyFrameSpacing    = L"unknown" };
+    const auto* formatProfile{tryGetFormatProfileForPath(filePath)};
+    if(!formatProfile){
+        result.errorMessage = L"Container not supported. Only MP4, MOV, AVI (H.264 only), WEBM (VP9 only), and WMV (VC-1 only) are allowed";
+        return result;
+    }
+
     MFLifetime mf{};
 
     com_ptr<IMFSourceReader> reader;
@@ -3009,12 +3496,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     auto videoStreamIndex{invalidStreamIndex};
     uint32_t allSamplesIndependent{};
     uint32_t maxKeyFrameSpacing{};
-    const auto sourceIsAvi{isAviPath(filePath)};
-    wstring lowerPath{filePath};
-    transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(), ::towlower);
-    const auto sourceIsMp4{lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mp4"};
-    const auto sourceIsMov{lowerPath.size() >= 4 && lowerPath.substr(lowerPath.size() - 4) == L".mov"};
-    const auto sourceIsWebm{lowerPath.size() >= 5 && lowerPath.substr(lowerPath.size() - 5) == L".webm"};
+    com_ptr<IMFMediaType> selectedVideoType;
 
     for(DWORD streamIndex{0};; ++streamIndex){
         com_ptr<IMFMediaType> type;
@@ -3052,7 +3534,7 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
     }
 
     com_ptr<IMFMediaType> aviNativeH264Type;
-    if(sourceIsAvi){
+    if(formatProfile->requiresAviValidation){
         if(videoCount != 1){
             result.errorMessage = BuildUnsupportedAviReason(L"Expected exactly one video stream");
             return result;
@@ -3081,35 +3563,44 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         MFGetAttributeSize(aviNativeH264Type.get(), MF_MT_FRAME_SIZE, &width, &height);
         MFGetAttributeRatio(aviNativeH264Type.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
         (void)aviNativeH264Type->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
+        selectedVideoType = aviNativeH264Type;
     }
 
     if(videoStreamIndex != invalidStreamIndex){
-        vector<GUID> allowedVideoSubtypes;
-        if(sourceIsMp4 || sourceIsMov){
-            allowedVideoSubtypes = {MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_H265};
-        }else if(sourceIsWebm){
-            allowedVideoSubtypes = {MFVideoFormat_VP90};
+        if(!selectedVideoType){
+            selectedVideoType = chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, getAllowedVideoSubtypeVector(*formatProfile));
         }
 
-        if(auto bestVideoType{sourceIsAvi ? aviNativeH264Type : chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, allowedVideoSubtypes)}){
-            (void)reader->SetCurrentMediaType(videoStreamIndex, nullptr, bestVideoType.get());
+        if(selectedVideoType){
+            (void)reader->SetCurrentMediaType(videoStreamIndex, nullptr, selectedVideoType.get());
 
-            MFGetAttributeSize(bestVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
+            MFGetAttributeSize(selectedVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
 
-            check_hresult(bestVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
-            MFGetAttributeRatio(bestVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
-            (void)bestVideoType->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
-            if(SUCCEEDED(bestVideoType->GetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, &allSamplesIndependent))){
+            check_hresult(selectedVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
+            MFGetAttributeRatio(selectedVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
+            (void)selectedVideoType->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
+            if(SUCCEEDED(selectedVideoType->GetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, &allSamplesIndependent))){
                 result.allSamplesIndependent = allSamplesIndependent != 0 ? L"yes" : L"no";
             }
-            if(SUCCEEDED(bestVideoType->GetUINT32(MF_MT_MAX_KEYFRAME_SPACING, &maxKeyFrameSpacing))){
+            if(SUCCEEDED(selectedVideoType->GetUINT32(MF_MT_MAX_KEYFRAME_SPACING, &maxKeyFrameSpacing))){
                 result.maxKeyFrameSpacing = to_wstring(maxKeyFrameSpacing) + L" frames";
             }
-        }else if(sourceIsMp4 || sourceIsMov){
-            result.errorMessage = L"No stream-copy video media type found. Require H.264 or HEVC in MP4/MOV.";
-            return result;
-        }else if(sourceIsWebm){
-            result.errorMessage = L"No stream-copy video media type found. Require VP9 in WebM.";
+        }else{
+            switch(formatProfile->id){
+            case SourceFormatId::Mp4:
+            case SourceFormatId::Mov:
+                result.errorMessage = L"No stream-copy video media type found. Require H.264 or HEVC in MP4/MOV.";
+                break;
+            case SourceFormatId::Webm:
+                result.errorMessage = L"No stream-copy video media type found. Require VP9 in WebM.";
+                break;
+            case SourceFormatId::Wmv:
+                result.errorMessage = L"No stream-copy video media type found. Require VC-1 in WMV.";
+                break;
+            default:
+                result.errorMessage = L"No stream-copy video media type found.";
+                break;
+            }
             return result;
         }
     }
@@ -3126,21 +3617,23 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         result.errorMessage = L"Subtitle/text streams are not supported";
         return result;
     }
-    if(!isSupportedVideoSubtype(videoSubtype)){
-        result.errorMessage = L"Video codec not supported. Only H.264, HEVC, and VP9 are allowed";
+    if(!formatAllowsVideoSubtype(*formatProfile, videoSubtype)){
+        result.errorMessage = L"Video codec not supported for this container";
         return result;
     }
 
-    if(sourceIsMp4){
+    if(formatProfile->id == SourceFormatId::Mp4){
         result.container = L"MP4";
-    }else if(sourceIsMov){
+    }else if(formatProfile->id == SourceFormatId::Mov){
         result.container = L"MOV";
-    }else if(sourceIsAvi){
+    }else if(formatProfile->id == SourceFormatId::Avi){
         result.container = L"AVI";
-    }else if(sourceIsWebm){
+    }else if(formatProfile->id == SourceFormatId::Webm){
         result.container = L"WEBM";
+    }else if(formatProfile->id == SourceFormatId::Wmv){
+        result.container = L"WMV";
     }else{
-        result.errorMessage = L"Container not supported. Only MP4, MOV, AVI (H.264 only), and WEBM (VP9 only) are allowed";
+        result.errorMessage = L"Container not supported. Only MP4, MOV, AVI (H.264 only), WEBM (VP9 only), and WMV (VC-1 only) are allowed";
         return result;
     }
 
@@ -3179,13 +3672,26 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
         result.keyFrameInterval = cadence.interval;
     }
 
-    if(sourceIsAvi && audioCount > 0){
+    result.openSupport = CapabilityState::Supported;
+    result.previewSupport = CapabilityState::Supported;
+    result.supportedExportExtensions = probeSupportedExportExtensions(*formatProfile, selectedVideoType);
+    result.defaultExportExtension = chooseDefaultExportExtension(*formatProfile, filePath, result.supportedExportExtensions);
+    result.losslessExportSupport = result.supportedExportExtensions.empty() ? CapabilityState::Unsupported : CapabilityState::Supported;
+    result.audioExportSupport = audioCount == 0
+        ? CapabilityState::NotApplicable
+        : (formatProfile->audioExportPolicy == AudioExportPolicy::Allowed ? CapabilityState::Supported : CapabilityState::Unsupported);
+
+    if(formatProfile->id == SourceFormatId::Avi && audioCount > 0){
         result.audioDisabledForThisSource = true;
         result.audioDisabledReason = L"AVI audio passthrough is disabled in v1. Export will keep video only";
     }
-    if(sourceIsWebm && audioCount > 0){
+    if(formatProfile->id == SourceFormatId::Webm && audioCount > 0){
         result.audioDisabledForThisSource = true;
         result.audioDisabledReason = L"WebM export currently keeps VP9 video only; audio passthrough is not implemented yet";
+    }
+    if(formatProfile->id == SourceFormatId::Wmv && audioCount > 0){
+        result.audioDisabledForThisSource = true;
+        result.audioDisabledReason = L"WMV export currently keeps VC-1 video only; audio passthrough is disabled for now";
     }
 
     result.sourceEncodedBy = readShellStringProperty(filePath, PKEY_Media_EncodedBy);
@@ -3207,7 +3713,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
 
     const auto items{co_await view.GetStorageItemsAsync()};
     if(items.Size() != 1){
-        setStatusMessage(L"Only support a single .llvc/.mp4/.mov/.avi/.webm file");
+        setStatusMessage(L"Only support a single .llvc/.mp4/.mov/.avi/.webm/.wmv file");
         co_return;
     }
 
@@ -3227,8 +3733,8 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
         co_return;
     }
 
-    if(lower != L".mp4" && lower != L".mov" && lower != L".avi" && lower != L".webm"){
-        setStatusMessage(L"Only .llvc, .mp4, .mov, .avi (H.264), and .webm (VP9) files are supported");
+    if(!isSupportedMediaPath(file.Path().c_str())){
+        setStatusMessage(L"Only .llvc, .mp4, .mov, .avi (H.264), .webm (VP9), and .wmv (VC-1) files are supported");
         co_return;
     }
 
@@ -3271,6 +3777,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_cachedRapLookupAttempted = false;
     m_cachedRapLookupSucceeded = false;
     m_isRapLookupInProgress = false;
+    m_hasTimelineRenderCompleted = false;
     m_pendingReevaluateAfterRapLookup = false;
     m_pendingNudgeDirectionAfterRapLookup = 0;
 
@@ -3300,6 +3807,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     updateAudioUiAndPlaybackState();
     updateWindowTitle();
     refreshStatusInfoSection();
+    refreshVideoDetailsPanel();
 }
 
 bool MainWindow::sourceHasAudio() const{
@@ -3515,15 +4023,20 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         syncTimelineHorizontalScrollBar();
 
         if(!renderDuringExport){
+            m_hasTimelineRenderCompleted = true;
             wstring status{L"Loaded: "};
             status += m_prj.videoFile().Name().c_str();
             status += L" (story line ready)";
             setStatusMessage(status);
             refreshStatusInfoSection();
             setOperationInProgress(false);
+            if(projectHasRequestedCuts() && !m_cachedRapLookupAttempted && !m_isRapLookupInProgress){
+                queueRapLookup(false, 0);
+            }
         }
     }catch(const winrt::hresult_error& ex){
         if(!m_isExportInProgress){
+            m_hasTimelineRenderCompleted = false;
             wstring status{L"Failed to render story line: "};
             status += ex.message().c_str();
             setStatusMessage(status);
@@ -3538,11 +4051,58 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         co_return;
     }
 
-    MFLifetime mf{};
-
     const wstring sourcePath{m_prj.videoFile().Path().c_str()};
+    const auto* formatProfile{tryGetFormatProfileForPath(sourcePath)};
+    if(!formatProfile){
+        co_await showInfoDialogAsync(L"Export video", L"This source container is not supported for export.");
+        co_return;
+    }
+    if(m_mediaInfo.losslessExportSupport != CapabilityState::Supported || m_mediaInfo.supportedExportExtensions.empty()){
+        co_await showInfoDialogAsync(L"Export video", L"This source can be opened and previewed, but lossless export is not available on this machine.");
+        co_return;
+    }
+    if(sourceHasAudio() && m_prj.keepAudio() && m_mediaInfo.audioExportSupport != CapabilityState::Supported){
+        co_await showInfoDialogAsync(L"Export video", L"Audio is not supported for export from this source yet. Turn off Keep audio first.");
+        co_return;
+    }
+
     const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
-    const auto outputDuration100ns{m_prj.outputDuration100ns()};
+    if(projectHasRequestedCuts()){
+        const auto rapReady{co_await ensureRapMarkersAvailableAsync(L"Analyzing RAP-aligned cut plan...")};
+        if(!rapReady){
+            setStatusMessage(L"Could not build a RAP-aligned cut plan for the current source");
+            refreshStatusInfoSection();
+            refreshVideoDetailsPanel();
+            co_await showInfoDialogAsync(L"Export blocked", L"Could not build a RAP-aligned cut plan for the current source.");
+            co_return;
+        }
+    }
+
+    const auto effectivePlanOpt{tryBuildEffectiveExportPlan()};
+    if(!effectivePlanOpt){
+        co_await showInfoDialogAsync(L"Export blocked", L"The export plan is not ready yet. Wait for the RAP analysis to finish and try again.");
+        co_return;
+    }
+    const auto effectivePlan{*effectivePlanOpt};
+    if(effectivePlan.emptyAfterAlignment){
+        setStatusMessage(L"Export blocked: no safe RAP-aligned cut range");
+        refreshStatusInfoSection();
+        refreshVideoDetailsPanel();
+        co_await showInfoDialogAsync(
+            L"Export blocked",
+            L"The current cut selection does not contain a safe RAP-aligned cut range. Adjust markers or reevaluate clear cut markers first.");
+        co_return;
+    }
+    if(!co_await confirmAdjustedExportPlanAsync(effectivePlan)){
+        setStatusMessage(L"Export canceled");
+        clearErrorMessage();
+        refreshStatusInfoSection();
+        co_return;
+    }
+
+    MFLifetime mf{};
+    const auto outputDuration100ns{effectivePlan.effectiveOutputDuration100ns};
+    const auto effectiveCutRanges100ns{effectivePlan.effectiveCutRanges100ns};
 
     const filesystem::path sourceFsPath{sourcePath};
 
@@ -3561,15 +4121,13 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
         return L"created by llvc from " + sourcePathForComment.filename().wstring() + L" on " + timestamp;
     };
-    const auto sourceExt{sourceFsPath.extension().wstring()};
-    const auto sourceIsAvi{isAviPath(sourcePath)};
-    const auto sourceIsWebm{_wcsicmp(sourceExt.c_str(), L".webm") == 0};
-    const auto defaultExt{
-        sourceIsWebm
-            ? L".webm"
-            : (sourceIsAvi ? L".mp4" : (_wcsicmp(sourceExt.c_str(), L".mov") == 0 ? L".mov" : L".mp4"))};
-
-    const auto outputPath{pickExportOutputPath(sourceFsPath, defaultExt, outputDuration100ns, getWindowHandle(), sourceIsAvi)};
+    const auto outputPath{
+        pickExportOutputPath(
+            sourceFsPath,
+            m_mediaInfo.supportedExportExtensions,
+            m_mediaInfo.defaultExportExtension.c_str(),
+            outputDuration100ns,
+            getWindowHandle())};
     if(outputPath.empty()){
         co_return;
     }
@@ -3624,14 +4182,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
         check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
-        vector<GUID> streamCopySubtypes;
-        if(sourceIsWebm){
-            streamCopySubtypes = {MFVideoFormat_VP90};
-        }else{
-            streamCopySubtypes = {MFVideoFormat_H264, MFVideoFormat_HEVC, MFVideoFormat_H265};
-        }
-        auto sourceVideoType{chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, streamCopySubtypes)};
-        if(sourceIsAvi){
+        auto sourceVideoType{chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, getAllowedVideoSubtypeVector(*formatProfile))};
+        if(formatProfile->requiresAviValidation){
             sourceVideoType = nullptr;
             for(DWORD mediaTypeIndex{};; ++mediaTypeIndex){
                 com_ptr<IMFMediaType> type;
@@ -3652,8 +4204,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
         }
         if(!sourceVideoType){
-            if(sourceIsWebm){
+            if(formatProfile->id == SourceFormatId::Webm){
                 throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require VP9 in WebM)");
+            }
+            if(formatProfile->id == SourceFormatId::Wmv){
+                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require VC-1 in WMV)");
             }
             throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require H.264 or HEVC)");
         }
@@ -3663,7 +4218,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         check_hresult(sourceVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
         const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
 
-        if(sourceIsAvi){
+        if(formatProfile->requiresAviValidation){
             if(videoSubtype != MFVideoFormat_H264){
                 throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI is supported only for H.264 video");
             }
@@ -3678,8 +4233,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             if(FAILED(seqReadHr) || bytesWritten == 0){
                 throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI H.264 stream lacks codec configuration (SPS/PPS). Convert to MP4 first.");
             }
-        }else if(sourceIsWebm && videoSubtype != MFVideoFormat_VP90){
+        }else if(formatProfile->id == SourceFormatId::Webm && videoSubtype != MFVideoFormat_VP90){
             throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WebM stream-copy export currently requires VP9 video");
+        }else if(formatProfile->id == SourceFormatId::Wmv && videoSubtype != VC1_VIDEO_SUBTYPE){
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WMV stream-copy export currently requires VC-1 video");
         }
 
         uint32_t width{};
@@ -3688,44 +4245,6 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         uint32_t fpsDen{};
         (void)MFGetAttributeSize(sourceVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
         (void)MFGetAttributeRatio(sourceVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
-
-        vector<int64_t> rapTimes100ns;
-        rapTimes100ns.reserve(2048);
-        for(;;){
-            DWORD actualStream{};
-            DWORD flags{};
-            LONGLONG timestamp{};
-            com_ptr<IMFSample> sample;
-            const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
-            if(FAILED(hr)){
-                check_hresult(hr);
-            }
-            if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
-                break;
-            }
-            if(!sample){
-                continue;
-            }
-
-            LONGLONG sampleTime100ns{};
-            if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
-                sampleTime100ns = timestamp;
-            }
-
-            if(isContainerSyncSample(sample) && isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)){
-                rapTimes100ns.push_back(max<int64_t>(0, sampleTime100ns));
-            }
-        }
-        sort(rapTimes100ns.begin(), rapTimes100ns.end());
-        rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
-
-        const auto effectiveCutRanges100ns{m_prj.buildEffectiveCutRangesWithRapPreroll(sourceDuration100ns, rapTimes100ns)};
-
-        PROPVARIANT startPos{};
-        startPos.vt = VT_I8;
-        startPos.hVal.QuadPart = 0;
-        check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
-        PropVariantClear(&startPos);
 
         auto hasAudioForExport{false};
         DWORD writerAudioStreamIndex{};
@@ -3736,7 +4255,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         DWORD audioStreamIndex{};
         constexpr auto invalidAudioStream{numeric_limits<DWORD>::max()};
 
-        if(!sourceIsAvi && !sourceIsWebm && m_prj.keepAudio() && sourceHasAudio()){
+        if(formatProfile->audioExportPolicy == AudioExportPolicy::Allowed && m_prj.keepAudio() && sourceHasAudio()){
             com_ptr<IMFSourceReader> audioProbeReader;
             check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioProbeReader.put()));
 
@@ -3773,7 +4292,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             }
         }
 
-        if(sourceIsWebm){
+        if(formatProfile->id == SourceFormatId::Webm){
             if(m_prj.keepAudio() && sourceHasAudio()){
                 throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WebM export currently keeps VP9 video only; disable audio first.");
             }
@@ -3808,6 +4327,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
                 })};
             (void)videoStats;
         }else{
+            if(formatProfile->id == SourceFormatId::Wmv && m_prj.keepAudio() && sourceHasAudio()){
+                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WMV export currently keeps VC-1 video only; disable audio first.");
+            }
+
             com_ptr<IMFSinkWriter> writer;
             DWORD writerVideoStreamIndex{};
             auto configureWriter = [&]() -> HRESULT {
@@ -3836,8 +4359,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
 
             const auto writerConfigHr{configureWriter()};
             if(FAILED(writerConfigHr)){
-                if(sourceIsAvi){
+                if(formatProfile->id == SourceFormatId::Avi){
                     throw hresult_error(writerConfigHr, L"System cannot mux H.264 into MP4 via Media Foundation.");
+                }
+                if(formatProfile->id == SourceFormatId::Wmv){
+                    throw hresult_error(writerConfigHr, L"System cannot mux VC-1 into WMV via Media Foundation on this machine.");
                 }
                 check_hresult(writerConfigHr);
             }

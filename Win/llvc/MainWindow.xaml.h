@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "MainWindow.g.h"
 
@@ -25,6 +25,13 @@ struct Ratio final{
     constexpr operator double() const noexcept{ return den != 0 ? 1.0 * num / den : 0; }
 };
 
+enum class CapabilityState : uint8_t{
+    Unknown,
+    Supported,
+    Unsupported,
+    NotApplicable
+};
+
 struct MediaInspectionResult{
     bool isValid{false};
     wstring errorMessage{};
@@ -45,6 +52,12 @@ struct MediaInspectionResult{
     wstring keyFrameInterval{};
     wstring allSamplesIndependent{};
     wstring maxKeyFrameSpacing{};
+    CapabilityState openSupport{CapabilityState::Unsupported};
+    CapabilityState previewSupport{CapabilityState::Unsupported};
+    CapabilityState losslessExportSupport{CapabilityState::Unsupported};
+    CapabilityState audioExportSupport{CapabilityState::NotApplicable};
+    vector<wstring> supportedExportExtensions{};
+    wstring defaultExportExtension{};
     bool audioDisabledForThisSource{false};
     wstring audioDisabledReason{};
 };
@@ -136,6 +149,7 @@ private:
     MP m_player{nullptr};
     MPSession::NaturalDurationChanged_revoker m_naturalDurationChangedRevoker{};
     DTS m_positionTimer{nullptr};
+    winrt::event_token m_positionTimerTickToken{};
     double m_timelineDurationSeconds{0};
     uint64_t m_timelineRenderVersion{0};
     MediaInspectionResult m_mediaInfo{};
@@ -144,6 +158,7 @@ private:
     bool m_cachedRapLookupAttempted{false};
     bool m_cachedRapLookupSucceeded{false};
     bool m_isRapLookupInProgress{false};
+    bool m_hasTimelineRenderCompleted{false};
     bool m_pendingReevaluateAfterRapLookup{false};
     int m_pendingNudgeDirectionAfterRapLookup{0};
     vector<hstring> m_recentVideos{};
@@ -191,6 +206,7 @@ private:
     };
     vector<UndoRedoState> m_undoStack{};
     vector<UndoRedoState> m_redoStack{};
+    winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_mainWindowClosedRevoker{};
 
 private:
     HWND getWindowHandle() const;
@@ -213,7 +229,6 @@ private:
     void updateWindowTitle();
     IOpBool ensureProjectSavedBeforeContinuingAsync();
     static MediaInspectionResult inspectMediaFile(const wstring& filePath);
-    static bool isSupportedVideoSubtype(const _GUID& subtype);
     static wstring guidToCodecName(const _GUID& subtype, bool isVideo);
     AAction loadVideoFileAsync(const SFile& file);
     fire_and_forget renderTimelineAsync();
@@ -237,8 +252,11 @@ private:
     void ensureCurrentTimelineCursorVisible();
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
-    bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns);
+    bool projectHasRequestedCuts() const;
+    std::optional<::llvc::EffectiveExportPlan> tryBuildEffectiveExportPlan() const;
+    bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns) const;
     void queueRapLookup(bool queueReevaluate, int nudgeDirection);
+    IOpBool ensureRapMarkersAvailableAsync(const wstring& statusMessage);
     fire_and_forget runRapLookupAsync();
     UndoRedoState captureUndoRedoState() const;
     bool isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const;
@@ -258,6 +276,7 @@ private:
     void setErrorMessage(const wstring& message);
     void clearErrorMessage();
     void refreshStatusInfoSection();
+    IOpBool confirmAdjustedExportPlanAsync(const ::llvc::EffectiveExportPlan& plan);
     void setOperationInProgress(bool active, bool indeterminate = false);
     void setOperationProgress(double percent);
     static wstring formatTimelineDurationText(int64_t duration100ns);
