@@ -4,14 +4,16 @@
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:uap18="http://schemas.microsoft.com/appx/manifest/uap/windows10/18"
-  IgnorableNamespaces="uap rescap uap18">
+  IgnorableNamespaces="uap uap2 uap3 rescap uap18">
 
   <Identity
     Name="YePhIcK.4394808465EB4"
     Publisher="CN=3B6D3FB8-6F98-49E9-9B13-B044937D2F99"
-    Version="1.1.0.0" />
+    Version="1.2.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="34e9f797-5a26-458f-89f7-42e58038c600" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
@@ -64,6 +66,24 @@
             <uap:EditFlags OpenIsSafe="true"/>
           </uap:FileTypeAssociation>
         </uap:Extension>
+        <uap3:Extension Category="windows.fileTypeAssociation">
+          <uap3:FileTypeAssociation Name="llvcvideo" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>ClipRazor video</uap:DisplayName>
+            <uap:Logo>Assets\Square44x44Logo.png</uap:Logo>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.mp4</uap:FileType>
+              <uap:FileType>.mov</uap:FileType>
+              <uap:FileType>.avi</uap:FileType>
+              <uap:FileType>.webm</uap:FileType>
+              <uap:FileType>.wmv</uap:FileType>
+            </uap:SupportedFileTypes>
+            <uap:InfoTip>Open supported video files in ClipRazor: Lossless Video Cutter</uap:InfoTip>
+            <uap:EditFlags OpenIsSafe="true"/>
+            <uap2:SupportedVerbs>
+              <uap3:Verb Id="openwithllvc" Parameters="&quot;%1&quot;">Open with ClipRazor</uap3:Verb>
+            </uap2:SupportedVerbs>
+          </uap3:FileTypeAssociation>
+        </uap3:Extension>
       </Extensions>
     </Application>
   </Applications>

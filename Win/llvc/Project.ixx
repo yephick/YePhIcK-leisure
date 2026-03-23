@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -65,7 +65,7 @@ struct Project final{
     vector<IndexedFrameSample> buildRapMarkersFromSelection() const;
     vector<pair<int64_t, int64_t>> buildCutRanges100ns() const;
     vector<int64_t> buildSceneBoundaries100ns() const;
-    EffectiveExportPlan buildEffectiveExportPlanWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const;
+    EffectiveExportPlan buildEffectiveExportPlanWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns, const function<void(double)>& progressCallback = {}) const;
     vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const;
     int64_t outputDuration100ns() const;
     void refreshSelectedMarkers();
@@ -344,7 +344,7 @@ vector<int64_t> Project::buildSceneBoundaries100ns() const{
     return boundaries;
 }
 
-EffectiveExportPlan Project::buildEffectiveExportPlanWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const{
+EffectiveExportPlan Project::buildEffectiveExportPlanWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns, const function<void(double)>& progressCallback) const{
     EffectiveExportPlan plan{};
     plan.sourceDuration100ns = max<int64_t>(0, totalDuration100ns);
     plan.requestedCutRanges100ns = buildCutRanges100ns();
@@ -357,11 +357,16 @@ EffectiveExportPlan Project::buildEffectiveExportPlanWithRapPreroll(int64_t tota
     }
 
     const auto markers{buildRapMarkersFromSelection()};
+    const auto totalMarkers{markers.size()};
     vector<int64_t> boundaries;
     boundaries.reserve(markers.size() + 2);
     boundaries.push_back(0);
-    for(const auto& marker: markers){
+    for(size_t markerIndex{}; markerIndex < markers.size(); ++markerIndex){
+        const auto& marker{markers[markerIndex]};
         boundaries.push_back(clamp<int64_t>(marker.time100ns, 0, totalDuration100ns));
+        if(progressCallback && totalMarkers > 0){
+            progressCallback((100.0 * static_cast<double>(markerIndex + 1)) / static_cast<double>(totalMarkers));
+        }
     }
     boundaries.push_back(totalDuration100ns);
     sort(boundaries.begin(), boundaries.end());
@@ -411,7 +416,8 @@ EffectiveExportPlan Project::buildEffectiveExportPlanWithRapPreroll(int64_t tota
 
     vector<pair<int64_t, int64_t>> cutRanges;
     cutRanges.reserve(rawCutBlocks.size());
-    for(const auto& [start, end]: rawCutBlocks){
+    for(size_t blockIndex{}; blockIndex < rawCutBlocks.size(); ++blockIndex){
+        const auto& [start, end]{rawCutBlocks[blockIndex]};
         int64_t alignedStart{};
         if(start <= 0){
             alignedStart = 0;
@@ -461,6 +467,9 @@ EffectiveExportPlan Project::buildEffectiveExportPlanWithRapPreroll(int64_t tota
     plan.effectiveCutRanges100ns = std::move(mergedCuts);
     plan.effectiveOutputDuration100ns = calculateOutputDuration100ns(plan.sourceDuration100ns, plan.effectiveCutRanges100ns);
     plan.materiallyDifferent = plan.requestedCutRanges100ns != plan.effectiveCutRanges100ns;
+    if(progressCallback){
+        progressCallback(100.0);
+    }
     return plan;
 }
 

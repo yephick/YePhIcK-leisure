@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Window
     x:Class="llvc.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -220,5 +220,117 @@
                 <Button x:Name="CancelExportButton" Grid.Column="3" Margin="8,0,0,0" Content="Cancel" Click="cancelExportButton_Click" Visibility="Collapsed" IsEnabled="False"/>
             </Grid>
         </Border>
+
+        <Grid x:Name="ExportOverlay" Grid.RowSpan="5" Background="#B8141414" Visibility="Collapsed">
+            <Border MaxWidth="920" MaxHeight="820" Padding="22" Margin="18" CornerRadius="10" Background="#F61B1B1B" BorderBrush="#AAE0E0E0" BorderThickness="1.5"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Export in progress" FontSize="28" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="ExportOverlayStatusText" Text="Preparing export..." TextWrapping="WrapWholeWords" FontSize="15" Foreground="#FFEAEAEA"/>
+
+                        <StackPanel Spacing="6">
+                            <ProgressBar x:Name="ExportOverlayProgressBar" Height="30" Minimum="0" Maximum="100" Value="0"/>
+                            <TextBlock x:Name="ExportOverlayProgressLabel" Text="Preparing export..." FontSize="15" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="ExportOverlayEtaLabel" Text="" FontSize="13" HorizontalAlignment="Center" Foreground="#FFB8D8FF"/>
+                        </StackPanel>
+
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="Export stages" FontWeight="SemiBold" FontSize="16"/>
+
+                            <Grid ColumnSpacing="16" RowSpacing="4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="170"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="130"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="RAP reevaluation" VerticalAlignment="Center"/>
+                                <ProgressBar x:Name="ExportOverlayRapStageProgressBar" Grid.Row="0" Grid.Column="1" Height="16" Minimum="0" Maximum="100" Value="0"/>
+                                <TextBlock x:Name="ExportOverlayRapStageLabel" Grid.Row="0" Grid.Column="2" Text="Pending" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Mux video" VerticalAlignment="Center"/>
+                                <ProgressBar x:Name="ExportOverlayVideoStageProgressBar" Grid.Row="1" Grid.Column="1" Height="16" Minimum="0" Maximum="100" Value="0"/>
+                                <TextBlock x:Name="ExportOverlayVideoStageLabel" Grid.Row="1" Grid.Column="2" Text="Pending" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Write audio" VerticalAlignment="Center"/>
+                                <ProgressBar x:Name="ExportOverlayAudioStageProgressBar" Grid.Row="2" Grid.Column="1" Height="16" Minimum="0" Maximum="100" Value="0"/>
+                                <TextBlock x:Name="ExportOverlayAudioStageLabel" Grid.Row="2" Grid.Column="2" Text="Pending" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Build indices / metadata" VerticalAlignment="Center"/>
+                                <ProgressBar x:Name="ExportOverlayFinalizeStageProgressBar" Grid.Row="3" Grid.Column="1" Height="16" Minimum="0" Maximum="100" Value="0"/>
+                                <TextBlock x:Name="ExportOverlayFinalizeStageLabel" Grid.Row="3" Grid.Column="2" Text="Pending" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <Grid ColumnSpacing="20" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="180"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Target file" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="ExportOverlayTargetPathText" Grid.Row="0" Grid.Column="1" Text="-" TextWrapping="WrapWholeWords"/>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Source duration" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="ExportOverlaySourceDurationText" Grid.Row="1" Grid.Column="1" Text="-"/>
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Target duration" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="ExportOverlayTargetDurationText" Grid.Row="2" Grid.Column="1" Text="-"/>
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Duration change" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="ExportOverlayDurationDeltaText" Grid.Row="3" Grid.Column="1" Text="-"/>
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Source size" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="ExportOverlaySourceSizeText" Grid.Row="4" Grid.Column="1" Text="-"/>
+
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Estimated target size" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="ExportOverlayEstimatedTargetSizeText" Grid.Row="5" Grid.Column="1" Text="-"/>
+
+                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Estimated savings" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="ExportOverlayEstimatedSavingsText" Grid.Row="6" Grid.Column="1" Text="-"/>
+
+                            <TextBlock Grid.Row="7" Grid.Column="0" Text="Plan details" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="ExportOverlayPlanDetailsText" Grid.Row="7" Grid.Column="1" Text="-" TextWrapping="WrapWholeWords"/>
+                        </Grid>
+
+                        <StackPanel x:Name="ExportOverlayProgressActionsPanel" Spacing="10">
+                            <TextBlock Text="Export controls" FontWeight="SemiBold" FontSize="16"/>
+                            <Button x:Name="ExportOverlayCancelButton" Content="Cancel export" Click="cancelExportButton_Click" HorizontalAlignment="Stretch" Height="42"/>
+                        </StackPanel>
+
+                        <Grid x:Name="ExportOverlayFinishedActionsPanel" ColumnSpacing="12" HorizontalAlignment="Stretch" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="ExportOverlayDeleteSourceAndProjectButton" Grid.Column="0" Content="Delete source and project file" Click="exportOverlayDeleteSourceAndProjectButton_Click" MinWidth="250" Height="42" IsEnabled="False"/>
+                            <Button x:Name="ExportOverlayDeleteProjectButton" Grid.Column="1" Content="Delete project file" Click="exportOverlayDeleteProjectButton_Click" MinWidth="180" Height="42" IsEnabled="False"/>
+                            <Button x:Name="ExportOverlayOpenExportButton" Grid.Column="2" Content="Open exported file" Click="exportOverlayOpenExportButton_Click" MinWidth="180" Height="42" IsEnabled="False"/>
+                            <Button x:Name="ExportOverlayCloseButton" Grid.Column="4" Content="Close" Click="exportOverlayCloseButton_Click" MinWidth="130" Height="42"/>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

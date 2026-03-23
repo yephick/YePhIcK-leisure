@@ -15,6 +15,9 @@
 #include <propkey.h>
 #include <propsys.h>
 #include <propvarutil.h>
+#include <shellapi.h>
+#include <shlobj.h>
+#include <shobjidl.h>
 #include <shobjidl_core.h>
 #include <winrt/Windows.Storage.FileProperties.h>
 #include <winrt/Microsoft.UI.Input.h>
@@ -34,6 +37,7 @@
 
 import std;
 import llvc.Export;
+import llvc.Media;
 import llvc.Utils;
 
 #pragma comment(lib, "Shell32.lib")
@@ -100,6 +104,192 @@ LRESULT CALLBACK MainWindowSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     }
 
     return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+std::optional<uint32_t> tryGetTimelineJumpPercentForKey(const VirtualKey key){
+    switch(key){
+    case VirtualKey::Number0:
+    case VirtualKey::NumberPad0:
+        return 0;
+    case VirtualKey::Number1:
+    case VirtualKey::NumberPad1:
+        return 10;
+    case VirtualKey::Number2:
+    case VirtualKey::NumberPad2:
+        return 20;
+    case VirtualKey::Number3:
+    case VirtualKey::NumberPad3:
+        return 30;
+    case VirtualKey::Number4:
+    case VirtualKey::NumberPad4:
+        return 40;
+    case VirtualKey::Number5:
+    case VirtualKey::NumberPad5:
+        return 50;
+    case VirtualKey::Number6:
+    case VirtualKey::NumberPad6:
+        return 60;
+    case VirtualKey::Number7:
+    case VirtualKey::NumberPad7:
+        return 70;
+    case VirtualKey::Number8:
+    case VirtualKey::NumberPad8:
+        return 80;
+    case VirtualKey::Number9:
+    case VirtualKey::NumberPad9:
+        return 90;
+    default:
+        return std::nullopt;
+    }
+}
+
+void addPathToShellRecentDocuments(const hstring& path){
+    if(path.empty()){
+        return;
+    }
+
+    ::SHAddToRecentDocs(SHARD_PATHW, path.c_str());
+}
+
+bool pathsMatchInsensitive(const std::wstring& left, const std::wstring& right){
+    if(left.empty() || right.empty()){
+        return false;
+    }
+
+    const auto normalizedLeft{filesystem::path(left).lexically_normal().wstring()};
+    const auto normalizedRight{filesystem::path(right).lexically_normal().wstring()};
+    return _wcsicmp(normalizedLeft.c_str(), normalizedRight.c_str()) == 0;
+}
+
+std::wstring buildTemporaryExportPath(const std::wstring& targetPath){
+    const filesystem::path targetFsPath{targetPath};
+    const auto parent{targetFsPath.parent_path()};
+    const auto stem{targetFsPath.stem().wstring()};
+    const auto extension{targetFsPath.extension().wstring()};
+
+    for(uint32_t attempt{}; attempt < 1000; ++attempt){
+        const auto ticks{static_cast<unsigned long long>(chrono::steady_clock::now().time_since_epoch().count())};
+        const auto candidateName{
+            std::format(L"{}.llvc-export-{}-{}{}", stem.empty() ? L"export" : stem, ::GetCurrentProcessId(), ticks + attempt, extension)};
+        const auto candidatePath{parent / candidateName};
+
+        std::error_code existsEc;
+        if(!filesystem::exists(candidatePath, existsEc)){
+            return candidatePath.wstring();
+        }
+    }
+
+    return {};
+}
+
+std::wstring buildTemporaryBackupPath(const std::wstring& targetPath){
+    const filesystem::path targetFsPath{targetPath};
+    const auto parent{targetFsPath.parent_path()};
+    const auto filename{targetFsPath.filename().wstring()};
+
+    for(uint32_t attempt{}; attempt < 1000; ++attempt){
+        const auto ticks{static_cast<unsigned long long>(chrono::steady_clock::now().time_since_epoch().count())};
+        const auto candidateName{
+            std::format(L"{}.llvc-backup-{}-{}", filename.empty() ? L"export" : filename, ::GetCurrentProcessId(), ticks + attempt)};
+        const auto candidatePath{parent / candidateName};
+
+        std::error_code existsEc;
+        if(!filesystem::exists(candidatePath, existsEc)){
+            return candidatePath.wstring();
+        }
+    }
+
+    return {};
+}
+
+bool removePathFromShellRecentDocuments(const std::wstring& path){
+    if(path.empty()){
+        return false;
+    }
+
+    com_ptr<IShellItem> shellItem;
+    const auto itemHr{SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(shellItem.put()))};
+    if(FAILED(itemHr)){
+        return false;
+    }
+
+    com_ptr<IApplicationDestinations> destinations;
+    const auto destHr{CoCreateInstance(CLSID_ApplicationDestinations, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(destinations.put()))};
+    if(FAILED(destHr)){
+        return false;
+    }
+
+    return SUCCEEDED(destinations->RemoveDestination(shellItem.get()));
+}
+
+bool movePathToRecycleBin(const std::wstring& path, std::wstring& failureReason){
+    failureReason.clear();
+    if(path.empty()){
+        failureReason = L"Path is empty.";
+        return false;
+    }
+
+    com_ptr<IFileOperation> fileOperation;
+    const auto createHr{CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(fileOperation.put()))};
+    if(SUCCEEDED(createHr)){
+        const auto flagsHr{fileOperation->SetOperationFlags(
+            FOFX_ADDUNDORECORD | FOFX_RECYCLEONDELETE | FOF_NOCONFIRMATION | FOF_SILENT | FOFX_SHOWELEVATIONPROMPT)};
+        if(SUCCEEDED(flagsHr)){
+            com_ptr<IShellItem> shellItem;
+            const auto itemHr{SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(shellItem.put()))};
+            if(SUCCEEDED(itemHr)){
+                const auto deleteHr{fileOperation->DeleteItem(shellItem.get(), nullptr)};
+                if(SUCCEEDED(deleteHr)){
+                    const auto performHr{fileOperation->PerformOperations()};
+                    if(SUCCEEDED(performHr)){
+                        BOOL anyAborted{};
+                        if(SUCCEEDED(fileOperation->GetAnyOperationsAborted(&anyAborted)) && !anyAborted){
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to the classic shell delete path when IFileOperation is unavailable
+    // in the current packaged/runtime context.
+    std::wstring doubleNullPath{path};
+    doubleNullPath.push_back(L'\0');
+    doubleNullPath.push_back(L'\0');
+
+    SHFILEOPSTRUCTW operation{};
+    operation.wFunc = FO_DELETE;
+    operation.pFrom = doubleNullPath.c_str();
+    operation.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_WANTNUKEWARNING;
+
+    const int shellResult{::SHFileOperationW(&operation)};
+    if(shellResult == 0 && !operation.fAnyOperationsAborted){
+        return true;
+    }
+
+    // Some locations, especially removable media, do not support recycle-bin
+    // semantics. Fall back to normal permanent delete paths in that case.
+    std::error_code removeEc;
+    if(filesystem::remove(path, removeEc)){
+        return true;
+    }
+
+    if(::DeleteFileW(path.c_str())){
+        return true;
+    }
+    const auto deleteFileError{::GetLastError()};
+
+    if(deleteFileError != ERROR_SUCCESS){
+        failureReason = winrt::to_hstring(winrt::hresult_error(HRESULT_FROM_WIN32(deleteFileError)).message()).c_str();
+    }else if(removeEc){
+        failureReason = winrt::to_hstring(removeEc.message()).c_str();
+    }else if(shellResult != 0){
+        failureReason = winrt::to_hstring(winrt::hresult_error(HRESULT_FROM_WIN32(shellResult)).message()).c_str();
+    }else{
+        failureReason = L"The delete operation was canceled or aborted.";
+    }
+    return false;
 }
 
 constexpr int64_t HNS_PER_SECOND{10'000'000LL};
@@ -234,7 +424,7 @@ const FormatProfile* tryGetFormatProfileForPath(const wstring& filePath){
 }
 
 bool isSupportedMediaPath(const wstring& filePath){
-    return tryGetFormatProfileForPath(filePath) != nullptr;
+    return static_cast<bool>(createVideoSource(filePath));
 }
 
 bool formatAllowsVideoSubtype(const FormatProfile& profile, const GUID& subtype){
@@ -384,7 +574,7 @@ vector<wstring> probeSupportedExportExtensions(const FormatProfile& profile, con
 }
 
 
-vector<int64_t> collectCleanPointTimes100ns(const wstring& filePath){
+vector<int64_t> collectCleanPointTimes100ns(const wstring& filePath, const vector<int64_t>& markerTimes100ns = {}, const function<void(double)>& progressCallback = {}, const function<bool()>& cancelRequested = {}){
     vector<int64_t> rapTimes;
 
     if(filePath.empty()){
@@ -419,8 +609,13 @@ vector<int64_t> collectCleanPointTimes100ns(const wstring& filePath){
     }
 
     check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
+    size_t nextMarkerIndex{};
 
     for(;;){
+        if(cancelRequested && cancelRequested()){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+        }
+
         DWORD actualStream{};
         DWORD flags{};
         LONGLONG timestamp{};
@@ -445,7 +640,14 @@ vector<int64_t> collectCleanPointTimes100ns(const wstring& filePath){
             sampleTime = timestamp;
         }
 
-        rapTimes.push_back(max<int64_t>(0, sampleTime));
+        const auto cleanTime100ns{max<int64_t>(0, sampleTime)};
+        rapTimes.push_back(cleanTime100ns);
+        while(nextMarkerIndex < markerTimes100ns.size() && markerTimes100ns[nextMarkerIndex] <= cleanTime100ns){
+            ++nextMarkerIndex;
+            if(progressCallback){
+                progressCallback((100.0 * static_cast<double>(nextMarkerIndex)) / static_cast<double>(markerTimes100ns.size()));
+            }
+        }
     }
 
     sort(rapTimes.begin(), rapTimes.end());
@@ -765,6 +967,9 @@ constexpr auto S_RECENT_VIDEOS{L"RecentVideos"};
 constexpr auto S_RECENT_PROJECTS{L"RecentProjects"};
 constexpr auto S_MAX_RECENT_VIDEOS{L"MaxRecentVideos"};
 constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
+constexpr auto S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT{L"DeleteSourceAndProjectAfterExport"};
+constexpr auto S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT{L"AutoReevaluateCutMarkersOnPlacement"};
+constexpr auto S_GENERATE_EXPORT_TIME_REPORT{L"GenerateExportTimeReport"};
 constexpr auto S_DEFAULT_MAX_RECENT{5};
 constexpr auto S_SEPARATE_PREVIEW_DETACHED{L"SeparatePreviewDetached"};
 constexpr auto S_SEPARATE_PREVIEW_L{L"SeparatePreviewLeft"};
@@ -1042,6 +1247,12 @@ void MainWindow::loadAppSettings(){
     if(values.HasKey(S_RECENT_PROJECTS)){
         m_recentProjects = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
     }
+    m_deleteSourceAndProjectAfterExport = values.HasKey(S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT)
+        && unbox_value<bool>(values.Lookup(S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT));
+    m_autoReevaluateCutMarkersOnPlacement = values.HasKey(S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT)
+        && unbox_value<bool>(values.Lookup(S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT));
+    m_generateExportTimeReport = values.HasKey(S_GENERATE_EXPORT_TIME_REPORT)
+        && unbox_value<bool>(values.Lookup(S_GENERATE_EXPORT_TIME_REPORT));
     if(m_recentVideos.size() > m_maxRecentVideos){
         m_recentVideos.resize(m_maxRecentVideos);
     }
@@ -1069,6 +1280,9 @@ void MainWindow::saveAppSettings() const{
     const auto values{ApplicationData::Current().LocalSettings().Values()};
     values.Insert(S_MAX_RECENT_VIDEOS, box_value(static_cast<int32_t>(m_maxRecentVideos)));
     values.Insert(S_MAX_RECENT_PROJECTS, box_value(static_cast<int32_t>(m_maxRecentProjects)));
+    values.Insert(S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT, box_value(m_deleteSourceAndProjectAfterExport));
+    values.Insert(S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT, box_value(m_autoReevaluateCutMarkersOnPlacement));
+    values.Insert(S_GENERATE_EXPORT_TIME_REPORT, box_value(m_generateExportTimeReport));
     values.Insert(S_RECENT_VIDEOS, box_value(hstring(joinRecentItems(m_recentVideos))));
     values.Insert(S_RECENT_PROJECTS, box_value(hstring(joinRecentItems(m_recentProjects))));
     values.Insert(S_SEPARATE_PREVIEW_DETACHED, box_value(m_restorePreviewDetachedOnStartup));
@@ -1194,27 +1408,28 @@ void MainWindow::stopButton_Click(const Control&, const REArgs&){
 }
 
 
-void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REArgs&){
+bool MainWindow::reevaluateClearCutMarkers(bool pushUndoState){
     if(!m_prj.videoFile() || m_timelineDurationSeconds <= 0){
         setStatusMessage(L"Load a video before reevaluating clear cut markers");
-        return;
+        return false;
     }
 
     vector<int64_t> rapTimes100ns;
     if(!tryGetRapTimes100ns(rapTimes100ns)){
+        m_pendingReevaluateWithoutUndoAfterRapLookup = !pushUndoState;
         queueRapLookup(true, 0);
-        return;
+        return false;
     }
 
     const auto originalMarkers{m_prj.frameIndex()};
     if(originalMarkers.empty()){
         setStatusMessage(L"No clear cut markers to reevaluate");
-        return;
+        return false;
     }
 
     const auto previousCutRanges{m_prj.buildCutRanges100ns()};
     const auto beforeState{captureUndoRedoState()};
-    const auto hasUndoSnapshot{pushUndoStateIfChanged()};
+    const auto hasUndoSnapshot{pushUndoState ? pushUndoStateIfChanged() : false};
     vector<IndexedFrameSample> updatedMarkers;
     updatedMarkers.reserve(originalMarkers.size() * 2);
     std::optional<int64_t> preservedTailCutStartTime100ns;
@@ -1280,15 +1495,22 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
     if(!didChange && hasUndoSnapshot && !m_undoStack.empty()){
         m_undoStack.pop_back();
     }
+    m_pendingReevaluateWithoutUndoAfterRapLookup = false;
     if(replacedCount == 0){
         status += L" (no changes needed)";
     }else{
         status += std::format(L" (updated {})", replacedCount);
     }
     setStatusMessage(status);
+    return true;
+}
+
+void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REArgs&){
+    (void)reevaluateClearCutMarkers(true);
 }
 
 void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&){
+    m_prj.setZoom(TimelineZoomSlider().Value());
     if(m_prj.videoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }
@@ -1450,10 +1672,27 @@ std::optional<int64_t> MainWindow::timelinePointToTime100ns(double pointerX, dou
     return m_tl.pointToTime100ns(pointerX, width, m_prj.timelineDuration100ns());
 }
 
+bool MainWindow::hasCutMarkerNearTime100ns(int64_t time100ns) const{
+    constexpr int64_t hitTolerance100ns{50'000};
+    const auto clicked100ns{clamp<int64_t>(time100ns, 0, m_prj.timelineDuration100ns())};
+    for(const auto& marker: m_prj.frameIndex()){
+        if(llabs(marker.time100ns - clicked100ns) <= hitTolerance100ns){
+            return true;
+        }
+    }
+    return false;
+}
+
 bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
+    const auto markerCountBefore{m_prj.frameIndex().size()};
     (void)pushUndoStateIfChanged();
     if(!m_prj.toggleSelectedKeyframeAtTime100ns(time100ns, m_mediaInfo.frameRate)){
         return false;
+    }
+
+    const auto markerCountAfter{m_prj.frameIndex().size()};
+    if(m_autoReevaluateCutMarkersOnPlacement && markerCountAfter > markerCountBefore){
+        (void)reevaluateClearCutMarkers(false);
     }
 
     renderTimelineTicks();
@@ -1464,11 +1703,24 @@ bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
     return true;
 }
 
+AAction MainWindow::toggleSelectedKeyframeAtTime100nsAsync(int64_t time100ns){
+    const auto removingExistingMarker{hasCutMarkerNearTime100ns(time100ns)};
+    if(m_autoReevaluateCutMarkersOnPlacement && !removingExistingMarker){
+        const auto rapReady{co_await ensureRapMarkersAvailableAsync(L"Scanning source for RAP markers and aligning new cut marker...")};
+        if(!rapReady){
+            co_return;
+        }
+    }
+
+    (void)toggleSelectedKeyframeAtTime100ns(time100ns);
+}
+
 
 void MainWindow::timelineCanvas_PointerReleased(const Control&, const PREArgs& e){
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
     if(point.Properties().PointerUpdateKind() == PointerUpdateKind::RightButtonReleased){
-        if(const auto time100ns{timelinePointToTime100ns(point.Position().X, TimelineCanvas().Width())}; time100ns && toggleSelectedKeyframeAtTime100ns(*time100ns)){
+        if(const auto time100ns{timelinePointToTime100ns(point.Position().X, TimelineCanvas().Width())}){
+            (void)toggleSelectedKeyframeAtTime100nsAsync(*time100ns);
             e.Handled(true);
             return;
         }
@@ -1780,7 +2032,8 @@ bool MainWindow::setCutBlockAtTime100ns(int64_t time100ns, bool cutScene){
 
 bool MainWindow::toggleCutMarkerAtCursor(){
     if(const auto time100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineTickCanvas().Width())}){
-        return toggleSelectedKeyframeAtTime100ns(*time100ns);
+        (void)toggleSelectedKeyframeAtTime100nsAsync(*time100ns);
+        return true;
     }
     return false;
 }
@@ -2004,6 +2257,80 @@ void MainWindow::stepByFrame(int delta){
     syncTimelineHorizontalScrollBar();
 }
 
+bool MainWindow::seekBySeconds(int deltaSeconds){
+    if(deltaSeconds == 0){
+        return false;
+    }
+
+    const auto durationFromProject100ns{m_prj.timelineDuration100ns()};
+    const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
+    const auto duration100ns{max(durationFromProject100ns, durationFromTimeline100ns)};
+    if(duration100ns <= 0){
+        return false;
+    }
+
+    int64_t current100ns{};
+    if(m_player){
+        current100ns = max<int64_t>(0, m_player.PlaybackSession().Position().count());
+    }else if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
+        current100ns = *cursor100ns;
+    }
+
+    const auto delta100ns{static_cast<int64_t>(deltaSeconds) * HNS_PER_SECOND};
+    const auto target100ns{clamp(current100ns + delta100ns, int64_t{0}, duration100ns)};
+
+    if(m_player){
+        m_player.PlaybackSession().Position(TimeSpan{target100ns});
+        updateTimelineCursorFromPlayback();
+        ensureCurrentTimelineCursorVisible();
+        return true;
+    }
+
+    const auto width{TimelineCanvas().Width()};
+    if(width <= 0){
+        return false;
+    }
+
+    const auto left{m_tl.timeToCanvasX(target100ns, duration100ns, width)};
+    Controls::Canvas::SetLeft(TimelineCursor(), left);
+    ensureTimelineCursorVisible(left);
+    syncTimelineHorizontalScrollBar();
+    return true;
+}
+
+bool MainWindow::jumpToTimelinePercent(uint32_t percent){
+    if(percent > 100){
+        return false;
+    }
+
+    const auto durationFromProject100ns{m_prj.timelineDuration100ns()};
+    const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
+    const auto duration100ns{max(durationFromProject100ns, durationFromTimeline100ns)};
+    if(duration100ns <= 0){
+        return false;
+    }
+
+    const auto target100ns{clamp<int64_t>((duration100ns * static_cast<int64_t>(percent)) / 100, 0, duration100ns)};
+
+    if(m_player){
+        m_player.PlaybackSession().Position(TimeSpan{target100ns});
+        updateTimelineCursorFromPlayback();
+        ensureCurrentTimelineCursorVisible();
+        return true;
+    }
+
+    const auto width{TimelineCanvas().Width()};
+    if(width <= 0){
+        return false;
+    }
+
+    const auto left{m_tl.timeToCanvasX(target100ns, duration100ns, width)};
+    Controls::Canvas::SetLeft(TimelineCursor(), left);
+    ensureTimelineCursorVisible(left);
+    syncTimelineHorizontalScrollBar();
+    return true;
+}
+
 
 bool MainWindow::moveCursorToMarker(int direction){
     if(direction == 0){
@@ -2078,14 +2405,14 @@ bool MainWindow::projectHasRequestedCuts() const{
     return !m_prj.buildCutRanges100ns().empty();
 }
 
-std::optional<::llvc::EffectiveExportPlan> MainWindow::tryBuildEffectiveExportPlan() const{
+std::optional<::llvc::EffectiveExportPlan> MainWindow::tryBuildEffectiveExportPlan(const std::function<void(double)>& progressCallback) const{
     const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
     if(sourceDuration100ns <= 0){
         return std::nullopt;
     }
 
     if(!projectHasRequestedCuts()){
-        return m_prj.buildEffectiveExportPlanWithRapPreroll(sourceDuration100ns, {});
+        return m_prj.buildEffectiveExportPlanWithRapPreroll(sourceDuration100ns, {}, progressCallback);
     }
 
     vector<int64_t> rapTimes100ns;
@@ -2093,7 +2420,7 @@ std::optional<::llvc::EffectiveExportPlan> MainWindow::tryBuildEffectiveExportPl
         return std::nullopt;
     }
 
-    return m_prj.buildEffectiveExportPlanWithRapPreroll(sourceDuration100ns, rapTimes100ns);
+    return m_prj.buildEffectiveExportPlanWithRapPreroll(sourceDuration100ns, rapTimes100ns, progressCallback);
 }
 
 void MainWindow::queueRapLookup(bool queueReevaluate, int nudgeDirection){
@@ -2122,19 +2449,39 @@ void MainWindow::queueRapLookup(bool queueReevaluate, int nudgeDirection){
     runRapLookupAsync();
 }
 
-IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage){
+IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage, const std::function<void(double)>& progressCallback){
     if(!m_prj.videoFile() || m_prj.videoFile().Path().empty()){
+        co_return false;
+    }
+
+    if(m_isExportInProgress && m_cancelExportRequested.load()){
         co_return false;
     }
 
     MFLifetime mf{};
     const hstring sourcePath{m_prj.videoFile().Path()};
     vector<int64_t> rapTimes100ns;
+    vector<int64_t> markerTimes100ns;
+    if(progressCallback){
+        const auto markers{m_prj.buildRapMarkersFromSelection()};
+        markerTimes100ns.reserve(markers.size());
+        for(const auto& marker: markers){
+            markerTimes100ns.push_back(marker.time100ns);
+        }
+        sort(markerTimes100ns.begin(), markerTimes100ns.end());
+        markerTimes100ns.erase(unique(markerTimes100ns.begin(), markerTimes100ns.end()), markerTimes100ns.end());
+    }
     if(tryGetRapTimes100ns(rapTimes100ns)){
+        if(progressCallback && !markerTimes100ns.empty()){
+            progressCallback(100.0);
+        }
         co_return true;
     }
 
     while(m_isRapLookupInProgress){
+        if(m_isExportInProgress && m_cancelExportRequested.load()){
+            co_return false;
+        }
         if(tryGetRapTimes100ns(rapTimes100ns)){
             co_return true;
         }
@@ -2142,7 +2489,11 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage)
             co_return false;
         }
 
-        setOperationInProgress(true, true);
+        setOperationInProgress(true, m_isExportInProgress ? false : true);
+        if(m_isExportInProgress && ExportOverlayProgressBar().Value() <= 0.0){
+            setOperationProgress(0);
+            setExportOverlayStageState(ExportOverlayStage::Rap, L"In progress", 0.0, true);
+        }
         setStatusMessage(statusMessage);
         co_await winrt::resume_after(std::chrono::milliseconds(50));
     }
@@ -2156,16 +2507,36 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage)
 
     winrt::apartment_context uiThread;
     m_isRapLookupInProgress = true;
-    setOperationInProgress(true, true);
+    setOperationInProgress(true, m_isExportInProgress ? false : true);
+    if(m_isExportInProgress && ExportOverlayProgressBar().Value() <= 0.0){
+        setOperationProgress(0);
+        setExportOverlayStageState(ExportOverlayStage::Rap, L"In progress", 0.0, true);
+    }
     setStatusMessage(statusMessage);
 
     auto lookupSucceeded{false};
+    auto lookupCanceled{false};
     co_await resume_background();
     try{
-        rapTimes100ns = collectCleanPointTimes100ns(sourcePath.c_str());
-        sort(rapTimes100ns.begin(), rapTimes100ns.end());
-        rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
-        lookupSucceeded = !rapTimes100ns.empty();
+        if(m_cancelExportRequested.load()){
+            lookupSucceeded = false;
+        }else{
+            rapTimes100ns = m_media ? m_media->collectRapTimes100ns(markerTimes100ns, progressCallback, [weak = get_weak()](){
+                if(const auto strong = weak.get()){
+                    return strong->m_cancelExportRequested.load();
+                }
+                return false;
+            }) : vector<int64_t>{};
+            sort(rapTimes100ns.begin(), rapTimes100ns.end());
+            rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
+            lookupSucceeded = !rapTimes100ns.empty();
+        }
+    }catch(const hresult_error& ex){
+        if(ex.code() == HRESULT_FROM_WIN32(ERROR_CANCELLED)){
+            lookupCanceled = true;
+        }
+        rapTimes100ns.clear();
+        lookupSucceeded = false;
     }catch(...){
         rapTimes100ns.clear();
         lookupSucceeded = false;
@@ -2174,7 +2545,7 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage)
     co_await uiThread;
 
     const auto sameSourceLoaded{m_prj.videoFile() && m_prj.videoFile().Path() == sourcePath};
-    if(sameSourceLoaded){
+    if(sameSourceLoaded && !lookupCanceled){
         m_cachedRapSourcePath = sourcePath;
         m_cachedRapTimes100ns = lookupSucceeded ? rapTimes100ns : vector<int64_t>{};
         m_cachedRapLookupAttempted = true;
@@ -2199,8 +2570,10 @@ fire_and_forget MainWindow::runRapLookupAsync(){
 
     if(const auto self{weakSelf.get()}){
         const auto runReevaluate{self->m_pendingReevaluateAfterRapLookup};
+        const auto runReevaluateWithoutUndo{self->m_pendingReevaluateWithoutUndoAfterRapLookup};
         const auto nudgeDirection{self->m_pendingNudgeDirectionAfterRapLookup};
         self->m_pendingReevaluateAfterRapLookup = false;
+        self->m_pendingReevaluateWithoutUndoAfterRapLookup = false;
         self->m_pendingNudgeDirectionAfterRapLookup = 0;
 
         if(!self->m_prj.videoFile() || self->m_prj.videoFile().Path().empty()){
@@ -2216,7 +2589,7 @@ fire_and_forget MainWindow::runRapLookupAsync(){
         self->refreshStatusInfoSection();
         self->refreshVideoDetailsPanel();
         if(runReevaluate){
-            self->reevaluateClearCutMarkersButton_Click(nullptr, {});
+            (void)self->reevaluateClearCutMarkers(!runReevaluateWithoutUndo);
         }
         if(nudgeDirection < 0){
             (void)self->nudgeCurrentSceneBoundaryToNearestRap(false);
@@ -2353,6 +2726,14 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         (void)moveCursorToMarker(1);
         args.Handled(true);
         return true;
+    case VirtualKey::PageUp:
+        (void)seekBySeconds(-5);
+        args.Handled(true);
+        return true;
+    case VirtualKey::PageDown:
+        (void)seekBySeconds(5);
+        args.Handled(true);
+        return true;
     case VirtualKey::Delete:
         (void)markSceneAtCursor(true);
         args.Handled(true);
@@ -2370,6 +2751,11 @@ bool MainWindow::handleStorylineKeyDown(const KRArgs& args){
         args.Handled(true);
         return true;
     default:
+        if(const auto jumpPercent{tryGetTimelineJumpPercentForKey(args.Key())}){
+            (void)jumpToTimelinePercent(*jumpPercent);
+            args.Handled(true);
+            return true;
+        }
         return false;
     }
 }
@@ -2870,6 +3256,7 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
         L"* Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
         L"* Boundary RAP nudging: Ctrl+< shrinks the current scene by nudging both scene edges inward to RAPs, Ctrl+> expands by nudging both edges outward to RAPs.\n"
         L"* Preview start/pause/stop skipping cut scenes.\n"
+        L"* Timeline navigation: Left/Right steps a frame, Up/Down jumps between markers, PageUp/PageDown seeks backward/forward 10 seconds, and 0-9 jumps to 0%-90% of the timeline.\n"
         L"* Preview window: Tools -> Preview in separate window opens a movable second window; use F11 to toggle full-screen.\n"
         L"* Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
         L"* Project files: Save and reopen .llvc projects with timeline state.\n"
@@ -2985,6 +3372,7 @@ void MainWindow::addRecentVideo(const hstring& path){
     }
 
     _addRecentVideo(m_recentVideos, m_maxRecentVideos, path);
+    addPathToShellRecentDocuments(path);
     refreshRecentVideosMenu();
     saveAppSettings();
 }
@@ -2995,6 +3383,24 @@ void MainWindow::addRecentProject(const hstring& path){
     }
 
     _addRecentVideo(m_recentProjects, m_maxRecentProjects, path);
+    addPathToShellRecentDocuments(path);
+    refreshRecentProjectsMenu();
+    saveAppSettings();
+}
+
+void MainWindow::removeRecentPath(const hstring& path){
+    if(path.empty()){
+        return;
+    }
+
+    const auto erasePath{[&path](vector<hstring>& recent){
+        recent.erase(remove(recent.begin(), recent.end(), path), recent.end());
+    }};
+
+    erasePath(m_recentVideos);
+    erasePath(m_recentProjects);
+    (void)removePathFromShellRecentDocuments(path.c_str());
+    refreshRecentVideosMenu();
     refreshRecentProjectsMenu();
     saveAppSettings();
 }
@@ -3009,6 +3415,7 @@ void MainWindow::resetProjectState(){
     ++m_timelineRenderVersion;
     m_projectPath.clear();
     m_prj.reset();
+    m_media.reset();
     clearUndoRedoHistory();
     m_mediaInfo = {};
     m_cachedRapSourcePath.clear();
@@ -3019,6 +3426,8 @@ void MainWindow::resetProjectState(){
     m_hasTimelineRenderCompleted = false;
     m_pendingReevaluateAfterRapLookup = false;
     m_pendingNudgeDirectionAfterRapLookup = 0;
+    m_exportEtaText.clear();
+    m_lastExportEtaProgress.reset();
     m_timelineDurationSeconds = 0;
     TimelineZoomSlider().Value(m_prj.zoom());
     refreshVideoDetailsPanel();
@@ -3286,6 +3695,9 @@ void MainWindow::updatePreviewPlaceholderVisibility(){
 
 void MainWindow::setStatusMessage(const wstring& message){
     StatusText().Text(message);
+    if(ExportOverlayStatusText()){
+        ExportOverlayStatusText().Text(message);
+    }
 }
 
 void MainWindow::setErrorMessage(const wstring& message){
@@ -3355,23 +3767,574 @@ void MainWindow::refreshStatusInfoSection(){
     InfoText().Text(text);
 }
 
-void MainWindow::setOperationInProgress(bool active, bool indeterminate){
+void MainWindow::configureExportOverlay(const wstring& outputPath, int64_t sourceDuration100ns, int64_t outputDuration100ns, uint64_t sourceSizeBytes, bool adjustedPlan, size_t cutBlockCount, const ::llvc::EffectiveExportPlan* effectivePlan){
+    const auto formatOverlaySize{[](uint64_t bytes) -> wstring{
+        if(bytes >= (1024ull * 1024ull * 1024ull)){
+            return std::format(L"{:.2f} GB", static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0));
+        }
+        if(bytes >= (1024ull * 1024ull)){
+            return std::format(L"{:.2f} MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+        }
+        if(bytes >= 1024ull){
+            return std::format(L"{:.2f} KB", static_cast<double>(bytes) / 1024.0);
+        }
+        return std::format(L"{} bytes", bytes);
+    }};
+    const auto parseAudioBitrateBytesPerSecond{[this]() -> uint64_t{
+        const auto bitrateText{m_mediaInfo.audioBitrate};
+        if(bitrateText.empty() || bitrateText == L"none" || bitrateText == L"-"){
+            return 0;
+        }
+
+        size_t consumed{};
+        try{
+            const auto kbps{stoull(bitrateText, &consumed)};
+            return (kbps * 1000ull) / 8ull;
+        }catch(...){
+            return 0;
+        }
+    }};
+    const auto formatOverlayShrinkSummary{[&](const ::llvc::EffectiveExportPlan& plan) -> pair<size_t, wstring>{
+        size_t repositionedMarkers{};
+        size_t shrunkCutScenes{};
+        int64_t shrunkTotal100ns{};
+        const auto pairCount{min(plan.requestedCutRanges100ns.size(), plan.effectiveCutRanges100ns.size())};
+        for(size_t i{}; i < pairCount; ++i){
+            const auto& [requestedStart, requestedEnd]{plan.requestedCutRanges100ns[i]};
+            const auto& [effectiveStart, effectiveEnd]{plan.effectiveCutRanges100ns[i]};
+            if(requestedStart > 0 && requestedStart < plan.sourceDuration100ns && requestedStart != effectiveStart){
+                ++repositionedMarkers;
+            }
+            if(requestedEnd > 0 && requestedEnd < plan.sourceDuration100ns && requestedEnd != effectiveEnd){
+                ++repositionedMarkers;
+            }
+
+            const auto requestedDuration{max<int64_t>(0, requestedEnd - requestedStart)};
+            const auto effectiveDuration{max<int64_t>(0, effectiveEnd - effectiveStart)};
+            if(effectiveDuration < requestedDuration){
+                ++shrunkCutScenes;
+                shrunkTotal100ns += (requestedDuration - effectiveDuration);
+            }
+        }
+
+        return {
+            repositionedMarkers,
+            std::format(
+                L"{} cut scene{} shrunk by {} total",
+                shrunkCutScenes,
+                shrunkCutScenes == 1 ? L"" : L"s",
+                formatTimelineDurationText(shrunkTotal100ns))};
+    }};
+
+    m_currentExportSourceSizeBytes = sourceSizeBytes;
+    m_currentExportSourceDuration100ns = sourceDuration100ns;
+    m_currentExportOutputDuration100ns = outputDuration100ns;
+    m_currentExportPlanAdjusted = adjustedPlan;
+    m_currentExportCutBlockCount = cutBlockCount;
+    m_exportOverlayHasFinalState = false;
+    m_lastExportSucceeded = false;
+    m_currentExportSourcePath = m_prj.videoFile() ? m_prj.videoFile().Path() : hstring{};
+    m_currentExportProjectPath = m_projectPath;
+    m_currentExportOutputPath = outputPath;
+
+    ExportOverlayTargetPathText().Text(outputPath);
+    ExportOverlaySourceDurationText().Text(formatTimelineDurationText(sourceDuration100ns));
+    ExportOverlayTargetDurationText().Text(formatTimelineDurationText(outputDuration100ns));
+
+    const auto removedDuration100ns{max<int64_t>(0, sourceDuration100ns - outputDuration100ns)};
+    if(sourceDuration100ns > 0){
+        const auto removedPct{(100.0 * removedDuration100ns) / sourceDuration100ns};
+        ExportOverlayDurationDeltaText().Text(
+            removedDuration100ns > 0
+                ? std::format(L"{} removed ({:.1f}% shorter)", formatTimelineDurationText(removedDuration100ns), removedPct)
+                : L"No duration change");
+    }else{
+        ExportOverlayDurationDeltaText().Text(L"-");
+    }
+
+    ExportOverlaySourceSizeText().Text(sourceSizeBytes > 0 ? (formatOverlaySize(sourceSizeBytes) + std::format(L" ({} bytes)", sourceSizeBytes)) : L"-");
+    if(sourceSizeBytes > 0 && sourceDuration100ns > 0){
+        const auto estimatedTargetBytes{
+            static_cast<uint64_t>(llround(static_cast<long double>(sourceSizeBytes) * static_cast<long double>(max<int64_t>(0, outputDuration100ns)) / static_cast<long double>(sourceDuration100ns)))};
+        const auto estimatedSavingsBytes{sourceSizeBytes > estimatedTargetBytes ? (sourceSizeBytes - estimatedTargetBytes) : uint64_t{0}};
+        ExportOverlayEstimatedTargetSizeText().Text(formatOverlaySize(estimatedTargetBytes) + L" (rough estimate)");
+        if(estimatedSavingsBytes > 0){
+            wstring savingsText{std::format(L"{} less", formatOverlaySize(estimatedSavingsBytes))};
+            if(!m_prj.keepAudio() && sourceHasAudio()){
+                const auto audioBytesPerSecond{parseAudioBitrateBytesPerSecond()};
+                const auto keptDuration100ns{max<int64_t>(0, outputDuration100ns)};
+                if(audioBytesPerSecond > 0 && keptDuration100ns > 0){
+                    const auto estimatedDroppedAudioBytes{
+                        static_cast<uint64_t>(llround(
+                            static_cast<long double>(audioBytesPerSecond) * static_cast<long double>(keptDuration100ns) / 10000000.0L))};
+                    if(estimatedDroppedAudioBytes > 0){
+                        savingsText += std::format(
+                            L" (of which {} is dropped audio size)",
+                            formatOverlaySize(estimatedDroppedAudioBytes));
+                    }
+                }
+            }
+            ExportOverlayEstimatedSavingsText().Text(savingsText);
+        }else{
+            ExportOverlayEstimatedSavingsText().Text(L"No size reduction estimate available");
+        }
+    }else{
+        ExportOverlayEstimatedTargetSizeText().Text(L"-");
+        ExportOverlayEstimatedSavingsText().Text(L"-");
+    }
+
+    wstring planDetails{
+        std::format(
+            L"{} export, {} cut block{}, audio {}",
+            adjustedPlan ? L"RAP-adjusted lossless" : L"Lossless",
+            cutBlockCount,
+            cutBlockCount == 1 ? L"" : L"s",
+            m_prj.keepAudio() ? L"kept" : L"removed")};
+    if(effectivePlan){
+        const auto [repositionedMarkers, shrinkSummary]{formatOverlayShrinkSummary(*effectivePlan)};
+        planDetails += std::format(L", {} markers repositioned, {}", repositionedMarkers, shrinkSummary);
+    }
+    if(m_prj.keepAudio() && sourceHasAudio()){
+        planDetails += std::format(L", cross-fade {} ms, volume {}%", m_prj.audioXfadeMs(), m_prj.audioVolumePct());
+    }
+    ExportOverlayPlanDetailsText().Text(planDetails);
+
+    setExportOverlayStagePending(ExportOverlayStage::Video);
+    setExportOverlayStagePending(ExportOverlayStage::Rap);
+    if(m_prj.keepAudio() && sourceHasAudio()){
+        setExportOverlayStagePending(ExportOverlayStage::Audio);
+    }else{
+        setExportOverlayStageSkipped(ExportOverlayStage::Audio, L"Not needed");
+    }
+    setExportOverlayStagePending(ExportOverlayStage::Finalize);
+
+    updateExportOverlayStatus();
+    updateExportOverlayActionButtons();
+}
+
+void MainWindow::setExportOverlayStageState(ExportOverlayStage stage, const wstring& label, std::optional<double> progressPercent, bool active){
+    Controls::ProgressBar progressBar{nullptr};
+    Controls::TextBlock stageLabel{nullptr};
+    switch(stage){
+    case ExportOverlayStage::Rap:
+        progressBar = ExportOverlayRapStageProgressBar();
+        stageLabel = ExportOverlayRapStageLabel();
+        break;
+    case ExportOverlayStage::Video:
+        progressBar = ExportOverlayVideoStageProgressBar();
+        stageLabel = ExportOverlayVideoStageLabel();
+        break;
+    case ExportOverlayStage::Audio:
+        progressBar = ExportOverlayAudioStageProgressBar();
+        stageLabel = ExportOverlayAudioStageLabel();
+        break;
+    case ExportOverlayStage::Finalize:
+        progressBar = ExportOverlayFinalizeStageProgressBar();
+        stageLabel = ExportOverlayFinalizeStageLabel();
+        break;
+    }
+
+    if(!progressBar || !stageLabel){
+        return;
+    }
+
     if(active){
+        if(!m_activeExportStage || *m_activeExportStage != stage){
+            m_activeExportStage = stage;
+            m_activeExportStageStartedAt = chrono::steady_clock::now();
+        }
+        m_activeExportStageProgress = progressPercent;
+    }else if(m_activeExportStage && *m_activeExportStage == stage){
+        m_activeExportStage.reset();
+        m_activeExportStageProgress.reset();
+    }
+
+    stageLabel.Text(label);
+    if(progressPercent.has_value()){
+        progressBar.IsIndeterminate(false);
+        progressBar.Value(clamp(*progressPercent, 0.0, 100.0));
+    }else{
+        progressBar.IsIndeterminate(active);
+        if(!active){
+            progressBar.Value(0);
+        }
+    }
+
+    if(m_isExportInProgress){
+        updateExportStageEta();
+        updateExportOverlayStatus();
+    }
+}
+
+void MainWindow::setExportOverlayStagePending(ExportOverlayStage stage){
+    setExportOverlayStageState(stage, L"Pending", 0.0, false);
+}
+
+void MainWindow::setExportOverlayStageSkipped(ExportOverlayStage stage, const wstring& reason){
+    setExportOverlayStageState(stage, reason, 0.0, false);
+}
+
+void MainWindow::setExportOverlayStageComplete(ExportOverlayStage stage, const wstring& label){
+    setExportOverlayStageState(stage, label, 100.0, false);
+}
+
+void MainWindow::updateExportOverlayStatus(){
+    if(!ExportOverlayProgressBar() || !ExportOverlayProgressLabel() || !ExportOverlayEtaLabel()){
+        return;
+    }
+
+    if(ExportOverlayProgressBar().IsIndeterminate()){
+        ExportOverlayProgressLabel().Text(L"Working...");
+        ExportOverlayEtaLabel().Text(L"");
+        return;
+    }
+
+    const auto value{clamp(ExportOverlayProgressBar().Value(), 0.0, 100.0)};
+    ExportOverlayProgressLabel().Text(std::format(L"{:.1f}% complete", value));
+    ExportOverlayEtaLabel().Text(m_exportEtaText);
+}
+
+void MainWindow::updateExportOverlayActionButtons(){
+    const std::wstring sourcePath{m_currentExportSourcePath.c_str()};
+    const std::wstring projectPath{m_currentExportProjectPath.c_str()};
+    const std::wstring liveProjectPath{m_projectPath.c_str()};
+    const std::wstring outputPath{m_currentExportOutputPath.c_str()};
+    std::error_code sourceEc;
+    std::error_code projectEc;
+    std::error_code outputEc;
+    const bool sourceExists{!sourcePath.empty() && filesystem::exists(sourcePath, sourceEc)};
+    const bool projectMatchesCurrent{
+        !projectPath.empty()
+        && !liveProjectPath.empty()
+        && pathsMatchInsensitive(projectPath, liveProjectPath)};
+    const bool projectExists{projectMatchesCurrent && filesystem::exists(projectPath, projectEc)};
+    const bool outputExists{!outputPath.empty() && filesystem::exists(outputPath, outputEc)};
+    const bool sourceCanBeDeleted{
+        sourceExists && !(m_lastExportSucceeded && !outputPath.empty() && pathsMatchInsensitive(outputPath, sourcePath))};
+    const bool projectCanBeDeleted{
+        projectExists && !(m_lastExportSucceeded && !outputPath.empty() && pathsMatchInsensitive(outputPath, projectPath))};
+
+    ExportOverlayProgressActionsPanel().Visibility(m_exportOverlayHasFinalState ? Visibility::Collapsed : Visibility::Visible);
+    ExportOverlayFinishedActionsPanel().Visibility(m_exportOverlayHasFinalState ? Visibility::Visible : Visibility::Collapsed);
+    ExportOverlayDeleteSourceAndProjectButton().IsEnabled(sourceCanBeDeleted);
+    ExportOverlayDeleteProjectButton().IsEnabled(projectCanBeDeleted);
+    ExportOverlayOpenExportButton().IsEnabled(outputExists);
+
+    if(!sourceExists && !projectExists){
+        ExportOverlayDeleteSourceAndProjectButton().Content(box_value(L"Source and project deleted"));
+    }else if(sourceCanBeDeleted && projectCanBeDeleted){
+        ExportOverlayDeleteSourceAndProjectButton().Content(box_value(L"Delete source and project file"));
+    }else if(!sourceExists && projectExists){
+        ExportOverlayDeleteSourceAndProjectButton().Content(box_value(L"Source file deleted"));
+    }else if(sourceExists && !projectExists){
+        ExportOverlayDeleteSourceAndProjectButton().Content(box_value(L"Delete source file"));
+    }else{
+        ExportOverlayDeleteSourceAndProjectButton().Content(box_value(L"Delete source and project file"));
+    }
+
+    if(!projectExists){
+        ExportOverlayDeleteProjectButton().Content(box_value(L"Project file deleted"));
+    }else{
+        ExportOverlayDeleteProjectButton().Content(box_value(L"Delete project file"));
+    }
+}
+
+void MainWindow::ensureExportEtaTimer(){
+    if(!m_exportEtaTimer){
+        m_exportEtaTimer = DTS{};
+        const TS interval{std::chrono::seconds{2}};
+        m_exportEtaTimer.Interval(interval);
+        m_exportEtaTimer.Tick({this, &MainWindow::exportEtaTimer_Tick});
+    }
+
+    if(!m_exportEtaTimer.IsEnabled()){
+        m_exportEtaTimer.Start();
+    }
+}
+
+void MainWindow::stopExportEtaTimer(){
+    if(m_exportEtaTimer && m_exportEtaTimer.IsEnabled()){
+        m_exportEtaTimer.Stop();
+    }
+}
+
+void MainWindow::exportEtaTimer_Tick(const Control&, const Control&){
+    if(!m_isExportInProgress){
+        stopExportEtaTimer();
+        return;
+    }
+
+    updateExportStageEta();
+    updateExportOverlayStatus();
+}
+
+const wchar_t* MainWindow::exportStageDisplayName(ExportOverlayStage stage) noexcept{
+    switch(stage){
+    case ExportOverlayStage::Rap: return L"RAP";
+    case ExportOverlayStage::Video: return L"Video";
+    case ExportOverlayStage::Audio: return L"Audio";
+    case ExportOverlayStage::Finalize: return L"Finalize";
+    }
+    return L"Export";
+}
+
+std::chrono::seconds MainWindow::estimateStageDuration(ExportOverlayStage stage) const{
+    const auto sourceSeconds{std::max(0.0, static_cast<double>(m_currentExportSourceDuration100ns) / 10'000'000.0)};
+    const auto outputSeconds{std::max(0.0, static_cast<double>(m_currentExportOutputDuration100ns) / 10'000'000.0)};
+    const auto sourceSizeMb{std::max(1.0, static_cast<double>(m_currentExportSourceSizeBytes) / (1024.0 * 1024.0))};
+    const auto hasAudioExport{m_prj.keepAudio() && sourceHasAudio()};
+    const auto isWmv{m_mediaInfo.container == L"WMV"};
+
+    double estimateSeconds{};
+    switch(stage){
+    case ExportOverlayStage::Rap:
+        if(m_currentExportCutBlockCount == 0){
+            estimateSeconds = 0.0;
+        }else if(isWmv){
+            estimateSeconds = std::max(1.0, sourceSeconds * 0.0035);
+        }else{
+            estimateSeconds = std::max(1.0, sourceSeconds * (m_currentExportPlanAdjusted ? 0.023 : 0.0165));
+            if(sourceSizeMb < 512.0){
+                estimateSeconds *= 0.25;
+            }
+        }
+        break;
+    case ExportOverlayStage::Video:
+        if(isWmv){
+            estimateSeconds = std::max(1.0, outputSeconds * 0.011);
+        }else if(hasAudioExport){
+            estimateSeconds = std::max(1.0, outputSeconds * 0.0165);
+        }else{
+            estimateSeconds = std::max(1.0, outputSeconds * 0.032);
+        }
+        break;
+    case ExportOverlayStage::Audio:
+        if(!hasAudioExport){
+            estimateSeconds = 0.0;
+        }else{
+            estimateSeconds = std::max(1.0, outputSeconds * 0.042);
+            if(m_prj.audioXfadeMs() > 0){
+                estimateSeconds *= 1.03;
+            }
+            if(m_prj.audioVolumePct() > 100){
+                estimateSeconds *= 1.05;
+            }
+        }
+        break;
+    case ExportOverlayStage::Finalize:
+        if(isWmv){
+            estimateSeconds = 1.0;
+        }else if(sourceSizeMb < 512.0){
+            estimateSeconds = 1.0;
+        }else{
+            estimateSeconds = 1.0;
+        }
+        break;
+    }
+
+    return chrono::seconds{static_cast<int64_t>(std::max(0.0, ceil(estimateSeconds)))};
+}
+
+void MainWindow::updateExportStageEta(){
+    if(!m_isExportInProgress){
+        m_exportEtaText.clear();
+        return;
+    }
+
+    if(!m_activeExportStage){
+        m_exportEtaText = L"Estimating remaining time...";
+        return;
+    }
+
+    const auto now{chrono::steady_clock::now()};
+    const auto elapsed{chrono::duration_cast<chrono::seconds>(now - m_activeExportStageStartedAt)};
+    chrono::seconds remaining{};
+    if(m_activeExportStageProgress && *m_activeExportStageProgress > 0.0 && *m_activeExportStageProgress < 100.0){
+        const auto totalEstimateSeconds{static_cast<double>(elapsed.count()) / (*m_activeExportStageProgress / 100.0)};
+        remaining = chrono::seconds{(std::max<int64_t>)(0, static_cast<int64_t>(llround(totalEstimateSeconds - elapsed.count())))};
+    }else{
+        const auto estimatedStageDuration{estimateStageDuration(*m_activeExportStage)};
+        remaining = estimatedStageDuration > elapsed ? (estimatedStageDuration - elapsed) : chrono::seconds::zero();
+    }
+
+    m_lastExportEtaRefreshAt = now;
+    m_exportEtaText = std::wstring(exportStageDisplayName(*m_activeExportStage))
+        + L" stage: about "
+        + formatRemainingDurationText(remaining)
+        + L" remaining";
+}
+
+AAction MainWindow::deleteExportArtifactsAsync(bool deleteSource, bool deleteProject){
+    const std::wstring sourcePath{m_currentExportSourcePath.c_str()};
+    const std::wstring projectPath{m_currentExportProjectPath.c_str()};
+    const std::wstring liveProjectPath{m_projectPath.c_str()};
+    const std::wstring outputPath{m_currentExportOutputPath.c_str()};
+
+    std::error_code sourceEc;
+    std::error_code projectEc;
+    const bool projectMatchesCurrent{
+        !projectPath.empty()
+        && !liveProjectPath.empty()
+        && pathsMatchInsensitive(projectPath, liveProjectPath)};
+    const bool canDeleteSource{
+        deleteSource
+        && !sourcePath.empty()
+        && filesystem::exists(sourcePath, sourceEc)
+        && !(m_lastExportSucceeded && !outputPath.empty() && pathsMatchInsensitive(outputPath, sourcePath))};
+    const bool canDeleteProject{
+        deleteProject
+        && projectMatchesCurrent
+        && filesystem::exists(projectPath, projectEc)
+        && !(m_lastExportSucceeded && !outputPath.empty() && pathsMatchInsensitive(outputPath, projectPath))};
+
+    if(!canDeleteSource && !canDeleteProject){
+        co_return;
+    }
+
+    resetProjectState();
+
+    std::vector<std::wstring> failures;
+    if(canDeleteSource){
+        std::wstring failureReason;
+        if(movePathToRecycleBin(sourcePath, failureReason)){
+            removeRecentPath(sourcePath.c_str());
+            m_currentExportSourcePath.clear();
+        }else{
+            failures.push_back(wstring{L"Could not delete source video:\n"} + sourcePath + L"\n\n" + failureReason);
+        }
+    }
+    if(canDeleteProject){
+        std::wstring failureReason;
+        if(movePathToRecycleBin(projectPath, failureReason)){
+            removeRecentPath(projectPath.c_str());
+            m_currentExportProjectPath.clear();
+        }else{
+            failures.push_back(wstring{L"Could not delete project file:\n"} + projectPath + L"\n\n" + failureReason);
+        }
+    }
+
+    updateExportOverlayActionButtons();
+
+    if(failures.empty()){
+        if(canDeleteSource && canDeleteProject){
+            setStatusMessage(L"Source video and project file deleted");
+        }else{
+            setStatusMessage(L"Project file deleted");
+        }
+        clearErrorMessage();
+        co_return;
+    }
+
+    setStatusMessage(L"One or more files could not be deleted");
+    clearErrorMessage();
+
+    std::wstring failureText;
+    for(size_t i{}; i < failures.size(); ++i){
+        if(i != 0){
+            failureText += L"\n\n";
+        }
+        failureText += failures[i];
+    }
+    co_await showInfoDialogAsync(L"Delete failed", failureText.c_str());
+}
+
+void MainWindow::setOperationInProgress(bool active, bool indeterminate){
+    const auto exportOverlayActive{active && m_isExportInProgress};
+    if(active){
+        if(exportOverlayActive){
+            ensureExportEtaTimer();
+        }
         OperationProgressBar().IsIndeterminate(indeterminate);
         if(!indeterminate){
             OperationProgressBar().Value(0);
         }
+        if(exportOverlayActive){
+            ExportOverlayProgressBar().IsIndeterminate(indeterminate);
+            if(!indeterminate){
+                ExportOverlayProgressBar().Value(0);
+            }
+            updateExportOverlayStatus();
+        }
     }else{
         OperationProgressBar().IsIndeterminate(false);
+        ExportOverlayProgressBar().IsIndeterminate(false);
+        stopExportEtaTimer();
+        m_activeExportStage.reset();
+        m_activeExportStageProgress.reset();
+        m_exportEtaText.clear();
+        m_lastExportEtaProgress.reset();
     }
-    OperationProgressBar().Visibility(active ? Visibility::Visible : Visibility::Collapsed);
-    CancelExportButton().Visibility((active && m_isExportInProgress) ? Visibility::Visible : Visibility::Collapsed);
-    CancelExportButton().IsEnabled(active && m_isExportInProgress);
+    OperationProgressBar().Visibility((active && !m_isExportInProgress) ? Visibility::Visible : Visibility::Collapsed);
+    CancelExportButton().Visibility(Visibility::Collapsed);
+    CancelExportButton().IsEnabled(false);
+    ExportOverlay().Visibility((exportOverlayActive || m_exportOverlayHasFinalState) ? Visibility::Visible : Visibility::Collapsed);
+    ExportOverlayCancelButton().IsEnabled(active && m_isExportInProgress && !m_cancelExportRequested);
+    updateExportOverlayActionButtons();
 }
 
 void MainWindow::setOperationProgress(double percent){
+    const auto clampedPercent{clamp(percent, 0.0, 100.0)};
     OperationProgressBar().IsIndeterminate(false);
-    OperationProgressBar().Value(clamp(percent, 0.0, 100.0));
+    OperationProgressBar().Value(clampedPercent);
+    if(m_isExportInProgress){
+        updateExportStageEta();
+        ExportOverlayProgressBar().IsIndeterminate(false);
+        ExportOverlayProgressBar().Value(clampedPercent);
+        updateExportOverlayStatus();
+    }
+}
+
+void MainWindow::refreshExportEta(double percent){
+    (void)percent;
+    updateExportStageEta();
+    return;
+
+    if(!m_isExportInProgress){
+        m_exportEtaText.clear();
+        return;
+    }
+
+    const auto clampedPercent{clamp(percent, 0.0, 100.0)};
+    if(clampedPercent <= 0.0){
+        m_exportEtaText = L"Estimating remaining time...";
+        return;
+    }
+    if(clampedPercent >= 100.0){
+        m_exportEtaText.clear();
+        return;
+    }
+
+    const auto now{chrono::steady_clock::now()};
+    if(m_lastExportEtaProgress && !m_exportEtaText.empty() && (now - m_lastExportEtaRefreshAt) < chrono::seconds(2)){
+        return;
+    }
+
+    const auto elapsed{chrono::duration_cast<chrono::seconds>(now - m_currentExportStartedAt)};
+    if(elapsed <= chrono::seconds::zero()){
+        m_exportEtaText = L"Estimating remaining time...";
+        return;
+    }
+
+    const auto totalEstimateSeconds{static_cast<double>(elapsed.count()) / (clampedPercent / 100.0)};
+    const auto remainingSeconds{(std::max<int64_t>)(0, static_cast<int64_t>(llround(totalEstimateSeconds - elapsed.count())))};
+    m_lastExportEtaRefreshAt = now;
+    m_lastExportEtaProgress = clampedPercent;
+    m_exportEtaText = L"About " + formatRemainingDurationText(chrono::seconds{remainingSeconds}) + L" remaining";
+}
+
+std::wstring MainWindow::formatRemainingDurationText(std::chrono::seconds remaining){
+    const auto totalSeconds{(std::max<int64_t>)(0, remaining.count())};
+    const auto hours{totalSeconds / 3600};
+    const auto minutes{(totalSeconds % 3600) / 60};
+    const auto seconds{totalSeconds % 60};
+
+    if(hours > 0){
+        return std::format(L"{}h {}m", hours, minutes);
+    }
+    if(minutes > 0){
+        return std::format(L"{}m {}s", minutes, seconds);
+    }
+    return std::format(L"{}s", seconds);
 }
 
 void MainWindow::cancelExportButton_Click(const Control&, const REArgs&){
@@ -3381,7 +4344,44 @@ void MainWindow::cancelExportButton_Click(const Control&, const REArgs&){
 
     m_cancelExportRequested = true;
     setStatusMessage(L"Canceling export...");
+    ExportOverlayCancelButton().IsEnabled(false);
+}
+
+void MainWindow::exportOverlayCloseButton_Click(const Control&, const REArgs&){
+    m_exportOverlayHasFinalState = false;
     setOperationInProgress(false);
+}
+
+AAction MainWindow::exportOverlayOpenExportButton_Click(const Control&, const REArgs&){
+    if(m_currentExportOutputPath.empty()){
+        co_return;
+    }
+
+    StorageFile file{nullptr};
+    bool fileMissing{};
+    try{
+        file = co_await StorageFile::GetFileFromPathAsync(m_currentExportOutputPath);
+    }catch(...){
+        fileMissing = true;
+    }
+
+    if(fileMissing || !file){
+        co_await showInfoDialogAsync(L"Open exported file", L"The exported file could not be found.");
+        co_return;
+    }
+
+    const auto launched{co_await Launcher::LaunchFileAsync(file)};
+    if(!launched){
+        co_await showInfoDialogAsync(L"Open exported file", L"Windows could not open the exported file with a default app.");
+    }
+}
+
+AAction MainWindow::exportOverlayDeleteSourceAndProjectButton_Click(const Control&, const REArgs&){
+    co_await deleteExportArtifactsAsync(true, true);
+}
+
+AAction MainWindow::exportOverlayDeleteProjectButton_Click(const Control&, const REArgs&){
+    co_await deleteExportArtifactsAsync(false, true);
 }
 
 AAction MainWindow::showOptionsDialogAsync(){
@@ -3404,10 +4404,25 @@ AAction MainWindow::showOptionsDialogAsync(){
     projectsCount.SpinButtonPlacementMode(Controls::NumberBoxSpinButtonPlacementMode::Inline);
     projectsCount.Value(m_maxRecentProjects);
 
+    Controls::CheckBox deleteAfterExportCheckBox{};
+    deleteAfterExportCheckBox.Content(box_value(L"Delete source video and project file after successful export"));
+    deleteAfterExportCheckBox.IsChecked(m_deleteSourceAndProjectAfterExport);
+
+    Controls::CheckBox autoReevaluateCutMarkersOnPlacementCheckBox{};
+    autoReevaluateCutMarkersOnPlacementCheckBox.Content(box_value(L"Auto-reevaluate cut markers when placing them"));
+    autoReevaluateCutMarkersOnPlacementCheckBox.IsChecked(m_autoReevaluateCutMarkersOnPlacement);
+
+    Controls::CheckBox generateExportTimeReportCheckBox{};
+    generateExportTimeReportCheckBox.Content(box_value(L"Copy export time report to clipboard after export"));
+    generateExportTimeReportCheckBox.IsChecked(m_generateExportTimeReport);
+
     panel.Children().Append(videosLabel);
     panel.Children().Append(videosCount);
     panel.Children().Append(projectsLabel);
     panel.Children().Append(projectsCount);
+    panel.Children().Append(deleteAfterExportCheckBox);
+    panel.Children().Append(autoReevaluateCutMarkersOnPlacementCheckBox);
+    panel.Children().Append(generateExportTimeReportCheckBox);
 
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(Content().XamlRoot());
@@ -3423,6 +4438,9 @@ AAction MainWindow::showOptionsDialogAsync(){
 
     m_maxRecentVideos = static_cast<uint32_t>(clamp(static_cast<int>(lround(videosCount.Value())), 1, 20));
     m_maxRecentProjects = static_cast<uint32_t>(clamp(static_cast<int>(lround(projectsCount.Value())), 1, 20));
+    m_deleteSourceAndProjectAfterExport = deleteAfterExportCheckBox.IsChecked().GetBoolean();
+    m_autoReevaluateCutMarkersOnPlacement = autoReevaluateCutMarkersOnPlacementCheckBox.IsChecked().GetBoolean();
+    m_generateExportTimeReport = generateExportTimeReportCheckBox.IsChecked().GetBoolean();
 
     if(m_recentVideos.size() > m_maxRecentVideos){
         m_recentVideos.resize(m_maxRecentVideos);
@@ -3434,6 +4452,62 @@ AAction MainWindow::showOptionsDialogAsync(){
     refreshRecentVideosMenu();
     refreshRecentProjectsMenu();
     saveAppSettings();
+}
+
+AAction MainWindow::promptDeleteSourceAndProjectAfterExportAsync(const std::wstring& exportedPath){
+    const std::wstring sourcePath{m_currentExportSourcePath.c_str()};
+    const std::wstring projectPath{m_currentExportProjectPath.c_str()};
+    const std::wstring liveProjectPath{m_projectPath.c_str()};
+    const std::wstring outputPath{m_currentExportOutputPath.c_str()};
+    const std::wstring effectiveOutputPath{!exportedPath.empty() ? exportedPath : outputPath};
+
+    std::error_code sourceEc;
+    std::error_code projectEc;
+    const bool projectMatchesCurrent{
+        !projectPath.empty()
+        && !liveProjectPath.empty()
+        && pathsMatchInsensitive(projectPath, liveProjectPath)};
+    const bool canDeleteSource{
+        !sourcePath.empty()
+        && filesystem::exists(sourcePath, sourceEc)
+        && !(m_lastExportSucceeded && !effectiveOutputPath.empty() && pathsMatchInsensitive(effectiveOutputPath, sourcePath))};
+    const bool canDeleteProject{
+        projectMatchesCurrent
+        && filesystem::exists(projectPath, projectEc)
+        && !(m_lastExportSucceeded && !effectiveOutputPath.empty() && pathsMatchInsensitive(effectiveOutputPath, projectPath))};
+
+    if(!canDeleteSource && !canDeleteProject){
+        co_return;
+    }
+
+    const wchar_t* dialogTitle{
+        canDeleteSource && canDeleteProject
+            ? L"Delete source video and project file?"
+            : (canDeleteSource ? L"Delete source video?" : L"Delete project file?")};
+    const wchar_t* dialogContent{
+        canDeleteSource && canDeleteProject
+            ? L"The export completed successfully.\n\nDelete the original source video and the project file now?"
+            : (canDeleteSource
+                ? L"The export completed successfully.\n\nDelete the original source video now?"
+                : L"The export completed successfully.\n\nDelete the project file now?")};
+    const wchar_t* primaryButtonText{
+        canDeleteSource && canDeleteProject
+            ? L"Delete both"
+            : (canDeleteSource ? L"Delete source" : L"Delete project")};
+
+    Controls::ContentDialog dialog{};
+    dialog.XamlRoot(Content().XamlRoot());
+    dialog.Title(box_value(dialogTitle));
+    dialog.Content(box_value(dialogContent));
+    dialog.PrimaryButtonText(primaryButtonText);
+    dialog.CloseButtonText(L"Keep files");
+    dialog.DefaultButton(Controls::ContentDialogButton::Close);
+
+    if((co_await dialog.ShowAsync()) != Controls::ContentDialogResult::Primary){
+        co_return;
+    }
+
+    co_await deleteExportArtifactsAsync(canDeleteSource, canDeleteProject);
 }
 
 wstring MainWindow::guidToCodecName(const GUID& subtype, bool isVideo){
@@ -3466,237 +4540,16 @@ wstring MainWindow::guidToCodecName(const GUID& subtype, bool isVideo){
 }
 
 MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
-    MediaInspectionResult result{ .keyFrameSummary       = L"unknown",
-                                  .keyFrameInterval      = L"unknown",
-                                  .allSamplesIndependent = L"unknown",
-                                  .maxKeyFrameSpacing    = L"unknown" };
-    const auto* formatProfile{tryGetFormatProfileForPath(filePath)};
-    if(!formatProfile){
+    auto media{createVideoSource(filePath)};
+    MediaInspectionResult result{};
+    if(!media){
         result.errorMessage = L"Container not supported. Only MP4, MOV, AVI (H.264 only), WEBM (VP9 only), and WMV (VC-1 only) are allowed";
         return result;
     }
 
-    MFLifetime mf{};
-
-    com_ptr<IMFSourceReader> reader;
-    check_hresult(MFCreateSourceReaderFromURL(filePath.c_str(), nullptr, reader.put()));
-
-    uint32_t videoCount{};
-    uint32_t audioCount{};
-    bool hasText{};
-    GUID videoSubtype{GUID_NULL};
-    GUID audioSubtype{GUID_NULL};
-    uint32_t width{};
-    uint32_t height{};
-    uint32_t fpsNum{};
-    uint32_t fpsDen{};
-    uint32_t videoBitrate{};
-    uint32_t audioBitrate{};
-    constexpr auto invalidStreamIndex{numeric_limits<DWORD>::max()};
-    auto videoStreamIndex{invalidStreamIndex};
-    uint32_t allSamplesIndependent{};
-    uint32_t maxKeyFrameSpacing{};
-    com_ptr<IMFMediaType> selectedVideoType;
-
-    for(DWORD streamIndex{0};; ++streamIndex){
-        com_ptr<IMFMediaType> type;
-        const HRESULT hr{reader->GetNativeMediaType(streamIndex, 0, type.put())};
-        if(hr == MF_E_INVALIDSTREAMNUMBER){
-            break;
-        }
-        check_hresult(hr);
-
-        GUID major{GUID_NULL};
-        GUID subtype{GUID_NULL};
-        check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
-        check_hresult(type->GetGUID(MF_MT_SUBTYPE, &subtype));
-
-        if(major == MFMediaType_Video){
-            ++videoCount;
-            videoSubtype = subtype;
-            videoStreamIndex = streamIndex;
-            MFGetAttributeSize(type.get(), MF_MT_FRAME_SIZE, &width, &height);
-            MFGetAttributeRatio(type.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
-            (void)type->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
-            if(SUCCEEDED(type->GetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, &allSamplesIndependent))){
-                result.allSamplesIndependent = allSamplesIndependent != 0 ? L"yes" : L"no";
-            }
-            if(SUCCEEDED(type->GetUINT32(MF_MT_MAX_KEYFRAME_SPACING, &maxKeyFrameSpacing))){
-                result.maxKeyFrameSpacing = to_wstring(maxKeyFrameSpacing) + L" frames";
-            }
-        }else if(major == MFMediaType_Audio){
-            ++audioCount;
-            audioSubtype = subtype;
-            (void)type->GetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, &audioBitrate);
-        }else{
-            hasText = true;
-        }
-    }
-
-    com_ptr<IMFMediaType> aviNativeH264Type;
-    if(formatProfile->requiresAviValidation){
-        if(videoCount != 1){
-            result.errorMessage = BuildUnsupportedAviReason(L"Expected exactly one video stream");
-            return result;
-        }
-        if(!IsAviH264StreamCopyCandidate(reader, videoStreamIndex, aviNativeH264Type, result.errorMessage)){
-            return result;
-        }
-
-        GUID aviSubtype{GUID_NULL};
-        check_hresult(aviNativeH264Type->GetGUID(MF_MT_SUBTYPE, &aviSubtype));
-        if(aviSubtype != MFVideoFormat_H264){
-            if(aviSubtype == MFVideoFormat_HEVC || aviSubtype == MFVideoFormat_H265){
-                result.errorMessage = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video. This file uses HEVC");
-            }else{
-                result.errorMessage = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video. This file uses " + guidToVideoCodecName(aviSubtype));
-            }
-            return result;
-        }
-
-        if(!validateAviSampleTimesAndSyncFlags(reader, videoStreamIndex, aviNativeH264Type, result.errorMessage)){
-            return result;
-        }
-
-        check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, aviNativeH264Type.get()));
-        videoSubtype = MFVideoFormat_H264;
-        MFGetAttributeSize(aviNativeH264Type.get(), MF_MT_FRAME_SIZE, &width, &height);
-        MFGetAttributeRatio(aviNativeH264Type.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
-        (void)aviNativeH264Type->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
-        selectedVideoType = aviNativeH264Type;
-    }
-
-    if(videoStreamIndex != invalidStreamIndex){
-        if(!selectedVideoType){
-            selectedVideoType = chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, getAllowedVideoSubtypeVector(*formatProfile));
-        }
-
-        if(selectedVideoType){
-            (void)reader->SetCurrentMediaType(videoStreamIndex, nullptr, selectedVideoType.get());
-
-            MFGetAttributeSize(selectedVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
-
-            check_hresult(selectedVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
-            MFGetAttributeRatio(selectedVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
-            (void)selectedVideoType->GetUINT32(MF_MT_AVG_BITRATE, &videoBitrate);
-            if(SUCCEEDED(selectedVideoType->GetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, &allSamplesIndependent))){
-                result.allSamplesIndependent = allSamplesIndependent != 0 ? L"yes" : L"no";
-            }
-            if(SUCCEEDED(selectedVideoType->GetUINT32(MF_MT_MAX_KEYFRAME_SPACING, &maxKeyFrameSpacing))){
-                result.maxKeyFrameSpacing = to_wstring(maxKeyFrameSpacing) + L" frames";
-            }
-        }else{
-            switch(formatProfile->id){
-            case SourceFormatId::Mp4:
-            case SourceFormatId::Mov:
-                result.errorMessage = L"No stream-copy video media type found. Require H.264 or HEVC in MP4/MOV.";
-                break;
-            case SourceFormatId::Webm:
-                result.errorMessage = L"No stream-copy video media type found. Require VP9 in WebM.";
-                break;
-            case SourceFormatId::Wmv:
-                result.errorMessage = L"No stream-copy video media type found. Require VC-1 in WMV.";
-                break;
-            default:
-                result.errorMessage = L"No stream-copy video media type found.";
-                break;
-            }
-            return result;
-        }
-    }
-
-    if(videoCount != 1){
-        result.errorMessage = L"Expected exactly one video stream";
-        return result;
-    }
-    if(audioCount > 1){
-        result.errorMessage = L"Multiple audio streams are not supported";
-        return result;
-    }
-    if(hasText){
-        result.errorMessage = L"Subtitle/text streams are not supported";
-        return result;
-    }
-    if(!formatAllowsVideoSubtype(*formatProfile, videoSubtype)){
-        result.errorMessage = L"Video codec not supported for this container";
-        return result;
-    }
-
-    if(formatProfile->id == SourceFormatId::Mp4){
-        result.container = L"MP4";
-    }else if(formatProfile->id == SourceFormatId::Mov){
-        result.container = L"MOV";
-    }else if(formatProfile->id == SourceFormatId::Avi){
-        result.container = L"AVI";
-    }else if(formatProfile->id == SourceFormatId::Webm){
-        result.container = L"WEBM";
-    }else if(formatProfile->id == SourceFormatId::Wmv){
-        result.container = L"WMV";
-    }else{
-        result.errorMessage = L"Container not supported. Only MP4, MOV, AVI (H.264 only), WEBM (VP9 only), and WMV (VC-1 only) are allowed";
-        return result;
-    }
-
-    if(videoSubtype == MFVideoFormat_HEVC || videoSubtype == MFVideoFormat_H265){
-        if(!hasDecoderForSubtype(videoSubtype)){
-            result.errorMessage = L"HEVC support missing (install HEVC Video Extensions)";
-            return result;
-        }
-    }else if(!hasDecoderForSubtype(videoSubtype)){
-        result.errorMessage = L"No decoder available";
-        return result;
-    }
-
-    PROPVARIANT duration{};
-    PropVariantInit(&duration);
-    if(SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION, &duration)) && duration.vt == VT_UI8){
-        const auto seconds {duration.uhVal.QuadPart / 10'000'000.0};
-        result.duration = std::format(L"{:.3f} s", seconds);
-    }
-    PropVariantClear(&duration);
-
-    result.videoCodec = guidToCodecName(videoSubtype, true);
-    result.audioCodec = audioCount == 0 ? L"none" : guidToCodecName(audioSubtype, false);
-    result.resolution = width > 0 ? (to_wstring(width) + L"x" + to_wstring(height)) : L"-";
-    result.frameRate = {fpsNum, fpsDen};
-    result.videoBitrate = videoBitrate > 0 ? (to_wstring(videoBitrate / 1000) + L" kbps") : L"-";
-    result.audioBitrate = audioBitrate > 0 ? (to_wstring((audioBitrate * 8) / 1000) + L" kbps") : L"none";
-    if(videoStreamIndex != invalidStreamIndex){
-        PROPVARIANT startPos{};
-        startPos.vt = VT_I8;
-        startPos.hVal.QuadPart = 0;
-        check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
-        PropVariantClear(&startPos);
-        const auto cadence{analyzeKeyFrameCadence(reader.get(), videoStreamIndex, fpsNum, fpsDen)};
-        result.keyFrameSummary = cadence.summary;
-        result.keyFrameInterval = cadence.interval;
-    }
-
-    result.openSupport = CapabilityState::Supported;
-    result.previewSupport = CapabilityState::Supported;
-    result.supportedExportExtensions = probeSupportedExportExtensions(*formatProfile, selectedVideoType);
-    result.defaultExportExtension = chooseDefaultExportExtension(*formatProfile, filePath, result.supportedExportExtensions);
-    result.losslessExportSupport = result.supportedExportExtensions.empty() ? CapabilityState::Unsupported : CapabilityState::Supported;
-    result.audioExportSupport = audioCount == 0
-        ? CapabilityState::NotApplicable
-        : (formatProfile->audioExportPolicy == AudioExportPolicy::Allowed ? CapabilityState::Supported : CapabilityState::Unsupported);
-
-    if(formatProfile->id == SourceFormatId::Avi && audioCount > 0){
-        result.audioDisabledForThisSource = true;
-        result.audioDisabledReason = L"AVI audio passthrough is disabled in v1. Export will keep video only";
-    }
-    if(formatProfile->id == SourceFormatId::Webm && audioCount > 0){
-        result.audioDisabledForThisSource = true;
-        result.audioDisabledReason = L"WebM export currently keeps VP9 video only; audio passthrough is not implemented yet";
-    }
-    if(formatProfile->id == SourceFormatId::Wmv && audioCount > 0){
-        result.audioDisabledForThisSource = true;
-        result.audioDisabledReason = L"WMV export currently keeps VC-1 video only; audio passthrough is disabled for now";
-    }
-
+    result = media->inspect();
     result.sourceEncodedBy = readShellStringProperty(filePath, PKEY_Media_EncodedBy);
     result.sourceComment = readShellStringProperty(filePath, PKEY_Comment);
-    result.isValid = true;
     return result;
 }
 
@@ -3772,6 +4625,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     inspected.sourceCreated = formatDateTimeText(file.DateCreated());
     inspected.sourceModified = formatDateTimeText(basicProperties.DateModified());
     m_mediaInfo = inspected;
+    m_media = createVideoSource(file.Path().c_str());
     m_cachedRapSourcePath.clear();
     m_cachedRapTimes100ns.clear();
     m_cachedRapLookupAttempted = false;
@@ -3780,6 +4634,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_hasTimelineRenderCompleted = false;
     m_pendingReevaluateAfterRapLookup = false;
     m_pendingNudgeDirectionAfterRapLookup = 0;
+    m_projectPath.clear();
 
     wstring status{L"Loaded: "};
     status += file.Name().c_str();
@@ -4052,8 +4907,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     }
 
     const wstring sourcePath{m_prj.videoFile().Path().c_str()};
-    const auto* formatProfile{tryGetFormatProfileForPath(sourcePath)};
-    if(!formatProfile){
+    if(!m_media){
         co_await showInfoDialogAsync(L"Export video", L"This source container is not supported for export.");
         co_return;
     }
@@ -4067,9 +4921,122 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     }
 
     const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
+    const filesystem::path sourceFsPath{sourcePath};
+    std::error_code sourceSizeEc;
+    const auto sourceSizeBytes{filesystem::file_size(sourceFsPath, sourceSizeEc)};
+    const auto requestedOutputDuration100ns{m_prj.outputDuration100ns()};
+    const auto requestedCutRanges100ns{m_prj.buildCutRanges100ns()};
+    const auto requestedCutBlockCount{requestedCutRanges100ns.size()};
+
+    auto makeExportComment = [&](const filesystem::path& sourcePathForComment) -> wstring {
+        const auto now{chrono::system_clock::now()};
+        const auto nowTimeT{chrono::system_clock::to_time_t(now)};
+        tm localTime{};
+        const auto CREATED_BY{L"created by ClipRazor from "};
+        if(localtime_s(&localTime, &nowTimeT) != 0){
+            return CREATED_BY + sourcePathForComment.filename().wstring();
+        }
+
+        wchar_t timestamp[64]{};
+        if(wcsftime(timestamp, size(timestamp), L"%Y-%m-%d %H:%M:%S", &localTime) == 0){
+            return CREATED_BY + sourcePathForComment.filename().wstring();
+        }
+
+        return CREATED_BY + sourcePathForComment.filename().wstring() + L" on " + timestamp;
+    };
+    const auto outputPath{
+        pickExportOutputPath(
+            sourceFsPath,
+            m_mediaInfo.supportedExportExtensions,
+            m_mediaInfo.defaultExportExtension.c_str(),
+            requestedOutputDuration100ns,
+            getWindowHandle())};
+    if(outputPath.empty()){
+        co_return;
+    }
+
+    if(pathsMatchInsensitive(outputPath, sourcePath)){
+        Controls::ContentDialog overwriteDialog{};
+        overwriteDialog.XamlRoot(Content().XamlRoot());
+        overwriteDialog.Title(box_value(L"Overwrite source video?"));
+        overwriteDialog.Content(box_value(
+            L"The selected export target is the same as the source video.\n\n"
+            L"llvc will export to a temporary file first, then replace the source file only if export succeeds.\n\n"
+            L"Continue?"));
+        overwriteDialog.PrimaryButtonText(L"Overwrite source");
+        overwriteDialog.CloseButtonText(L"Cancel");
+        overwriteDialog.DefaultButton(Controls::ContentDialogButton::Close);
+
+        if((co_await overwriteDialog.ShowAsync()) != Controls::ContentDialogResult::Primary){
+            co_return;
+        }
+    }
+
+    const auto temporaryOutputPath{buildTemporaryExportPath(outputPath)};
+    if(temporaryOutputPath.empty()){
+        co_await showInfoDialogAsync(L"Export failed", L"Could not create a temporary export file path.");
+        co_return;
+    }
+
+    m_isExportInProgress = true;
+    m_cancelExportRequested = false;
+    m_currentExportStartedAt = chrono::steady_clock::now();
+    m_lastExportEtaRefreshAt = {};
+    m_lastExportEtaProgress.reset();
+    m_exportEtaText = L"Estimating remaining time...";
+    ++m_timelineRenderVersion;
+
+    configureExportOverlay(
+        outputPath,
+        sourceDuration100ns,
+        requestedOutputDuration100ns,
+        sourceSizeEc ? 0 : sourceSizeBytes,
+        false,
+        requestedCutBlockCount,
+        nullptr);
+    setStatusMessage(L"Reevaluating cut plan to RAP frames...");
+    clearErrorMessage();
+    setOperationInProgress(true, false);
+    setOperationProgress(0);
+    ExportOverlayProgressBar().IsIndeterminate(false);
+    ExportOverlayProgressBar().Value(0);
+    updateExportOverlayStatus();
+    setExportOverlayStageState(ExportOverlayStage::Rap, L"In progress", 0.0, true);
+    const auto exportOverallStartedAt{chrono::steady_clock::now()};
+
     if(projectHasRequestedCuts()){
-        const auto rapReady{co_await ensureRapMarkersAvailableAsync(L"Analyzing RAP-aligned cut plan...")};
+        const auto rapReady{co_await ensureRapMarkersAvailableAsync(
+            L"Reevaluating cut plan to RAP frames...",
+            [weak = get_weak()](double pct){
+                if(const auto strong = weak.get()){
+                    strong->DispatcherQueue().TryEnqueue([uiWeak = strong->get_weak(), pct](){
+                        if(const auto ui = uiWeak.get()){
+                            const auto overallPct{(pct * 5.0) / 100.0};
+                            ui->setExportOverlayStageState(ExportOverlayStage::Rap, L"In progress", pct, true);
+                            ui->OperationProgressBar().IsIndeterminate(false);
+                            ui->OperationProgressBar().Value(overallPct);
+                            ui->ExportOverlayProgressBar().IsIndeterminate(false);
+                            ui->ExportOverlayProgressBar().Value(overallPct);
+                            ui->updateExportOverlayStatus();
+                        }
+                    });
+                }
+            })};
         if(!rapReady){
+            if(m_cancelExportRequested){
+                m_isExportInProgress = false;
+                m_lastExportSucceeded = false;
+                m_exportOverlayHasFinalState = true;
+                setExportOverlayStageState(ExportOverlayStage::Rap, L"Canceled", 0.0, false);
+                setStatusMessage(L"Export canceled");
+                clearErrorMessage();
+                setOperationInProgress(false);
+                updateExportOverlayActionButtons();
+                co_return;
+            }
+            m_isExportInProgress = false;
+            setExportOverlayStageState(ExportOverlayStage::Rap, L"Failed", 0.0, false);
+            setOperationInProgress(false);
             setStatusMessage(L"Could not build a RAP-aligned cut plan for the current source");
             refreshStatusInfoSection();
             refreshVideoDetailsPanel();
@@ -4078,13 +5045,48 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         }
     }
 
+    if(projectHasRequestedCuts()){
+        if(m_cancelExportRequested){
+            m_isExportInProgress = false;
+            m_lastExportSucceeded = false;
+            m_exportOverlayHasFinalState = true;
+            setExportOverlayStageState(ExportOverlayStage::Rap, L"Canceled", 0.0, false);
+            setStatusMessage(L"Export canceled");
+            clearErrorMessage();
+            setOperationInProgress(false);
+            updateExportOverlayActionButtons();
+            co_return;
+        }
+
+        if(!reevaluateClearCutMarkers(false)){
+            m_isExportInProgress = false;
+            m_lastExportSucceeded = false;
+            m_exportOverlayHasFinalState = true;
+            setExportOverlayStageState(ExportOverlayStage::Rap, m_cancelExportRequested ? L"Canceled" : L"Failed", 0.0, false);
+            setStatusMessage(m_cancelExportRequested ? L"Export canceled" : L"Could not build a RAP-aligned cut plan for the current source");
+            clearErrorMessage();
+            setOperationInProgress(false);
+            updateExportOverlayActionButtons();
+            if(!m_cancelExportRequested){
+                co_await showInfoDialogAsync(L"Export blocked", L"Could not build a RAP-aligned cut plan for the current source.");
+            }
+            co_return;
+        }
+    }
+
     const auto effectivePlanOpt{tryBuildEffectiveExportPlan()};
     if(!effectivePlanOpt){
+        m_isExportInProgress = false;
+        setExportOverlayStageState(ExportOverlayStage::Rap, L"Failed", 0.0, false);
+        setOperationInProgress(false);
         co_await showInfoDialogAsync(L"Export blocked", L"The export plan is not ready yet. Wait for the RAP analysis to finish and try again.");
         co_return;
     }
     const auto effectivePlan{*effectivePlanOpt};
     if(effectivePlan.emptyAfterAlignment){
+        m_isExportInProgress = false;
+        setExportOverlayStageState(ExportOverlayStage::Rap, L"No safe range", 0.0, false);
+        setOperationInProgress(false);
         setStatusMessage(L"Export blocked: no safe RAP-aligned cut range");
         refreshStatusInfoSection();
         refreshVideoDetailsPanel();
@@ -4093,340 +5095,197 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             L"The current cut selection does not contain a safe RAP-aligned cut range. Adjust markers or reevaluate clear cut markers first.");
         co_return;
     }
-    if(!co_await confirmAdjustedExportPlanAsync(effectivePlan)){
-        setStatusMessage(L"Export canceled");
-        clearErrorMessage();
-        refreshStatusInfoSection();
-        co_return;
-    }
+    const auto rapStageDurationMs{chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - exportOverallStartedAt)};
 
-    MFLifetime mf{};
     const auto outputDuration100ns{effectivePlan.effectiveOutputDuration100ns};
     const auto effectiveCutRanges100ns{effectivePlan.effectiveCutRanges100ns};
-
-    const filesystem::path sourceFsPath{sourcePath};
-
-    auto makeExportComment = [&](const filesystem::path& sourcePathForComment) -> wstring {
-        const auto now{chrono::system_clock::now()};
-        const auto nowTimeT{chrono::system_clock::to_time_t(now)};
-        tm localTime{};
-        if(localtime_s(&localTime, &nowTimeT) != 0){
-            return L"created by llvc from " + sourcePathForComment.filename().wstring();
-        }
-
-        wchar_t timestamp[64]{};
-        if(wcsftime(timestamp, size(timestamp), L"%Y-%m-%d %H:%M:%S", &localTime) == 0){
-            return L"created by llvc from " + sourcePathForComment.filename().wstring();
-        }
-
-        return L"created by llvc from " + sourcePathForComment.filename().wstring() + L" on " + timestamp;
-    };
-    const auto outputPath{
-        pickExportOutputPath(
-            sourceFsPath,
-            m_mediaInfo.supportedExportExtensions,
-            m_mediaInfo.defaultExportExtension.c_str(),
-            outputDuration100ns,
-            getWindowHandle())};
-    if(outputPath.empty()){
-        co_return;
-    }
-
-    m_isExportInProgress = true;
-    m_cancelExportRequested = false;
-    m_resumeTimelineRenderAfterExport = m_prj.videoFile() && m_timelineDurationSeconds > 0;
-    ++m_timelineRenderVersion;
-
+    configureExportOverlay(
+        outputPath,
+        sourceDuration100ns,
+        outputDuration100ns,
+        sourceSizeEc ? 0 : sourceSizeBytes,
+        effectivePlan.materiallyDifferent,
+        effectiveCutRanges100ns.size(),
+        &effectivePlan);
+    setExportOverlayStageComplete(ExportOverlayStage::Rap, effectivePlan.materiallyDifferent ? L"Adjusted" : L"Done");
+    setOperationProgress(5.0);
     setStatusMessage(L"Exporting...");
-    clearErrorMessage();
-    setOperationInProgress(true, true);
+
+    winrt::apartment_context uiThread;
+    MFLifetime mf{};
 
     winrt::hstring exportErrorMessage{};
     auto exportSucceeded{false};
     auto exportCanceled{false};
     const auto exportComment{makeExportComment(sourceFsPath)};
-
-    winrt::apartment_context uiThread;
+    std::optional<chrono::milliseconds> videoStageDurationMs;
+    std::optional<chrono::milliseconds> audioStageDurationMs;
+    std::optional<chrono::milliseconds> finalizeStageDurationMs;
     co_await winrt::resume_background();
 
     try{
-        com_ptr<IMFAttributes> readerAttributes;
-        check_hresult(MFCreateAttributes(readerAttributes.put(), 1));
-        check_hresult(readerAttributes->SetUINT32(MF_READWRITE_DISABLE_CONVERTERS, TRUE));
-
-        com_ptr<IMFSourceReader> reader;
-        check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), readerAttributes.get(), reader.put()));
-
-        constexpr auto invalidStream{numeric_limits<DWORD>::max()};
-        auto videoStreamIndex{invalidStream};
-        for(DWORD streamIndex{0};; ++streamIndex){
-            com_ptr<IMFMediaType> type;
-            const auto hr{reader->GetNativeMediaType(streamIndex, 0, type.put())};
-            if(hr == MF_E_INVALIDSTREAMNUMBER){
-                break;
-            }
-            check_hresult(hr);
-
-            GUID major{GUID_NULL};
-            check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
-            if(major == MFMediaType_Video){
-                videoStreamIndex = streamIndex;
-                break;
-            }
-        }
-
-        if(videoStreamIndex == invalidStream){
-            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No video stream found");
-        }
-
-        check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
-        check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
-
-        auto sourceVideoType{chooseBestNativeVideoMediaTypeForSubtypes(reader, videoStreamIndex, getAllowedVideoSubtypeVector(*formatProfile))};
-        if(formatProfile->requiresAviValidation){
-            sourceVideoType = nullptr;
-            for(DWORD mediaTypeIndex{};; ++mediaTypeIndex){
-                com_ptr<IMFMediaType> type;
-                const auto hr{reader->GetNativeMediaType(videoStreamIndex, mediaTypeIndex, type.put())};
-                if(hr == MF_E_NO_MORE_TYPES){
-                    break;
-                }
-                check_hresult(hr);
-
-                GUID major{GUID_NULL};
-                GUID subtype{GUID_NULL};
-                check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
-                check_hresult(type->GetGUID(MF_MT_SUBTYPE, &subtype));
-                if(major == MFMediaType_Video && subtype == MFVideoFormat_H264){
-                    sourceVideoType = type;
-                    break;
-                }
-            }
-        }
-        if(!sourceVideoType){
-            if(formatProfile->id == SourceFormatId::Webm){
-                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require VP9 in WebM)");
-            }
-            if(formatProfile->id == SourceFormatId::Wmv){
-                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require VC-1 in WMV)");
-            }
-            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"No stream-copy video media type found (require H.264 or HEVC)");
-        }
-        check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, sourceVideoType.get()));
-
-        GUID videoSubtype{GUID_NULL};
-        check_hresult(sourceVideoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype));
-        const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
-
-        if(formatProfile->requiresAviValidation){
-            if(videoSubtype != MFVideoFormat_H264){
-                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI is supported only for H.264 video");
-            }
-            UINT32 sequenceHeaderSize{};
-            const auto seqSizeHr{sourceVideoType->GetBlobSize(MF_MT_MPEG_SEQUENCE_HEADER, &sequenceHeaderSize)};
-            std::vector<uint8_t> sequenceHeader(sequenceHeaderSize);
-            UINT32 bytesWritten{};
-            const auto seqReadHr{
-                SUCCEEDED(seqSizeHr) && sequenceHeaderSize > 0
-                    ? sourceVideoType->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, sequenceHeader.data(), sequenceHeaderSize, &bytesWritten)
-                    : E_FAIL};
-            if(FAILED(seqReadHr) || bytesWritten == 0){
-                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"AVI H.264 stream lacks codec configuration (SPS/PPS). Convert to MP4 first.");
-            }
-        }else if(formatProfile->id == SourceFormatId::Webm && videoSubtype != MFVideoFormat_VP90){
-            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WebM stream-copy export currently requires VP9 video");
-        }else if(formatProfile->id == SourceFormatId::Wmv && videoSubtype != VC1_VIDEO_SUBTYPE){
-            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WMV stream-copy export currently requires VC-1 video");
-        }
-
-        uint32_t width{};
-        uint32_t height{};
-        uint32_t fpsNum{};
-        uint32_t fpsDen{};
-        (void)MFGetAttributeSize(sourceVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
-        (void)MFGetAttributeRatio(sourceVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
-
-        auto hasAudioForExport{false};
-        DWORD writerAudioStreamIndex{};
-        uint32_t audioChannels{};
-        uint32_t audioSampleRate{};
-        com_ptr<IMFMediaType> audioPcmType;
-        com_ptr<IMFMediaType> sourceAudioNativeType;
-        DWORD audioStreamIndex{};
-        constexpr auto invalidAudioStream{numeric_limits<DWORD>::max()};
-
-        if(formatProfile->audioExportPolicy == AudioExportPolicy::Allowed && m_prj.keepAudio() && sourceHasAudio()){
-            com_ptr<IMFSourceReader> audioProbeReader;
-            check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioProbeReader.put()));
-
-            audioStreamIndex = invalidAudioStream;
-            for(DWORD streamIndex = 0;; ++streamIndex){
-                com_ptr<IMFMediaType> type;
-                const auto hr{audioProbeReader->GetNativeMediaType(streamIndex, 0, type.put())};
-                if(hr == MF_E_INVALIDSTREAMNUMBER){
-                    break;
-                }
-                check_hresult(hr);
-
-                GUID major{GUID_NULL};
-                check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
-                if(major == MFMediaType_Audio){
-                    audioStreamIndex = streamIndex;
-                    sourceAudioNativeType = type;
-                    break;
-                }
-            }
-
-            if(audioStreamIndex != invalidAudioStream){
-                (void)sourceAudioNativeType->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &audioChannels);
-                (void)sourceAudioNativeType->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &audioSampleRate);
-                if(audioChannels == 0){
-                    audioChannels = 2;
-                }
-                if(audioSampleRate == 0){
-                    audioSampleRate = 48000;
-                }
-
-                audioPcmType = createPcmFloatAudioType(audioSampleRate, audioChannels);
-                hasAudioForExport = true;
-            }
-        }
-
-        if(formatProfile->id == SourceFormatId::Webm){
-            if(m_prj.keepAudio() && sourceHasAudio()){
-                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WebM export currently keeps VP9 video only; disable audio first.");
-            }
-
-            const auto videoStats{writeWebmVp9VideoSamplesForExport(
-                reader,
-                videoStreamIndex,
-                outputPath,
-                effectiveCutRanges100ns,
-                videoSubtype,
-                nalLengthFieldSize,
-                sourceDuration100ns,
-                outputDuration100ns,
-                width,
-                height,
-                fpsNum,
-                fpsDen,
-                [self = get_weak()](double pct){
-                    if(const auto strong = self.get()){
-                        strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct](){
-                            if(const auto ui = weak.get()){
-                                ui->setOperationProgress(pct);
-                            }
-                        });
+        auto enqueueOverlayStageState = [self = get_weak()](ExportOverlayStage stage, wstring label, std::optional<double> progressPercent, bool active){
+            if(const auto strong = self.get()){
+                strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), stage, label = std::move(label), progressPercent, active](){
+                    if(const auto ui = weak.get()){
+                        ui->setExportOverlayStageState(stage, label, progressPercent, active);
                     }
-                },
-                [self = get_weak()](){
-                    if(const auto strong = self.get()){
-                        return strong->m_cancelExportRequested.load();
-                    }
-                    return false;
-                })};
-            (void)videoStats;
-        }else{
-            if(formatProfile->id == SourceFormatId::Wmv && m_prj.keepAudio() && sourceHasAudio()){
-                throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WMV export currently keeps VC-1 video only; disable audio first.");
-            }
-
-            com_ptr<IMFSinkWriter> writer;
-            DWORD writerVideoStreamIndex{};
-            auto configureWriter = [&]() -> HRESULT {
-                writer = nullptr;
-                writerVideoStreamIndex = 0;
-                writerAudioStreamIndex = 0;
-
-                com_ptr<IMFAttributes> writerAttributes;
-                check_hresult(MFCreateAttributes(writerAttributes.put(), 1));
-                check_hresult(writerAttributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
-                check_hresult(MFCreateSinkWriterFromURL(outputPath.c_str(), nullptr, writerAttributes.get(), writer.put()));
-                check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
-                check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
-
-                if(!hasAudioForExport){
-                    return S_OK;
-                }
-
-                const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
-                auto hr = writer->AddStream(aacType.get(), &writerAudioStreamIndex);
-                if(SUCCEEDED(hr)){
-                    hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
-                }
-                return hr;
-            };
-
-            const auto writerConfigHr{configureWriter()};
-            if(FAILED(writerConfigHr)){
-                if(formatProfile->id == SourceFormatId::Avi){
-                    throw hresult_error(writerConfigHr, L"System cannot mux H.264 into MP4 via Media Foundation.");
-                }
-                if(formatProfile->id == SourceFormatId::Wmv){
-                    throw hresult_error(writerConfigHr, L"System cannot mux VC-1 into WMV via Media Foundation on this machine.");
-                }
-                check_hresult(writerConfigHr);
-            }
-
-            check_hresult(writer->BeginWriting());
-
-            const auto videoStats{writeVideoSamplesForExport(
-                reader,
-                videoStreamIndex,
-                writer,
-                writerVideoStreamIndex,
-                effectiveCutRanges100ns,
-                videoSubtype,
-                nalLengthFieldSize,
-                sourceDuration100ns,
-                [self = get_weak()](double pct){
-                    if(const auto strong = self.get()){
-                        strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct](){
-                            if(const auto ui = weak.get()){
-                                ui->setOperationProgress(pct);
-                            }
-                        });
-                    }
-                },
-                [self = get_weak()](){
-                    if(const auto strong = self.get()){
-                        return strong->m_cancelExportRequested.load();
-                    }
-                    return false;
-                })};
-            (void)videoStats;
-
-            if(hasAudioForExport && audioStreamIndex != numeric_limits<DWORD>::max()){
-                com_ptr<IMFSourceReader> audioReader;
-                check_hresult(MFCreateSourceReaderFromURL(sourcePath.c_str(), nullptr, audioReader.put()));
-                check_hresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
-                check_hresult(audioReader->SetStreamSelection(audioStreamIndex, TRUE));
-                check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
-
-                const auto keepRanges100ns{invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
-                writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer, writerAudioStreamIndex, audioChannels, audioSampleRate, m_prj.audioXfadeMs(), m_prj.audioVolumePct() / 100.0f, [self = get_weak()](){
-                    if(const auto strong = self.get()){
-                        return strong->m_cancelExportRequested.load();
-                    }
-                    return false;
                 });
             }
-
-            if(m_cancelExportRequested){
+        };
+        auto enqueueStatusMessage = [self = get_weak()](wstring message){
+            if(const auto strong = self.get()){
+                strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), message = std::move(message)](){
+                    if(const auto ui = weak.get()){
+                        ui->setStatusMessage(message);
+                    }
+                });
+            }
+        };
+        auto enqueueStageComplete = [&](ExportOverlayStage stage, wstring label = L"Done"){
+            enqueueOverlayStageState(stage, std::move(label), 100.0, false);
+        };
+        auto enqueueStageSkipped = [&](ExportOverlayStage stage, wstring reason){
+            enqueueOverlayStageState(stage, std::move(reason), 0.0, false);
+        };
+        auto enqueueOverallProgress = [self = get_weak()](double pct){
+            if(const auto strong = self.get()){
+                strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct](){
+                    if(const auto ui = weak.get()){
+                        ui->setOperationProgress(pct);
+                    }
+                });
+            }
+        };
+        auto throwIfExportCanceled = [this](){
+            if(m_cancelExportRequested.load()){
                 throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
             }
+        };
 
-            check_hresult(writer->Finalize());
+        const auto hasAudioForExport{m_prj.keepAudio() && sourceHasAudio() && m_mediaInfo.audioExportSupport == CapabilityState::Supported};
+        const auto overallRapShare{5.0};
+        const auto overallVideoShare{hasAudioForExport ? 65.0 : 80.0};
+        const auto overallAudioShare{hasAudioForExport ? 20.0 : 0.0};
+        const auto overallFinalizeBase{overallRapShare + overallVideoShare + overallAudioShare};
+        std::optional<chrono::steady_clock::time_point> videoStageStartedAt;
+        std::optional<chrono::steady_clock::time_point> audioStageStartedAt;
+
+        ::llvc::VideoSource::ExportRequest request{
+            .temporaryOutputPath = temporaryOutputPath,
+            .sourceDuration100ns = sourceDuration100ns,
+            .outputDuration100ns = outputDuration100ns,
+            .effectiveCutRanges100ns = effectiveCutRanges100ns,
+            .keepAudio = m_prj.keepAudio(),
+            .audioCrossfadeMs = m_prj.audioXfadeMs(),
+            .audioVolumePct = m_prj.audioVolumePct(),
+            .onVideoProgress = [self = get_weak(), &videoStageStartedAt, &videoStageDurationMs, overallRapShare, overallVideoShare](double pct){
+                const auto now{chrono::steady_clock::now()};
+                if(!videoStageStartedAt){
+                    videoStageStartedAt = now;
+                }
+                if(pct >= 100.0 && videoStageStartedAt && !videoStageDurationMs){
+                    videoStageDurationMs = chrono::duration_cast<chrono::milliseconds>(now - *videoStageStartedAt);
+                }
+
+                if(const auto strong = self.get()){
+                    strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct, overallRapShare, overallVideoShare](){
+                        if(const auto ui = weak.get()){
+                            ui->setExportOverlayStageState(ExportOverlayStage::Video, L"In progress", pct, true);
+                            ui->setOperationProgress(overallRapShare + ((pct * overallVideoShare) / 100.0));
+                        }
+                    });
+                }
+            },
+            .onAudioProgress = [self = get_weak(), &audioStageStartedAt, &audioStageDurationMs, overallRapShare, overallVideoShare, overallAudioShare](double pct){
+                const auto now{chrono::steady_clock::now()};
+                if(!audioStageStartedAt){
+                    audioStageStartedAt = now;
+                }
+                if(pct >= 100.0 && audioStageStartedAt && !audioStageDurationMs){
+                    audioStageDurationMs = chrono::duration_cast<chrono::milliseconds>(now - *audioStageStartedAt);
+                }
+
+                if(const auto strong = self.get()){
+                    strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct, overallRapShare, overallVideoShare, overallAudioShare](){
+                        if(const auto ui = weak.get()){
+                            ui->setStatusMessage(L"Writing audio...");
+                            ui->setExportOverlayStageState(ExportOverlayStage::Audio, L"In progress", pct, true);
+                            ui->setOperationProgress(overallRapShare + overallVideoShare + ((pct * overallAudioShare) / 100.0));
+                        }
+                    });
+                }
+            },
+            .shouldCancel = [self = get_weak()](){
+                if(const auto strong = self.get()){
+                    return strong->m_cancelExportRequested.load();
+                }
+                return false;
+            }};
+
+        m_media->exportLossless(request);
+
+        if(videoStageStartedAt && !videoStageDurationMs){
+            videoStageDurationMs = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - *videoStageStartedAt);
         }
-        applyExportFileMetadata(sourcePath, outputPath, exportComment);
+        enqueueStageComplete(ExportOverlayStage::Video);
+        if(hasAudioForExport){
+            if(audioStageStartedAt && !audioStageDurationMs){
+                audioStageDurationMs = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - *audioStageStartedAt);
+            }
+            enqueueStageComplete(ExportOverlayStage::Audio);
+        }else{
+            enqueueStageSkipped(ExportOverlayStage::Audio, L"Not needed");
+        }
+
+        throwIfExportCanceled();
+        enqueueStatusMessage(L"Building indices and metadata...");
+        enqueueOverlayStageState(ExportOverlayStage::Finalize, L"In progress", std::nullopt, true);
+        enqueueOverallProgress(min(99.0, overallFinalizeBase + 5.0));
+        throwIfExportCanceled();
+        const auto finalizeStageStartedAt{chrono::steady_clock::now()};
+        enqueueOverlayStageState(ExportOverlayStage::Finalize, L"Applying metadata", std::nullopt, true);
+        applyExportFileMetadata(sourcePath, temporaryOutputPath, exportComment);
+
+        throwIfExportCanceled();
+        enqueueOverlayStageState(ExportOverlayStage::Finalize, L"Replacing final file", std::nullopt, true);
+        std::error_code outputExistsEc;
+        if(filesystem::exists(outputPath, outputExistsEc)){
+            const auto backupPath{buildTemporaryBackupPath(outputPath)};
+            if(backupPath.empty()){
+                throw hresult_error(E_FAIL, L"Could not create a backup path for the final export target.");
+            }
+
+            throwIfExportCanceled();
+            if(!::ReplaceFileW(outputPath.c_str(), temporaryOutputPath.c_str(), backupPath.c_str(), REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)){
+                const auto replaceError{::GetLastError()};
+                std::error_code cleanupEc;
+                filesystem::remove(backupPath, cleanupEc);
+                throw hresult_error(HRESULT_FROM_WIN32(replaceError), L"Could not replace the final export target.");
+            }
+
+            std::error_code cleanupEc;
+            filesystem::remove(backupPath, cleanupEc);
+        }else if(outputExistsEc){
+            throw hresult_error(HRESULT_FROM_WIN32(outputExistsEc.value()), winrt::to_hstring(outputExistsEc.message()));
+        }else{
+            throwIfExportCanceled();
+            if(!::MoveFileExW(temporaryOutputPath.c_str(), outputPath.c_str(), MOVEFILE_WRITE_THROUGH)){
+                throw hresult_error(HRESULT_FROM_WIN32(::GetLastError()), L"Could not move the final export target into place.");
+            }
+        }
+        finalizeStageDurationMs = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - finalizeStageStartedAt);
+        enqueueStageComplete(ExportOverlayStage::Finalize);
         exportSucceeded = true;
     }catch(const hresult_error& ex){
         if(ex.code() == HRESULT_FROM_WIN32(ERROR_CANCELLED)){
             exportCanceled = true;
             std::error_code ec;
-            filesystem::remove(outputPath, ec);
+            filesystem::remove(temporaryOutputPath, ec);
         }else{
             exportErrorMessage = ex.message();
+            std::error_code ec;
+            filesystem::remove(temporaryOutputPath, ec);
         }
     }
 
@@ -4437,32 +5296,118 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     }
 
     m_isExportInProgress = false;
+    m_lastExportSucceeded = exportSucceeded;
+    m_exportOverlayHasFinalState = true;
     setOperationInProgress(false);
+    ExportOverlayProgressActionsPanel().Visibility(Visibility::Collapsed);
+    ExportOverlayFinishedActionsPanel().Visibility(Visibility::Visible);
+    ExportOverlayCancelButton().IsEnabled(false);
     if(exportSucceeded){
+        setExportOverlayStageComplete(ExportOverlayStage::Rap, effectivePlan.materiallyDifferent ? L"Adjusted" : L"Done");
+        setExportOverlayStageComplete(ExportOverlayStage::Video);
+        if(m_prj.keepAudio() && sourceHasAudio()){
+            setExportOverlayStageComplete(ExportOverlayStage::Audio);
+        }
+        setExportOverlayStageComplete(ExportOverlayStage::Finalize);
         setStatusMessage(L"Export completed");
         clearErrorMessage();
         refreshStatusInfoSection();
     }else if(exportCanceled){
+        if(ExportOverlayFinalizeStageProgressBar().IsIndeterminate()){
+            setExportOverlayStageState(ExportOverlayStage::Finalize, L"Canceled", 0.0, false);
+        }
         setStatusMessage(L"Export canceled");
         clearErrorMessage();
     }else{
+        if(ExportOverlayFinalizeStageProgressBar().IsIndeterminate()){
+            setExportOverlayStageState(ExportOverlayStage::Finalize, L"Failed", 0.0, false);
+        }
         setStatusMessage(L"Export failed");
         setErrorMessage(exportErrorMessage.c_str());
+    }
+    updateExportOverlayActionButtons();
+
+    if(m_generateExportTimeReport){
+        const auto totalDurationMs{chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - exportOverallStartedAt)};
+        const auto formatMs{[](const std::optional<chrono::milliseconds>& value) -> wstring{
+            if(!value){
+                return L"n/a";
+            }
+
+            const auto totalMs{value->count()};
+            const auto totalSeconds{totalMs / 1000};
+            const auto msRemainder{totalMs % 1000};
+            const auto minutes{totalSeconds / 60};
+            const auto seconds{totalSeconds % 60};
+            if(minutes > 0){
+                return std::format(L"{}m {}.{:03d}s", minutes, seconds, static_cast<int>(msRemainder));
+            }
+            return std::format(L"{}.{:03d}s", seconds, static_cast<int>(msRemainder));
+        }};
+
+        const auto report{std::format(
+            L"llvc export timing report\r\n"
+            L"status: {}\r\n"
+            L"source file: {}\r\n"
+            L"output file: {}\r\n"
+            L"project file: {}\r\n"
+            L"container: {}\r\n"
+            L"video codec: {}\r\n"
+            L"audio codec: {}\r\n"
+            L"source size: {} bytes\r\n"
+            L"source duration: {}\r\n"
+            L"target duration: {}\r\n"
+            L"requested cut blocks: {}\r\n"
+            L"effective cut blocks: {}\r\n"
+            L"plan adjusted: {}\r\n"
+            L"empty after alignment: {}\r\n"
+            L"keep audio: {}\r\n"
+            L"audio export support: {}\r\n"
+            L"audio crossfade ms: {}\r\n"
+            L"audio volume pct: {}\r\n"
+            L"report mode: clipboard auto-copy\r\n"
+            L"stage rap: {}\r\n"
+            L"stage video: {}\r\n"
+            L"stage audio: {}\r\n"
+            L"stage finalize: {}\r\n"
+            L"total export: {}\r\n",
+            exportSucceeded ? L"success" : (exportCanceled ? L"canceled" : L"failed"),
+            sourcePath,
+            outputPath,
+            m_projectPath.empty() ? L"(unsaved project)" : wstring(m_projectPath.c_str()),
+            m_mediaInfo.container,
+            m_mediaInfo.videoCodec,
+            m_mediaInfo.audioCodec,
+            sourceSizeEc ? 0ull : sourceSizeBytes,
+            formatTimelineDurationText(sourceDuration100ns),
+            formatTimelineDurationText(outputDuration100ns),
+            requestedCutBlockCount,
+            effectiveCutRanges100ns.size(),
+            effectivePlan.materiallyDifferent ? L"yes" : L"no",
+            effectivePlan.emptyAfterAlignment ? L"yes" : L"no",
+            m_prj.keepAudio() ? L"yes" : L"no",
+            capabilityStateToText(m_mediaInfo.audioExportSupport),
+            m_prj.audioXfadeMs(),
+            m_prj.audioVolumePct(),
+            formatMs(rapStageDurationMs),
+            formatMs(videoStageDurationMs),
+            formatMs(audioStageDurationMs),
+            formatMs(finalizeStageDurationMs),
+            formatMs(std::optional<chrono::milliseconds>{totalDurationMs}))};
+
+        Windows::ApplicationModel::DataTransfer::DataPackage package{};
+        package.SetText(report);
+        Windows::ApplicationModel::DataTransfer::Clipboard::SetContent(package);
+        Windows::ApplicationModel::DataTransfer::Clipboard::Flush();
+        setStatusMessage(exportSucceeded ? L"Export completed and timing report copied to clipboard" : L"Export timing report copied to clipboard");
+    }
+
+    if(exportSucceeded && m_deleteSourceAndProjectAfterExport){
+        co_await promptDeleteSourceAndProjectAfterExportAsync(outputPath);
     }
 
     if(!exportErrorMessage.empty()){
         co_await showInfoDialogAsync(L"Export failed", exportErrorMessage);
-    }
-
-    const auto shouldResumeTimeline{m_resumeTimelineRenderAfterExport && m_prj.videoFile() && m_timelineDurationSeconds > 0};
-    m_resumeTimelineRenderAfterExport = false;
-    if(shouldResumeTimeline){
-        wstring status{L"Loaded: "};
-        status += m_prj.videoFile().Name().c_str();
-        status += L" (loading story line...)";
-        setStatusMessage(status);
-        clearErrorMessage();
-        renderTimelineAsync();
     }
 }
 

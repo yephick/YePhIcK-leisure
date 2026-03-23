@@ -9,10 +9,12 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <memory>
 
 struct _GUID;
 import llvc.Project;
 import llvc.Timeline;
+import llvc.Media;
 
 namespace winrt::llvc::implementation{
 
@@ -25,42 +27,8 @@ struct Ratio final{
     constexpr operator double() const noexcept{ return den != 0 ? 1.0 * num / den : 0; }
 };
 
-enum class CapabilityState : uint8_t{
-    Unknown,
-    Supported,
-    Unsupported,
-    NotApplicable
-};
-
-struct MediaInspectionResult{
-    bool isValid{false};
-    wstring errorMessage{};
-    wstring container{};
-    wstring videoCodec{};
-    wstring audioCodec{};
-    wstring duration{};
-    wstring fileSize{};
-    wstring sourceCreated{};
-    wstring sourceModified{};
-    wstring sourceEncodedBy{};
-    wstring sourceComment{};
-    wstring resolution{};
-    Ratio frameRate{};
-    wstring videoBitrate{};
-    wstring audioBitrate{};
-    wstring keyFrameSummary{};
-    wstring keyFrameInterval{};
-    wstring allSamplesIndependent{};
-    wstring maxKeyFrameSpacing{};
-    CapabilityState openSupport{CapabilityState::Unsupported};
-    CapabilityState previewSupport{CapabilityState::Unsupported};
-    CapabilityState losslessExportSupport{CapabilityState::Unsupported};
-    CapabilityState audioExportSupport{CapabilityState::NotApplicable};
-    vector<wstring> supportedExportExtensions{};
-    wstring defaultExportExtension{};
-    bool audioDisabledForThisSource{false};
-    wstring audioDisabledReason{};
-};
+using CapabilityState = ::llvc::CapabilityState;
+using MediaInspectionResult = ::llvc::VideoSource::InspectionResult;
 
 struct MainWindow: MainWindowT<MainWindow>{
     using Control = winrt::Windows::Foundation::IInspectable;
@@ -142,6 +110,10 @@ struct MainWindow: MainWindowT<MainWindow>{
     void onNaturalDurationChanged(const MPSession& sender, const Control& args);
     void onPositionTimerTick(const Control& sender, const Control& args);
     void cancelExportButton_Click(const Control& sender, const REArgs& args);
+    void exportOverlayCloseButton_Click(const Control& sender, const REArgs& args);
+    AAction exportOverlayOpenExportButton_Click(const Control& sender, const REArgs& args);
+    AAction exportOverlayDeleteSourceAndProjectButton_Click(const Control& sender, const REArgs& args);
+    AAction exportOverlayDeleteProjectButton_Click(const Control& sender, const REArgs& args);
     bool isExportInProgressForClosePrompt() const;
     void requestExportCancel();
 
@@ -153,6 +125,7 @@ private:
     double m_timelineDurationSeconds{0};
     uint64_t m_timelineRenderVersion{0};
     MediaInspectionResult m_mediaInfo{};
+    std::unique_ptr<::llvc::VideoSource> m_media{};
     hstring m_cachedRapSourcePath{};
     vector<int64_t> m_cachedRapTimes100ns{};
     bool m_cachedRapLookupAttempted{false};
@@ -160,16 +133,33 @@ private:
     bool m_isRapLookupInProgress{false};
     bool m_hasTimelineRenderCompleted{false};
     bool m_pendingReevaluateAfterRapLookup{false};
+    bool m_pendingReevaluateWithoutUndoAfterRapLookup{false};
     int m_pendingNudgeDirectionAfterRapLookup{0};
     vector<hstring> m_recentVideos{};
     vector<hstring> m_recentProjects{};
     uint32_t m_maxRecentVideos{5};
     uint32_t m_maxRecentProjects{5};
+    bool m_deleteSourceAndProjectAfterExport{false};
+    bool m_autoReevaluateCutMarkersOnPlacement{false};
+    bool m_generateExportTimeReport{false};
     hstring m_projectPath{};
     bool m_isClosing{false};
     bool m_isExportInProgress{false};
+    uint64_t m_currentExportSourceSizeBytes{0};
+    int64_t m_currentExportSourceDuration100ns{0};
+    int64_t m_currentExportOutputDuration100ns{0};
+    bool m_currentExportPlanAdjusted{false};
+    size_t m_currentExportCutBlockCount{0};
+    bool m_exportOverlayHasFinalState{false};
+    bool m_lastExportSucceeded{false};
+    hstring m_currentExportSourcePath{};
+    hstring m_currentExportProjectPath{};
+    hstring m_currentExportOutputPath{};
     std::atomic_bool m_cancelExportRequested{false};
-    bool m_resumeTimelineRenderAfterExport{false};
+    std::chrono::steady_clock::time_point m_currentExportStartedAt{};
+    std::chrono::steady_clock::time_point m_lastExportEtaRefreshAt{};
+    std::optional<double> m_lastExportEtaProgress{};
+    std::wstring m_exportEtaText{};
     bool m_isTimelineDragging{false};
     bool m_timelineDragMoved{false};
     uint32_t m_timelineDragPointerId{0};
@@ -209,6 +199,17 @@ private:
     winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_mainWindowClosedRevoker{};
 
 private:
+    enum class ExportOverlayStage{
+        Rap,
+        Video,
+        Audio,
+        Finalize,
+    };
+    DTS m_exportEtaTimer{nullptr};
+    std::optional<ExportOverlayStage> m_activeExportStage{};
+    std::optional<double> m_activeExportStageProgress{};
+    std::chrono::steady_clock::time_point m_activeExportStageStartedAt{};
+
     HWND getWindowHandle() const;
     void restoreWindowPlacement();
     void saveWindowPlacement() const;
@@ -219,9 +220,11 @@ private:
     void refreshRecentProjectsMenu();
     void addRecentVideo(const hstring& path);
     void addRecentProject(const hstring& path);
+    void removeRecentPath(const hstring& path);
     AAction showInfoDialogAsync(const hstring& title, const hstring& message);
     AAction openFromLaunchArgumentsAsync(const hstring& arguments);
     AAction showOptionsDialogAsync();
+    AAction promptDeleteSourceAndProjectAfterExportAsync(const std::wstring& exportedPath);
     AAction openProjectFileAsync(const SFile& file);
     AAction saveProjectFileAsync(const SFile& file);
     void resetProjectState();
@@ -238,8 +241,10 @@ private:
     void seekTimelineToCanvasX(double pointerX);
     void renderKeyframeTicks();
     void renderCutOverlays();
+    bool hasCutMarkerNearTime100ns(int64_t time100ns) const;
     std::optional<int64_t> timelinePointToTime100ns(double pointerX, double width) const;
     bool toggleSelectedKeyframeAtTime100ns(int64_t time100ns);
+    AAction toggleSelectedKeyframeAtTime100nsAsync(int64_t time100ns);
     bool toggleCutBlockAtTime100ns(int64_t time100ns);
     bool setCutBlockAtTime100ns(int64_t time100ns, bool cutScene);
     bool toggleCutMarkerAtCursor();
@@ -247,16 +252,19 @@ private:
     bool nudgeCurrentSceneBoundaryToNearestRap(bool expandScene);
     bool trySkipCurrentCutDuringPlayback();
     void stepByFrame(int delta);
+    bool seekBySeconds(int deltaSeconds);
+    bool jumpToTimelinePercent(uint32_t percent);
     bool moveCursorToMarker(int direction);
     void ensureTimelineCursorVisible(double cursorLeft);
     void ensureCurrentTimelineCursorVisible();
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
     bool projectHasRequestedCuts() const;
-    std::optional<::llvc::EffectiveExportPlan> tryBuildEffectiveExportPlan() const;
+    std::optional<::llvc::EffectiveExportPlan> tryBuildEffectiveExportPlan(const std::function<void(double)>& progressCallback = {}) const;
     bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns) const;
+    bool reevaluateClearCutMarkers(bool pushUndoState);
     void queueRapLookup(bool queueReevaluate, int nudgeDirection);
-    IOpBool ensureRapMarkersAvailableAsync(const wstring& statusMessage);
+    IOpBool ensureRapMarkersAvailableAsync(const wstring& statusMessage, const std::function<void(double)>& progressCallback = {});
     fire_and_forget runRapLookupAsync();
     UndoRedoState captureUndoRedoState() const;
     bool isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const;
@@ -277,8 +285,24 @@ private:
     void clearErrorMessage();
     void refreshStatusInfoSection();
     IOpBool confirmAdjustedExportPlanAsync(const ::llvc::EffectiveExportPlan& plan);
+    void configureExportOverlay(const wstring& outputPath, int64_t sourceDuration100ns, int64_t outputDuration100ns, uint64_t sourceSizeBytes, bool adjustedPlan, size_t cutBlockCount, const ::llvc::EffectiveExportPlan* effectivePlan = nullptr);
+    void setExportOverlayStageState(ExportOverlayStage stage, const wstring& label, std::optional<double> progressPercent, bool active);
+    void setExportOverlayStagePending(ExportOverlayStage stage);
+    void setExportOverlayStageSkipped(ExportOverlayStage stage, const wstring& reason);
+    void setExportOverlayStageComplete(ExportOverlayStage stage, const wstring& label = L"Done");
+    void updateExportOverlayStatus();
+    void updateExportOverlayActionButtons();
+    void ensureExportEtaTimer();
+    void stopExportEtaTimer();
+    void exportEtaTimer_Tick(const Control& sender, const Control& args);
+    void updateExportStageEta();
+    std::chrono::seconds estimateStageDuration(ExportOverlayStage stage) const;
+    static const wchar_t* exportStageDisplayName(ExportOverlayStage stage) noexcept;
+    AAction deleteExportArtifactsAsync(bool deleteSource, bool deleteProject);
     void setOperationInProgress(bool active, bool indeterminate = false);
     void setOperationProgress(double percent);
+    void refreshExportEta(double percent);
+    static std::wstring formatRemainingDurationText(std::chrono::seconds remaining);
     static wstring formatTimelineDurationText(int64_t duration100ns);
     static wstring formatDateTimeText(const winrt::Windows::Foundation::DateTime& value);
     bool sourceHasAudio() const;

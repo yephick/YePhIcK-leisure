@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <winrt/base.h>
 
@@ -71,7 +71,7 @@ vector<float> decodeAudioRangeToFloat(const com_ptr<IMFSourceReader>& reader, DW
 wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const vector<wstring>& allowedExtensions, const wchar_t* defaultExt, int64_t outputDuration100ns, HWND ownerWindow);
 void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>& segmentAudio, uint32_t audioChannels, size_t fadeFrames);
 void writePcmAudioFramesToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, const vector<float>& audioFrames, uint32_t audioChannels, uint32_t audioSampleRate, uint64_t& writtenFrames);
-void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs, float gain, const function<bool()>& shouldCancel = {});
+void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs, float gain, const function<void(double)>& progressCallback = {}, const function<bool()>& shouldCancel = {});
 VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel = {});
 VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, int64_t outputDuration100ns, uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel = {});
 void applyExportFileMetadata(const std::wstring& sourcePath, const std::wstring& outputPath, const std::wstring& exportComment);
@@ -1065,7 +1065,15 @@ wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const ve
             : selectedDefaultExtension};
     check_hresult(saveDialog->SetDefaultExtension(defaultExtensionWithoutDot.c_str()));
 
-    const auto suggestedName{sourceFsPath.stem().wstring() + L" - " + formatDurationFileTag(outputDuration100ns)};
+    (void)outputDuration100ns;
+    const auto now{chrono::system_clock::now()};
+    const auto nowTimeT{chrono::system_clock::to_time_t(now)};
+    tm localTime{};
+    wchar_t timestamp[32]{};
+    if(localtime_s(&localTime, &nowTimeT) != 0 || wcsftime(timestamp, size(timestamp), L"%Y%m%d-%H%M%S", &localTime) == 0){
+        wcscpy_s(timestamp, L"export");
+    }
+    const auto suggestedName{sourceFsPath.stem().wstring() + L" - " + timestamp};
     check_hresult(saveDialog->SetFileName(suggestedName.c_str()));
 
     const auto sourceFolder{sourceFsPath.parent_path().wstring()};
@@ -1164,12 +1172,21 @@ void writePcmAudioFramesToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD wri
     writtenFrames += framesToWrite;
 }
 
-void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs, float gain, const function<bool()>& shouldCancel){
+void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs, float gain, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel){
     const auto fadeFrames{crossfadeMs <= 0 ? size_t{0} : static_cast<size_t>((static_cast<int64_t>(audioSampleRate) * crossfadeMs) / 1000)};
     const auto applyGain{max(0.0f, gain)};
     vector<float> tailBuffer;
     tailBuffer.reserve(fadeFrames * audioChannels);
     uint64_t writtenFrames{};
+    const auto totalKeepDuration100ns{
+        accumulate(
+            keepRanges100ns.begin(),
+            keepRanges100ns.end(),
+            int64_t{0},
+            [](int64_t total, const pair<int64_t, int64_t>& range){
+                return total + max<int64_t>(0, range.second - range.first);
+            })};
+    auto processedDuration100ns{int64_t{0}};
 
     auto flushTailIfNeeded = [&](){
         if(fadeFrames == 0){
@@ -1202,6 +1219,10 @@ void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, D
 
         flushTailIfNeeded();
     };
+
+    if(progressCallback){
+        progressCallback(totalKeepDuration100ns > 0 ? 0.0 : 100.0);
+    }
 
     for(const auto& [keepStart, keepEnd] : keepRanges100ns){
         if(shouldCancel && shouldCancel()){
@@ -1303,9 +1324,17 @@ void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, D
             appendCrossfadedAudioSegment(tailBuffer, boundaryBuffer, audioChannels, fadeFrames);
             flushTailIfNeeded();
         }
+
+        processedDuration100ns += max<int64_t>(0, keepEnd - keepStart);
+        if(progressCallback && totalKeepDuration100ns > 0){
+            progressCallback((100.0 * processedDuration100ns) / totalKeepDuration100ns);
+        }
     }
 
     writePcmAudioFramesToWriter(writer, writerAudioStreamIndex, tailBuffer, audioChannels, audioSampleRate, writtenFrames);
+    if(progressCallback){
+        progressCallback(100.0);
+    }
 }
 
 VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel){

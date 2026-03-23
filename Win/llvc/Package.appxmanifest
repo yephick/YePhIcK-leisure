@@ -54,7 +54,7 @@
         <uap:Extension Category="windows.fileTypeAssociation">
           <uap:FileTypeAssociation Name="llvcproject">
             <uap:DisplayName>ClipRazor project</uap:DisplayName>
-            <uap:Logo>Assets\Square44x44Logo.png</uap:Logo>
+            <uap:Logo>Assets\Square44x44LogoProject.png</uap:Logo>
             <uap:SupportedFileTypes>
               <uap:FileType>.llvc</uap:FileType>
             </uap:SupportedFileTypes>
