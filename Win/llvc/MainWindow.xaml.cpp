@@ -4371,9 +4371,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         const auto totalWidth{max(800.0, m_timelineDurationSeconds * 14.0 * zoomScale)};
         constexpr auto thumbnailImageWidth{153.0};
         constexpr auto thumbnailImageHeight{86.0};
-        constexpr auto thumbnailGap{6.0};
-        const auto thumbnailSlotWidth{thumbnailImageWidth + thumbnailGap};
-        const auto thumbnailCount{clamp(static_cast<int>(ceil(totalWidth / thumbnailSlotWidth)), 8, 96)};
+        const auto thumbnailCount{max(1, static_cast<int>(ceil(totalWidth / thumbnailImageWidth)))};
         const auto thumbnailWidth{totalWidth / thumbnailCount};
 
         TimelineCanvas().Width(totalWidth);
@@ -4474,7 +4472,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
             }
 
             Controls::Image image{};
-            image.Width(thumbnailImageWidth);
+            image.Width(thumbnailWidth);
             image.Height(thumbnailImageHeight);
             image.Stretch(Media::Stretch::UniformToFill);
 
@@ -4482,8 +4480,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
             co_await bitmap.SetSourceAsync(stream);
             image.Source(bitmap);
 
-            const auto thumbnailLeft{(nextIndex * thumbnailWidth) + max(0.0, (thumbnailWidth - thumbnailImageWidth) / 2.0)};
-            Controls::Canvas::SetLeft(image, thumbnailLeft);
+            Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
             ThumbnailLayer().Children().Append(image);
             thumbnailBuilt[nextIndex] = true;
             renderCutOverlays();
