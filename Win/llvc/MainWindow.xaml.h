@@ -129,6 +129,28 @@ private:
         double viewportPointerX{};
     };
 
+    struct TimelineInteractionState final{
+        bool isDragging{false};
+        bool dragMoved{false};
+        uint32_t dragPointerId{0};
+        double dragStartX{0};
+        double dragStartOffset{0};
+        std::optional<double> pendingScrollbarRatio{};
+        std::optional<TimelineWheelZoomAnchor> pendingWheelZoomAnchor{};
+    };
+
+    struct SeparatePreviewState final{
+        bool isOpen{false};
+        bool isFullscreen{false};
+        RECT restoreRect{0, 0, 0, 0};
+        LONG_PTR restoreStyle{0};
+        LONG_PTR restoreExStyle{0};
+        winrt::Microsoft::UI::Xaml::Window window{nullptr};
+        winrt::Microsoft::UI::Xaml::Window::Closed_revoker closedRevoker{};
+        winrt::Microsoft::UI::Xaml::Controls::MediaPlayerElement player{nullptr};
+        winrt::Microsoft::UI::Xaml::Controls::Image splashImage{nullptr};
+    };
+
     MP m_player{nullptr};
     MPSession::NaturalDurationChanged_revoker m_naturalDurationChangedRevoker{};
     DTS m_positionTimer{nullptr};
@@ -166,23 +188,9 @@ private:
     std::chrono::steady_clock::time_point m_lastExportEtaRefreshAt{};
     std::optional<double> m_lastExportEtaProgress{};
     std::wstring m_exportEtaText{};
-    bool m_isTimelineDragging{false};
-    bool m_timelineDragMoved{false};
-    uint32_t m_timelineDragPointerId{0};
-    double m_timelineDragStartX{0};
-    double m_timelineDragStartOffset{0};
-    std::optional<double> m_pendingTimelineScrollbarRatio{};
-    std::optional<TimelineWheelZoomAnchor> m_pendingTimelineWheelZoomAnchor{};
+    TimelineInteractionState m_timelineInteraction{};
     winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
-    bool m_isSeparatePreviewWindowOpen{false};
-    bool m_isSeparatePreviewFullscreen{false};
-    RECT m_separatePreviewRestoreRect{0, 0, 0, 0};
-    LONG_PTR m_separatePreviewRestoreStyle{0};
-    LONG_PTR m_separatePreviewRestoreExStyle{0};
-    winrt::Microsoft::UI::Xaml::Window m_separatePreviewWindow{nullptr};
-    winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_separatePreviewClosedRevoker{};
-    winrt::Microsoft::UI::Xaml::Controls::MediaPlayerElement m_detachedPreviewPlayer{nullptr};
-    winrt::Microsoft::UI::Xaml::Controls::Image m_detachedPreviewSplashImage{nullptr};
+    SeparatePreviewState m_separatePreview{};
     ::llvc::Project m_prj{};
     ::llvc::Timeline m_tl{};
 

@@ -1184,12 +1184,12 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
     m_mainWindowActivatedRevoker.revoke();
     m_mainWindowClosedRevoker.revoke();
 
-    m_appSettings.restorePreviewDetachedOnStartup = m_isSeparatePreviewWindowOpen;
-    m_appSettings.restorePreviewFullscreenOnStartup = m_isSeparatePreviewWindowOpen && m_isSeparatePreviewFullscreen;
+    m_appSettings.restorePreviewDetachedOnStartup = m_separatePreview.isOpen;
+    m_appSettings.restorePreviewFullscreenOnStartup = m_separatePreview.isOpen && m_separatePreview.isFullscreen;
 
-    if(m_detachedPreviewPlayer){
-        m_detachedPreviewPlayer.SetMediaPlayer(nullptr);
-        m_detachedPreviewPlayer = nullptr;
+    if(m_separatePreview.player){
+        m_separatePreview.player.SetMediaPlayer(nullptr);
+        m_separatePreview.player = nullptr;
     }
 
     if(PreviewPlayer()){
@@ -1202,18 +1202,18 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
         m_player = nullptr;
     }
 
-    if(m_separatePreviewWindow){
+    if(m_separatePreview.window){
         HWND previewHwnd{};
-        if(SUCCEEDED(m_separatePreviewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd)) && previewHwnd){
+        if(SUCCEEDED(m_separatePreview.window.as<::IWindowNative>()->get_WindowHandle(&previewHwnd)) && previewHwnd){
             saveSeparatePreviewPlacement(previewHwnd);
         }
 
-        m_separatePreviewClosedRevoker.revoke();
-        m_separatePreviewWindow.Close();
-        m_separatePreviewWindow = nullptr;
+        m_separatePreview.closedRevoker.revoke();
+        m_separatePreview.window.Close();
+        m_separatePreview.window = nullptr;
     }
 
-    m_detachedPreviewSplashImage = nullptr;
+    m_separatePreview.splashImage = nullptr;
     saveWindowPlacement();
     saveAppSettings();
 }
@@ -1326,11 +1326,11 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
         return;
     }
 
-    if(!m_pendingTimelineWheelZoomAnchor && !m_pendingTimelineScrollbarRatio){
+    if(!m_timelineInteraction.pendingWheelZoomAnchor && !m_timelineInteraction.pendingScrollbarRatio){
         const auto bar{TimelineHorizontalScrollBar()};
         if(bar){
             const auto barMaximum{max(0.0, bar.Maximum())};
-            m_pendingTimelineScrollbarRatio = barMaximum > 0.0
+            m_timelineInteraction.pendingScrollbarRatio = barMaximum > 0.0
                 ? std::optional<double>{clamp(bar.Value() / barMaximum, 0.0, 1.0)}
                 : std::optional<double>{0.0};
         }
@@ -1447,7 +1447,7 @@ void MainWindow::timelineScrollViewer_PointerWheelChanged(const Control&, const 
     if(m_prj.timelineDuration100ns() > 0 && TimelineCanvas().Width() > 0){
         const auto pointerXOnCanvas{point.Position().X + TimelineScrollViewer().HorizontalOffset()};
         if(const auto time100ns{timelinePointToTime100ns(pointerXOnCanvas, TimelineCanvas().Width())}){
-            m_pendingTimelineWheelZoomAnchor = TimelineWheelZoomAnchor{
+            m_timelineInteraction.pendingWheelZoomAnchor = TimelineWheelZoomAnchor{
                 .time100ns = *time100ns,
                 .viewportPointerX = point.Position().X,
             };
@@ -1468,11 +1468,11 @@ void MainWindow::timelineCanvas_PointerPressed(const Control&, const PREArgs& e)
         return;
     }
 
-    m_isTimelineDragging = true;
-    m_timelineDragMoved = false;
-    m_timelineDragPointerId = e.Pointer().PointerId();
-    m_timelineDragStartX = point.Position().X;
-    m_timelineDragStartOffset = TimelineScrollViewer().HorizontalOffset();
+    m_timelineInteraction.isDragging = true;
+    m_timelineInteraction.dragMoved = false;
+    m_timelineInteraction.dragPointerId = e.Pointer().PointerId();
+    m_timelineInteraction.dragStartX = point.Position().X;
+    m_timelineInteraction.dragStartOffset = TimelineScrollViewer().HorizontalOffset();
 
     tryFocusTimelineCanvas(FocusState::Programmatic);
     TimelineCanvas().CapturePointer(e.Pointer());
@@ -1480,20 +1480,20 @@ void MainWindow::timelineCanvas_PointerPressed(const Control&, const PREArgs& e)
 }
 
 void MainWindow::timelineCanvas_PointerMoved(const Control&, const PREArgs& e){
-    if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
+    if(!m_timelineInteraction.isDragging || e.Pointer().PointerId() != m_timelineInteraction.dragPointerId){
         return;
     }
 
     const auto point{e.GetCurrentPoint(TimelineCanvas())};
-    const auto deltaX{point.Position().X - m_timelineDragStartX};
+    const auto deltaX{point.Position().X - m_timelineInteraction.dragStartX};
 
     if(fabs(deltaX) > 4.0){
-        m_timelineDragMoved = true;
+        m_timelineInteraction.dragMoved = true;
     }
 
     const auto scrollViewer{TimelineScrollViewer()};
     const auto viewportWidth{scrollViewer.ViewportWidth()};
-    const auto target{m_tl.dragTargetOffset(m_timelineDragStartOffset, deltaX, TimelineCanvas().Width(), viewportWidth)};
+    const auto target{m_tl.dragTargetOffset(m_timelineInteraction.dragStartOffset, deltaX, TimelineCanvas().Width(), viewportWidth)};
     const auto targetOffset{box_value(target).as<IReference<double>>()};
     scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     e.Handled(true);
@@ -1544,13 +1544,13 @@ void MainWindow::timelineCanvas_PointerReleased(const Control&, const PREArgs& e
         }
     }
 
-    if(!m_isTimelineDragging || e.Pointer().PointerId() != m_timelineDragPointerId){
+    if(!m_timelineInteraction.isDragging || e.Pointer().PointerId() != m_timelineInteraction.dragPointerId){
         return;
     }
-    const auto dragged{m_timelineDragMoved};
+    const auto dragged{m_timelineInteraction.dragMoved};
 
-    m_isTimelineDragging = false;
-    m_timelineDragMoved = false;
+    m_timelineInteraction.isDragging = false;
+    m_timelineInteraction.dragMoved = false;
     TimelineCanvas().ReleasePointerCapture(e.Pointer());
 
     if(!dragged){
@@ -1567,17 +1567,17 @@ void MainWindow::timelineCanvas_PointerReleased(const Control&, const PREArgs& e
 }
 
 void MainWindow::timelineCanvas_PointerCanceled(const Control&, const PREArgs& e){
-    if(m_isTimelineDragging && e.Pointer().PointerId() == m_timelineDragPointerId){
-        m_isTimelineDragging = false;
-        m_timelineDragMoved = false;
+    if(m_timelineInteraction.isDragging && e.Pointer().PointerId() == m_timelineInteraction.dragPointerId){
+        m_timelineInteraction.isDragging = false;
+        m_timelineInteraction.dragMoved = false;
         TimelineCanvas().ReleasePointerCapture(e.Pointer());
         e.Handled(true);
     }
 }
 
 void MainWindow::timelineCanvas_PointerCaptureLost(const Control&, const PREArgs&){
-    m_isTimelineDragging = false;
-    m_timelineDragMoved = false;
+    m_timelineInteraction.isDragging = false;
+    m_timelineInteraction.dragMoved = false;
 }
 
 void MainWindow::timelineCanvas_Loaded(const Control&, const REArgs&){
@@ -2457,9 +2457,9 @@ void MainWindow::window_KeyDown(const Control&, const KRArgs&){
 }
 
 void MainWindow::separatePreviewWindowMenuItem_Click(const Control&, const REArgs&){
-    const auto targetOpen{!m_isSeparatePreviewWindowOpen};
+    const auto targetOpen{!m_separatePreview.isOpen};
     if(!setSeparatePreviewWindowOpen(targetOpen)){
-        SeparatePreviewWindowMenuItem().IsChecked(m_isSeparatePreviewWindowOpen);
+        SeparatePreviewWindowMenuItem().IsChecked(m_separatePreview.isOpen);
     }
 }
 
@@ -2483,7 +2483,7 @@ void MainWindow::adjustTimelineZoomBy(int delta){
 
     const auto bar{TimelineHorizontalScrollBar()};
     const auto barMaximum{max(0.0, bar.Maximum())};
-    m_pendingTimelineScrollbarRatio = barMaximum > 0.0
+    m_timelineInteraction.pendingScrollbarRatio = barMaximum > 0.0
         ? std::optional<double>{clamp(bar.Value() / barMaximum, 0.0, 1.0)}
         : std::optional<double>{0.0};
 
@@ -2492,7 +2492,7 @@ void MainWindow::adjustTimelineZoomBy(int delta){
 }
 
 bool MainWindow::setSeparatePreviewWindowOpen(bool open){
-    if(open == m_isSeparatePreviewWindowOpen){
+    if(open == m_separatePreview.isOpen){
         SeparatePreviewWindowMenuItem().IsChecked(open);
         return true;
     }
@@ -2557,12 +2557,12 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
             }
         });
 
-        m_separatePreviewClosedRevoker = previewWindow.Closed(auto_revoke, {this, &MainWindow::onSeparatePreviewWindowClosed});
-        m_separatePreviewWindow = previewWindow;
-        m_detachedPreviewPlayer = detachedPreview;
-        m_detachedPreviewSplashImage = detachedSplash;
-        m_isSeparatePreviewWindowOpen = true;
-        m_isSeparatePreviewFullscreen = false;
+        m_separatePreview.closedRevoker = previewWindow.Closed(auto_revoke, {this, &MainWindow::onSeparatePreviewWindowClosed});
+        m_separatePreview.window = previewWindow;
+        m_separatePreview.player = detachedPreview;
+        m_separatePreview.splashImage = detachedSplash;
+        m_separatePreview.isOpen = true;
+        m_separatePreview.isFullscreen = false;
         m_appSettings.restorePreviewDetachedOnStartup = true;
         PreviewPlayer().SetMediaPlayer(nullptr);
         updatePreviewPlaceholderVisibility();
@@ -2576,22 +2576,22 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         return true;
     }
 
-    if(m_separatePreviewWindow){
+    if(m_separatePreview.window){
         HWND previewHwnd{};
-        if(SUCCEEDED(m_separatePreviewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd)) && previewHwnd){
+        if(SUCCEEDED(m_separatePreview.window.as<::IWindowNative>()->get_WindowHandle(&previewHwnd)) && previewHwnd){
             saveSeparatePreviewPlacement(previewHwnd);
         }
 
-        m_separatePreviewClosedRevoker.revoke();
-        m_separatePreviewWindow.Close();
-        m_separatePreviewWindow = nullptr;
+        m_separatePreview.closedRevoker.revoke();
+        m_separatePreview.window.Close();
+        m_separatePreview.window = nullptr;
     }
 
     PreviewPlayer().SetMediaPlayer(m_player);
-    m_detachedPreviewPlayer = nullptr;
-    m_detachedPreviewSplashImage = nullptr;
-    m_isSeparatePreviewWindowOpen = false;
-    m_isSeparatePreviewFullscreen = false;
+    m_separatePreview.player = nullptr;
+    m_separatePreview.splashImage = nullptr;
+    m_separatePreview.isOpen = false;
+    m_separatePreview.isFullscreen = false;
     m_appSettings.restorePreviewDetachedOnStartup = false;
     updatePreviewPlaceholderVisibility();
     SeparatePreviewWindowMenuItem().IsChecked(false);
@@ -2600,23 +2600,23 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
 }
 
 void MainWindow::onSeparatePreviewWindowClosed(const Control&, const WEArgs&){
-    if(m_separatePreviewWindow){
+    if(m_separatePreview.window){
         HWND previewHwnd{};
-        if(SUCCEEDED(m_separatePreviewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd)) && previewHwnd){
+        if(SUCCEEDED(m_separatePreview.window.as<::IWindowNative>()->get_WindowHandle(&previewHwnd)) && previewHwnd){
             saveSeparatePreviewPlacement(previewHwnd);
         }
     }
 
-    m_separatePreviewClosedRevoker.revoke();
-    m_separatePreviewWindow = nullptr;
-    m_isSeparatePreviewWindowOpen = false;
-    m_isSeparatePreviewFullscreen = false;
+    m_separatePreview.closedRevoker.revoke();
+    m_separatePreview.window = nullptr;
+    m_separatePreview.isOpen = false;
+    m_separatePreview.isFullscreen = false;
     if(!m_isClosing){
         m_appSettings.restorePreviewDetachedOnStartup = false;
     }
     PreviewPlayer().SetMediaPlayer(m_player);
-    m_detachedPreviewPlayer = nullptr;
-    m_detachedPreviewSplashImage = nullptr;
+    m_separatePreview.player = nullptr;
+    m_separatePreview.splashImage = nullptr;
     updatePreviewPlaceholderVisibility();
     SeparatePreviewWindowMenuItem().IsChecked(false);
     setStatusMessage(L"Preview restored to main window");
@@ -2636,8 +2636,8 @@ void MainWindow::saveSeparatePreviewPlacement(HWND previewHwnd){
         return;
     }
 
-    if(m_isSeparatePreviewFullscreen && (m_separatePreviewRestoreRect.right > m_separatePreviewRestoreRect.left) && (m_separatePreviewRestoreRect.bottom > m_separatePreviewRestoreRect.top)){
-        bounds = m_separatePreviewRestoreRect;
+    if(m_separatePreview.isFullscreen && (m_separatePreview.restoreRect.right > m_separatePreview.restoreRect.left) && (m_separatePreview.restoreRect.bottom > m_separatePreview.restoreRect.top)){
+        bounds = m_separatePreview.restoreRect;
     }
 
     const auto dpi{::GetDpiForWindow(previewHwnd)};
@@ -2660,30 +2660,30 @@ void MainWindow::restoreSeparatePreviewPlacement(HWND previewHwnd){
 }
 
 bool MainWindow::toggleSeparatePreviewFullscreen(){
-    if(!m_isSeparatePreviewWindowOpen || !m_separatePreviewWindow){
+    if(!m_separatePreview.isOpen || !m_separatePreview.window){
         setStatusMessage(L"Open the separate preview window first");
         return false;
     }
 
     HWND previewHwnd{};
-    check_hresult(m_separatePreviewWindow.as<::IWindowNative>()->get_WindowHandle(&previewHwnd));
+    check_hresult(m_separatePreview.window.as<::IWindowNative>()->get_WindowHandle(&previewHwnd));
     if(!previewHwnd){
         setErrorMessage(L"Could not resolve preview window handle");
         return false;
     }
 
-    if(!m_isSeparatePreviewFullscreen){
+    if(!m_separatePreview.isFullscreen){
         RECT currentRect{};
         if(!::GetWindowRect(previewHwnd, &currentRect)){
             setErrorMessage(L"Could not read preview window bounds");
             return false;
         }
 
-        m_separatePreviewRestoreRect = currentRect;
-        m_separatePreviewRestoreStyle = ::GetWindowLongPtrW(previewHwnd, GWL_STYLE);
-        m_separatePreviewRestoreExStyle = ::GetWindowLongPtrW(previewHwnd, GWL_EXSTYLE);
+        m_separatePreview.restoreRect = currentRect;
+        m_separatePreview.restoreStyle = ::GetWindowLongPtrW(previewHwnd, GWL_STYLE);
+        m_separatePreview.restoreExStyle = ::GetWindowLongPtrW(previewHwnd, GWL_EXSTYLE);
 
-        const auto fullscreenStyle{m_separatePreviewRestoreStyle & ~(WS_OVERLAPPEDWINDOW)};
+        const auto fullscreenStyle{m_separatePreview.restoreStyle & ~(WS_OVERLAPPEDWINDOW)};
         ::SetWindowLongPtrW(previewHwnd, GWL_STYLE, fullscreenStyle);
 
         MONITORINFO monitorInfo{.cbSize = sizeof(monitorInfo)};
@@ -2702,24 +2702,24 @@ bool MainWindow::toggleSeparatePreviewFullscreen(){
             monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top,
             SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
-        m_isSeparatePreviewFullscreen = true;
+        m_separatePreview.isFullscreen = true;
         m_appSettings.restorePreviewFullscreenOnStartup = true;
         setStatusMessage(L"Separate preview: full-screen on");
         return true;
     }
 
-    ::SetWindowLongPtrW(previewHwnd, GWL_STYLE, m_separatePreviewRestoreStyle);
-    ::SetWindowLongPtrW(previewHwnd, GWL_EXSTYLE, m_separatePreviewRestoreExStyle);
+    ::SetWindowLongPtrW(previewHwnd, GWL_STYLE, m_separatePreview.restoreStyle);
+    ::SetWindowLongPtrW(previewHwnd, GWL_EXSTYLE, m_separatePreview.restoreExStyle);
     ::SetWindowPos(
         previewHwnd,
         HWND_NOTOPMOST,
-        m_separatePreviewRestoreRect.left,
-        m_separatePreviewRestoreRect.top,
-        m_separatePreviewRestoreRect.right - m_separatePreviewRestoreRect.left,
-        m_separatePreviewRestoreRect.bottom - m_separatePreviewRestoreRect.top,
+        m_separatePreview.restoreRect.left,
+        m_separatePreview.restoreRect.top,
+        m_separatePreview.restoreRect.right - m_separatePreview.restoreRect.left,
+        m_separatePreview.restoreRect.bottom - m_separatePreview.restoreRect.top,
         SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
-    m_isSeparatePreviewFullscreen = false;
+    m_separatePreview.isFullscreen = false;
     m_appSettings.restorePreviewFullscreenOnStartup = false;
     setStatusMessage(L"Separate preview: full-screen off");
     return true;
@@ -3093,8 +3093,8 @@ void MainWindow::resetProjectState(){
     m_pendingNudgeDirectionAfterRapLookup = 0;
     m_exportEtaText.clear();
     m_lastExportEtaProgress.reset();
-    m_pendingTimelineScrollbarRatio.reset();
-    m_pendingTimelineWheelZoomAnchor.reset();
+    m_timelineInteraction.pendingScrollbarRatio.reset();
+    m_timelineInteraction.pendingWheelZoomAnchor.reset();
     m_timelineDurationSeconds = 0;
     TimelineZoomSlider().Value(m_prj.zoom());
     refreshVideoDetailsPanel();
@@ -3337,9 +3337,9 @@ wstring MainWindow::formatDateTimeText(const winrt::Windows::Foundation::DateTim
 void MainWindow::updatePreviewPlaceholderVisibility(){
     const auto hasLoadedVideo{m_prj.videoFile() && !m_prj.videoFile().Path().empty()};
 
-    if(m_detachedPreviewPlayer && m_detachedPreviewSplashImage){
-        m_detachedPreviewPlayer.Visibility(hasLoadedVideo ? Visibility::Visible : Visibility::Collapsed);
-        m_detachedPreviewSplashImage.Visibility(hasLoadedVideo ? Visibility::Collapsed : Visibility::Visible);
+    if(m_separatePreview.player && m_separatePreview.splashImage){
+        m_separatePreview.player.Visibility(hasLoadedVideo ? Visibility::Visible : Visibility::Collapsed);
+        m_separatePreview.splashImage.Visibility(hasLoadedVideo ? Visibility::Collapsed : Visibility::Visible);
     }
 }
 
@@ -4221,8 +4221,8 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_pendingReevaluateAfterRapLookup = false;
     m_pendingReevaluateWithoutUndoAfterRapLookup = false;
     m_pendingNudgeDirectionAfterRapLookup = 0;
-    m_pendingTimelineScrollbarRatio.reset();
-    m_pendingTimelineWheelZoomAnchor.reset();
+    m_timelineInteraction.pendingScrollbarRatio.reset();
+    m_timelineInteraction.pendingWheelZoomAnchor.reset();
     m_projectPath.clear();
 
     wstring status{L"Loaded: "};
@@ -4383,29 +4383,29 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         renderCutOverlays();
         syncTimelineHorizontalScrollBar();
 
-        if(m_pendingTimelineWheelZoomAnchor){
+        if(m_timelineInteraction.pendingWheelZoomAnchor){
             const auto scrollViewer{TimelineScrollViewer()};
             const auto anchorCanvasX{m_tl.timeToCanvasX(
-                m_pendingTimelineWheelZoomAnchor->time100ns,
+                m_timelineInteraction.pendingWheelZoomAnchor->time100ns,
                 m_prj.timelineDuration100ns(),
                 totalWidth)};
             const auto viewportWidth{max(1.0, scrollViewer.ViewportWidth())};
             const auto updatedScrollableWidth{max(0.0, totalWidth - viewportWidth)};
             const auto targetOffsetValue{
-                clamp(anchorCanvasX - m_pendingTimelineWheelZoomAnchor->viewportPointerX, 0.0, updatedScrollableWidth)};
+                clamp(anchorCanvasX - m_timelineInteraction.pendingWheelZoomAnchor->viewportPointerX, 0.0, updatedScrollableWidth)};
             const auto targetOffset{box_value(targetOffsetValue).as<IReference<double>>()};
             scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
             syncTimelineHorizontalScrollBar();
-            m_pendingTimelineWheelZoomAnchor.reset();
-            m_pendingTimelineScrollbarRatio.reset();
-        }else if(m_pendingTimelineScrollbarRatio){
+            m_timelineInteraction.pendingWheelZoomAnchor.reset();
+            m_timelineInteraction.pendingScrollbarRatio.reset();
+        }else if(m_timelineInteraction.pendingScrollbarRatio){
             const auto scrollViewer{TimelineScrollViewer()};
             const auto barMaximum{max(0.0, TimelineHorizontalScrollBar().Maximum())};
-            const auto targetOffsetValue{clamp((*m_pendingTimelineScrollbarRatio) * barMaximum, 0.0, barMaximum)};
+            const auto targetOffsetValue{clamp((*m_timelineInteraction.pendingScrollbarRatio) * barMaximum, 0.0, barMaximum)};
             const auto targetOffset{box_value(targetOffsetValue).as<IReference<double>>()};
             scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
             syncTimelineHorizontalScrollBar();
-            m_pendingTimelineScrollbarRatio.reset();
+            m_timelineInteraction.pendingScrollbarRatio.reset();
         }
 
         const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_prj.videoFile())};

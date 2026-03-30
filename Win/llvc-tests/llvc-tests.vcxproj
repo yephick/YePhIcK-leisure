@@ -84,6 +84,7 @@
     <ClCompile Include="..\llvc\Project.ixx" />
     <ClCompile Include="..\llvc\Timeline.ixx" />
     <ClCompile Include="..\llvc\EditorController.ixx" />
+    <ClCompile Include="..\llvc\EditorCommands.ixx" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

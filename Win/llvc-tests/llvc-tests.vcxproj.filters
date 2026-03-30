@@ -22,5 +22,8 @@
     <ClCompile Include="..\llvc\EditorController.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\llvc\EditorCommands.ixx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
