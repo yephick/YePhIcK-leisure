@@ -1089,6 +1089,7 @@ MainWindow::MainWindow(const hstring& launchArguments){
     refreshRecentProjectsMenu();
     updateWindowTitle();
     refreshStatusInfoSection();
+    m_isUiReadyForEvents = true;
 
     if(m_appSettings.restorePreviewDetachedOnStartup){
         (void)setSeparatePreviewWindowOpen(true);
@@ -1321,10 +1322,23 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
 
 void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&){
     m_prj.setZoom(TimelineZoomSlider().Value());
+    if(!m_isUiReadyForEvents){
+        return;
+    }
+
+    if(!m_pendingTimelineWheelZoomAnchor && !m_pendingTimelineScrollbarRatio){
+        const auto bar{TimelineHorizontalScrollBar()};
+        if(bar){
+            const auto barMaximum{max(0.0, bar.Maximum())};
+            m_pendingTimelineScrollbarRatio = barMaximum > 0.0
+                ? std::optional<double>{clamp(bar.Value() / barMaximum, 0.0, 1.0)}
+                : std::optional<double>{0.0};
+        }
+    }
+
     if(m_prj.videoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }
-    ensureCurrentTimelineCursorVisible();
     updateWindowTitle();
     tryFocusTimelineCanvas(FocusState::Programmatic);
 }
@@ -1336,10 +1350,7 @@ void MainWindow::timelineZoomSlider_PointerWheelChanged(const Control&, const PR
         return;
     }
 
-    auto slider{TimelineZoomSlider()};
-    const auto direction{delta > 0 ? 1.0 : -1.0};
-    const auto step{max(0.1, slider.SmallChange())};
-    slider.Value(clamp(slider.Value() + (direction * step), slider.Minimum(), slider.Maximum()));
+    adjustTimelineZoomBy(delta > 0 ? 1 : -1);
     args.Handled(true);
 }
 
@@ -1431,6 +1442,16 @@ void MainWindow::timelineScrollViewer_PointerWheelChanged(const Control&, const 
     const auto delta{point.Properties().MouseWheelDelta()};
     if(delta == 0){
         return;
+    }
+
+    if(m_prj.timelineDuration100ns() > 0 && TimelineCanvas().Width() > 0){
+        const auto pointerXOnCanvas{point.Position().X + TimelineScrollViewer().HorizontalOffset()};
+        if(const auto time100ns{timelinePointToTime100ns(pointerXOnCanvas, TimelineCanvas().Width())}){
+            m_pendingTimelineWheelZoomAnchor = TimelineWheelZoomAnchor{
+                .time100ns = *time100ns,
+                .viewportPointerX = point.Position().X,
+            };
+        }
     }
 
     adjustTimelineZoomBy(delta > 0 ? 1 : -1);
@@ -1704,33 +1725,15 @@ void MainWindow::ensureCurrentTimelineCursorVisible(){
 }
 
 void MainWindow::renderTimelineTicks(){
-    TimelineTickCanvas().Children().Clear();
-
     const auto width{TimelineCanvas().Width()};
-    TimelineTickCanvas().Width(width);
     if(m_timelineDurationSeconds <= 0 || width <= 0){
+        TimelineTickCanvas().Children().Clear();
+        TimelineTickCanvas().Width(width);
         refreshStatusInfoSection();
         return;
     }
 
-    for(const auto& tickData: m_tl.buildMajorTicks(width, m_timelineDurationSeconds)){
-        Shapes::Line majorTick{};
-        majorTick.X1(tickData.x);
-        majorTick.X2(tickData.x);
-        majorTick.Y1(7);
-        majorTick.Y2(23);
-        majorTick.Stroke(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 180, 180, 180)));
-        majorTick.StrokeThickness(1.0);
-        TimelineTickCanvas().Children().Append(majorTick);
-
-        Controls::TextBlock label{};
-        label.Text(tickData.label);
-        label.FontSize(11);
-        label.Foreground(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 200, 200, 200)));
-        Controls::Canvas::SetLeft(label, max(0.0, tickData.x + 3.0));
-        Controls::Canvas::SetTop(label, 0);
-        TimelineTickCanvas().Children().Append(label);
-    }
+    ::llvc::renderTimelineMajorTicks(m_tl, TimelineTickCanvas(), width, m_timelineDurationSeconds);
 }
 
 void MainWindow::renderKeyframeTicks(){
@@ -1738,72 +1741,19 @@ void MainWindow::renderKeyframeTicks(){
         return;
     }
 
-    const auto width {TimelineTickCanvas().Width()};
-    const auto total100ns{static_cast<double>(m_prj.timelineDuration100ns())};
-    for(const auto& marker: m_prj.frameIndex()){
-        if(total100ns <= 0){
-            continue;
-        }
-        const auto x{clamp((marker.time100ns / total100ns) * width, 0.0, width)};
-        Shapes::Line tick{};
-        tick.X1(x);
-        tick.X2(x);
-        tick.Y1(0);
-        tick.Y2(8.0);
-        const auto color{marker.cleanPoint
-            ? Windows::UI::ColorHelper::FromArgb(255, 72, 214, 104)
-            : Windows::UI::ColorHelper::FromArgb(255, 255, 80, 80)};
-        tick.Stroke(Media::SolidColorBrush(color));
-        tick.StrokeThickness(2.0);
-        TimelineTickCanvas().Children().Append(tick);
-    }
+    ::llvc::renderTimelineKeyframeTicks(TimelineTickCanvas(), m_prj.frameIndex(), m_prj.timelineDuration100ns());
 }
 
 void MainWindow::renderCutOverlays(){
-    CutOverlayLayer().Children().Clear();
-
     const auto width{TimelineCanvas().Width()};
-    CutOverlayLayer().Width(width);
     if(m_timelineDurationSeconds <= 0 || width <= 0){
+        CutOverlayLayer().Children().Clear();
+        CutOverlayLayer().Width(width);
         refreshStatusInfoSection();
         return;
     }
 
-    const auto overlayColor {Windows::UI::ColorHelper::FromArgb(180, 0, 0, 0)};
-    const auto crossColor {Windows::UI::ColorHelper::FromArgb(220, 255, 48, 48)};
-    for(const auto& overlay: m_tl.buildCutOverlays(m_prj.buildCutRanges100ns(), width, m_timelineDurationSeconds)){
-        const auto left{overlay.left};
-        const auto blockWidth{overlay.width};
-
-        Shapes::Rectangle block{};
-        block.Width(blockWidth);
-        block.Height(86.0);
-        block.Fill(Media::SolidColorBrush(overlayColor));
-        block.IsHitTestVisible(false);
-        Controls::Canvas::SetLeft(block, left);
-        Controls::Canvas::SetTop(block, 0.0);
-        CutOverlayLayer().Children().Append(block);
-
-        Shapes::Line diagonalOne{};
-        diagonalOne.X1(left);
-        diagonalOne.Y1(0.0);
-        diagonalOne.X2(left + blockWidth);
-        diagonalOne.Y2(86.0);
-        diagonalOne.Stroke(Media::SolidColorBrush(crossColor));
-        diagonalOne.StrokeThickness(2.0);
-        diagonalOne.IsHitTestVisible(false);
-        CutOverlayLayer().Children().Append(diagonalOne);
-
-        Shapes::Line diagonalTwo{};
-        diagonalTwo.X1(left + blockWidth);
-        diagonalTwo.Y1(0.0);
-        diagonalTwo.X2(left);
-        diagonalTwo.Y2(86.0);
-        diagonalTwo.Stroke(Media::SolidColorBrush(crossColor));
-        diagonalTwo.StrokeThickness(2.0);
-        diagonalTwo.IsHitTestVisible(false);
-        CutOverlayLayer().Children().Append(diagonalTwo);
-    }
+    ::llvc::renderTimelineCutOverlays(m_tl, CutOverlayLayer(), m_prj.buildCutRanges100ns(), width, m_timelineDurationSeconds);
 
     refreshStatusInfoSection();
 }
@@ -2530,6 +2480,12 @@ void MainWindow::adjustTimelineZoomBy(int delta){
         return;
     }
 
+    const auto bar{TimelineHorizontalScrollBar()};
+    const auto barMaximum{max(0.0, bar.Maximum())};
+    m_pendingTimelineScrollbarRatio = barMaximum > 0.0
+        ? std::optional<double>{clamp(bar.Value() / barMaximum, 0.0, 1.0)}
+        : std::optional<double>{0.0};
+
     const auto target{clamp(slider.Value() + delta, slider.Minimum(), slider.Maximum())};
     slider.Value(target);
 }
@@ -3136,6 +3092,8 @@ void MainWindow::resetProjectState(){
     m_pendingNudgeDirectionAfterRapLookup = 0;
     m_exportEtaText.clear();
     m_lastExportEtaProgress.reset();
+    m_pendingTimelineScrollbarRatio.reset();
+    m_pendingTimelineWheelZoomAnchor.reset();
     m_timelineDurationSeconds = 0;
     TimelineZoomSlider().Value(m_prj.zoom());
     refreshVideoDetailsPanel();
@@ -4262,6 +4220,8 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_pendingReevaluateAfterRapLookup = false;
     m_pendingReevaluateWithoutUndoAfterRapLookup = false;
     m_pendingNudgeDirectionAfterRapLookup = 0;
+    m_pendingTimelineScrollbarRatio.reset();
+    m_pendingTimelineWheelZoomAnchor.reset();
     m_projectPath.clear();
 
     wstring status{L"Loaded: "};
@@ -4409,7 +4369,11 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         const auto zoomSetting{TimelineZoomSlider().Value()};
         const auto zoomScale{zoomSetting / 4.0};
         const auto totalWidth{max(800.0, m_timelineDurationSeconds * 14.0 * zoomScale)};
-        const auto thumbnailCount{clamp(static_cast<int>(totalWidth / 150.0), 8, 96)};
+        constexpr auto thumbnailImageWidth{153.0};
+        constexpr auto thumbnailImageHeight{86.0};
+        constexpr auto thumbnailGap{6.0};
+        const auto thumbnailSlotWidth{thumbnailImageWidth + thumbnailGap};
+        const auto thumbnailCount{clamp(static_cast<int>(ceil(totalWidth / thumbnailSlotWidth)), 8, 96)};
         const auto thumbnailWidth{totalWidth / thumbnailCount};
 
         TimelineCanvas().Width(totalWidth);
@@ -4419,6 +4383,31 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         renderKeyframeTicks();
         renderCutOverlays();
         syncTimelineHorizontalScrollBar();
+
+        if(m_pendingTimelineWheelZoomAnchor){
+            const auto scrollViewer{TimelineScrollViewer()};
+            const auto anchorCanvasX{m_tl.timeToCanvasX(
+                m_pendingTimelineWheelZoomAnchor->time100ns,
+                m_prj.timelineDuration100ns(),
+                totalWidth)};
+            const auto viewportWidth{max(1.0, scrollViewer.ViewportWidth())};
+            const auto updatedScrollableWidth{max(0.0, totalWidth - viewportWidth)};
+            const auto targetOffsetValue{
+                clamp(anchorCanvasX - m_pendingTimelineWheelZoomAnchor->viewportPointerX, 0.0, updatedScrollableWidth)};
+            const auto targetOffset{box_value(targetOffsetValue).as<IReference<double>>()};
+            scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
+            syncTimelineHorizontalScrollBar();
+            m_pendingTimelineWheelZoomAnchor.reset();
+            m_pendingTimelineScrollbarRatio.reset();
+        }else if(m_pendingTimelineScrollbarRatio){
+            const auto scrollViewer{TimelineScrollViewer()};
+            const auto barMaximum{max(0.0, TimelineHorizontalScrollBar().Maximum())};
+            const auto targetOffsetValue{clamp((*m_pendingTimelineScrollbarRatio) * barMaximum, 0.0, barMaximum)};
+            const auto targetOffset{box_value(targetOffsetValue).as<IReference<double>>()};
+            scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
+            syncTimelineHorizontalScrollBar();
+            m_pendingTimelineScrollbarRatio.reset();
+        }
 
         const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(m_prj.videoFile())};
         Windows::Media::Editing::MediaComposition composition{};
@@ -4485,15 +4474,16 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
             }
 
             Controls::Image image{};
-            image.Width(max(8.0, thumbnailWidth - 2.0));
-            image.Height(86);
+            image.Width(thumbnailImageWidth);
+            image.Height(thumbnailImageHeight);
             image.Stretch(Media::Stretch::UniformToFill);
 
             Media::Imaging::BitmapImage bitmap{};
             co_await bitmap.SetSourceAsync(stream);
             image.Source(bitmap);
 
-            Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
+            const auto thumbnailLeft{(nextIndex * thumbnailWidth) + max(0.0, (thumbnailWidth - thumbnailImageWidth) / 2.0)};
+            Controls::Canvas::SetLeft(image, thumbnailLeft);
             ThumbnailLayer().Children().Append(image);
             thumbnailBuilt[nextIndex] = true;
             renderCutOverlays();

@@ -18,6 +18,7 @@
     <ClCompile Include="Dialogs.ixx" />
     <ClCompile Include="Project.ixx" />
     <ClCompile Include="Timeline.ixx" />
+    <ClCompile Include="TimelineRenderer.ixx" />
     <ClCompile Include="Utils.ixx" />
     <ClCompile Include="Export.ixx" />
     <ClCompile Include="Media.ixx" />

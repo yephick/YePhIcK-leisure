@@ -14,6 +14,7 @@
 struct _GUID;
 import llvc.Project;
 import llvc.Timeline;
+import llvc.TimelineRenderer;
 import llvc.Media;
 import llvc.Utils;
 import llvc.EditorController;
@@ -123,6 +124,11 @@ struct MainWindow: MainWindowT<MainWindow>{
     void requestExportCancel();
 
 private:
+    struct TimelineWheelZoomAnchor final{
+        int64_t time100ns{};
+        double viewportPointerX{};
+    };
+
     MP m_player{nullptr};
     MPSession::NaturalDurationChanged_revoker m_naturalDurationChangedRevoker{};
     DTS m_positionTimer{nullptr};
@@ -137,6 +143,7 @@ private:
     bool m_cachedRapLookupSucceeded{false};
     bool m_isRapLookupInProgress{false};
     bool m_hasTimelineRenderCompleted{false};
+    bool m_isUiReadyForEvents{false};
     bool m_pendingReevaluateAfterRapLookup{false};
     bool m_pendingReevaluateWithoutUndoAfterRapLookup{false};
     int m_pendingNudgeDirectionAfterRapLookup{0};
@@ -164,6 +171,8 @@ private:
     uint32_t m_timelineDragPointerId{0};
     double m_timelineDragStartX{0};
     double m_timelineDragStartOffset{0};
+    std::optional<double> m_pendingTimelineScrollbarRatio{};
+    std::optional<TimelineWheelZoomAnchor> m_pendingTimelineWheelZoomAnchor{};
     winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
     bool m_isSeparatePreviewWindowOpen{false};
     bool m_isSeparatePreviewFullscreen{false};
