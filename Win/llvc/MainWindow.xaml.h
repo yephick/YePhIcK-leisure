@@ -16,6 +16,7 @@ import llvc.Project;
 import llvc.Timeline;
 import llvc.Media;
 import llvc.Utils;
+import llvc.EditorController;
 
 namespace winrt::llvc::implementation{
 
@@ -160,7 +161,6 @@ private:
     uint32_t m_timelineDragPointerId{0};
     double m_timelineDragStartX{0};
     double m_timelineDragStartOffset{0};
-    bool m_isApplyingUndoRedoState{false};
     winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
     bool m_isSeparatePreviewWindowOpen{false};
     bool m_isSeparatePreviewFullscreen{false};
@@ -174,15 +174,7 @@ private:
     ::llvc::Project m_prj{};
     ::llvc::Timeline m_tl{};
 
-    struct UndoRedoState final{
-        vector<::llvc::IndexedFrameSample> frameIndex{};
-        vector<uint32_t> cutScenes{};
-        bool keepAudio{true};
-        int32_t audioCrossfadeMs{0};
-        int32_t audioVolumePct{100};
-    };
-    vector<UndoRedoState> m_undoStack{};
-    vector<UndoRedoState> m_redoStack{};
+    ::llvc::EditorHistoryState m_editorHistory{};
     winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_mainWindowClosedRevoker{};
 
 private:
@@ -253,13 +245,10 @@ private:
     void queueRapLookup(bool queueReevaluate, int nudgeDirection);
     IOpBool ensureRapMarkersAvailableAsync(const wstring& statusMessage, const std::function<void(double)>& progressCallback = {});
     fire_and_forget runRapLookupAsync();
-    UndoRedoState captureUndoRedoState() const;
-    bool isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const;
     void clearUndoRedoHistory();
-    bool pushUndoStateIfChanged();
-    bool applyUndoRedoState(const UndoRedoState& state, bool fromUndo);
     bool undoLastEdit();
     bool redoLastEdit();
+    void refreshEditorUiState();
     void updateAudioUiAndPlaybackState();
     void setVideoDetailsPanelExpanded(bool expanded);
     void refreshVideoDetailsPanel();

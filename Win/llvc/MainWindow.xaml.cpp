@@ -36,6 +36,7 @@
 #include <winrt/Windows.System.h>
 
 import std;
+import llvc.EditorController;
 import llvc.Export;
 import llvc.Media;
 import llvc.Utils;
@@ -989,67 +990,11 @@ wstring audioVolumeGlyph(bool keepAudio, int32_t volumePct){
     return L"\xD83D\xDD09"; // U+1F509
 }
 
-bool MainWindow::isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const{
-    if(a.keepAudio != b.keepAudio || a.audioCrossfadeMs != b.audioCrossfadeMs || a.audioVolumePct != b.audioVolumePct || a.cutScenes != b.cutScenes || a.frameIndex.size() != b.frameIndex.size()){
-        return false;
-    }
-
-    for(size_t i{}; i < a.frameIndex.size(); ++i){
-        const auto& l{a.frameIndex[i]};
-        const auto& r{b.frameIndex[i]};
-        if(l.time100ns != r.time100ns || l.duration100ns != r.duration100ns || l.cleanPoint != r.cleanPoint || l.sampleIndex != r.sampleIndex){
-            return false;
-        }
-    }
-
-    return true;
-}
-
-MainWindow::UndoRedoState MainWindow::captureUndoRedoState() const{
-    return UndoRedoState{
-        .frameIndex = m_prj.frameIndex(),
-        .cutScenes = m_prj.cutScenes(),
-        .keepAudio = m_prj.keepAudio(),
-        .audioCrossfadeMs = m_prj.audioXfadeMs(),
-        .audioVolumePct = m_prj.audioVolumePct(),
-    };
-}
-
 void MainWindow::clearUndoRedoHistory(){
-    m_undoStack.clear();
-    m_redoStack.clear();
+    ::llvc::clearEditorHistory(m_editorHistory);
 }
 
-bool MainWindow::pushUndoStateIfChanged(){
-    if(m_isApplyingUndoRedoState){
-        return false;
-    }
-
-    const auto current{captureUndoRedoState()};
-    if(!m_undoStack.empty() && isSameUndoRedoState(m_undoStack.back(), current)){
-        return false;
-    }
-
-    m_undoStack.push_back(current);
-    m_redoStack.clear();
-    return true;
-}
-
-bool MainWindow::applyUndoRedoState(const UndoRedoState& state, bool fromUndo){
-    const auto current{captureUndoRedoState()};
-    if(isSameUndoRedoState(current, state)){
-        return false;
-    }
-
-    m_isApplyingUndoRedoState = true;
-
-    m_prj.frameIndex(state.frameIndex);
-    m_prj.refreshSelectedMarkers();
-    m_prj.cutScenes(state.cutScenes);
-    m_prj.keepAudio(state.keepAudio);
-    m_prj.audioXfadeMs(state.audioCrossfadeMs);
-    m_prj.audioVolumePct(state.audioVolumePct);
-
+void MainWindow::refreshEditorUiState(){
     syncAudioCrossfadeComboSelection();
     updateAudioUiAndPlaybackState();
     renderTimelineTicks();
@@ -1058,35 +1003,38 @@ bool MainWindow::applyUndoRedoState(const UndoRedoState& state, bool fromUndo){
     refreshVideoDetailsPanel();
     updateWindowTitle();
     refreshStatusInfoSection();
-
-    m_isApplyingUndoRedoState = false;
-
-    setStatusMessage(fromUndo ? L"Undo applied" : L"Redo applied");
-    return true;
 }
 
 bool MainWindow::undoLastEdit(){
-    if(m_undoStack.empty()){
+    if(m_editorHistory.undoStack.empty()){
         setStatusMessage(L"Nothing to undo");
         return false;
     }
 
-    const auto previous{m_undoStack.back()};
-    m_undoStack.pop_back();
-    m_redoStack.push_back(captureUndoRedoState());
-    return applyUndoRedoState(previous, true);
+    const auto result{::llvc::undo(m_prj, m_editorHistory)};
+    if(!result.changed){
+        return false;
+    }
+
+    refreshEditorUiState();
+    setStatusMessage(L"Undo applied");
+    return true;
 }
 
 bool MainWindow::redoLastEdit(){
-    if(m_redoStack.empty()){
+    if(m_editorHistory.redoStack.empty()){
         setStatusMessage(L"Nothing to redo");
         return false;
     }
 
-    const auto next{m_redoStack.back()};
-    m_redoStack.pop_back();
-    m_undoStack.push_back(captureUndoRedoState());
-    return applyUndoRedoState(next, false);
+    const auto result{::llvc::redo(m_prj, m_editorHistory)};
+    if(!result.changed){
+        return false;
+    }
+
+    refreshEditorUiState();
+    setStatusMessage(L"Redo applied");
+    return true;
 }
 
 MainWindow::MainWindow(const hstring& launchArguments){
@@ -1310,62 +1258,7 @@ bool MainWindow::reevaluateClearCutMarkers(bool pushUndoState){
         return false;
     }
 
-    const auto previousCutRanges{m_prj.buildCutRanges100ns()};
-    const auto beforeState{captureUndoRedoState()};
-    const auto hasUndoSnapshot{pushUndoState ? pushUndoStateIfChanged() : false};
-    vector<IndexedFrameSample> updatedMarkers;
-    updatedMarkers.reserve(originalMarkers.size() * 2);
-    std::optional<int64_t> preservedTailCutStartTime100ns;
-    if(!previousCutRanges.empty()){
-        const auto totalDuration100ns{m_prj.timelineDuration100ns()};
-        const auto& tailCutRange{previousCutRanges.back()};
-        if(tailCutRange.second >= totalDuration100ns && !originalMarkers.empty()){
-            const auto lastMarkerTime100ns{originalMarkers.back().time100ns};
-            if(lastMarkerTime100ns == tailCutRange.first){
-                preservedTailCutStartTime100ns = lastMarkerTime100ns;
-            }
-        }
-    }
-
-    auto replacedCount{0u};
-    for(const auto& marker: originalMarkers){
-        if(preservedTailCutStartTime100ns && marker.time100ns == *preservedTailCutStartTime100ns){
-            updatedMarkers.push_back(marker);
-            continue;
-        }
-
-        if(binary_search(rapTimes100ns.begin(), rapTimes100ns.end(), marker.time100ns)){
-            updatedMarkers.push_back(marker);
-            continue;
-        }
-
-        ++replacedCount;
-        const auto nextIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), marker.time100ns)};
-        if(nextIt != rapTimes100ns.begin()){
-            const auto previousRapTime{*(nextIt - 1)};
-            updatedMarkers.push_back(IndexedFrameSample{.time100ns = previousRapTime, .duration100ns = 0, .cleanPoint = true, .sampleIndex = 0});
-        }
-        if(nextIt != rapTimes100ns.end()){
-            const auto nextRapTime{*nextIt};
-            updatedMarkers.push_back(IndexedFrameSample{.time100ns = nextRapTime, .duration100ns = 0, .cleanPoint = true, .sampleIndex = 0});
-        }
-    }
-
-    sort(updatedMarkers.begin(), updatedMarkers.end(), [](const auto& a, const auto& b){ return a.time100ns < b.time100ns; });
-    updatedMarkers.erase(unique(updatedMarkers.begin(), updatedMarkers.end(), [](const auto& a, const auto& b){ return a.time100ns == b.time100ns; }), updatedMarkers.end());
-
-    m_prj.frameIndex(std::move(updatedMarkers));
-    m_prj.refreshSelectedMarkers();
-
-    const auto sceneBoundaries{m_prj.buildSceneBoundaries100ns()};
-    vector<uint32_t> scenes;
-    for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
-        const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
-        if(m_tl.isTimeInsideRanges(midpoint, previousCutRanges)){
-            scenes.push_back(static_cast<uint32_t>(i));
-        }
-    }
-    m_prj.cutScenes(std::move(scenes));
+    const auto result{::llvc::reevaluateClearCutMarkers(m_prj, m_tl, rapTimes100ns, m_editorHistory, pushUndoState)};
 
     renderTimelineTicks();
     renderKeyframeTicks();
@@ -1374,15 +1267,11 @@ bool MainWindow::reevaluateClearCutMarkers(bool pushUndoState){
     updateWindowTitle();
 
     wstring status{L"Reevaluated clear cut markers against RAP frames"};
-    const auto didChange{!isSameUndoRedoState(beforeState, captureUndoRedoState())};
-    if(!didChange && hasUndoSnapshot && !m_undoStack.empty()){
-        m_undoStack.pop_back();
-    }
     m_pendingReevaluateWithoutUndoAfterRapLookup = false;
-    if(replacedCount == 0){
+    if(result.replacedCount == 0){
         status += L" (no changes needed)";
     }else{
-        status += std::format(L" (updated {})", replacedCount);
+        status += std::format(L" (updated {})", result.replacedCount);
     }
     setStatusMessage(status);
     return true;
@@ -1417,10 +1306,10 @@ void MainWindow::timelineZoomSlider_PointerWheelChanged(const Control&, const PR
 }
 
 void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
-    if(m_isApplyingUndoRedoState){
+    if(m_editorHistory.isApplying){
         return;
     }
-    (void)pushUndoStateIfChanged();
+    (void)::llvc::pushUndoSnapshotIfChanged(m_prj, m_editorHistory);
     m_prj.keepAudio(KeepAudioCheckBox().IsChecked().GetBoolean());
     updateAudioUiAndPlaybackState();
     updateWindowTitle();
@@ -1428,7 +1317,7 @@ void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
 }
 
 void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const Control&){
-    if(m_isApplyingUndoRedoState){
+    if(m_editorHistory.isApplying){
         return;
     }
 
@@ -1438,11 +1327,11 @@ void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const C
     }
 
     try{
-        (void)pushUndoStateIfChanged();
+        (void)::llvc::pushUndoSnapshotIfChanged(m_prj, m_editorHistory);
         const auto val{stoi(wstring(unbox_value<hstring>(selected.Tag())).c_str())};
         m_prj.audioXfadeMs(val);
     } catch(...){
-        (void)pushUndoStateIfChanged();
+        (void)::llvc::pushUndoSnapshotIfChanged(m_prj, m_editorHistory);
         m_prj.audioXfadeMs(0);
     }
 
@@ -1456,11 +1345,11 @@ void MainWindow::audioVolumeSlider_ValueChanged(const Control&, const RBVArgs& a
         return;
     }
 
-    if(m_isApplyingUndoRedoState){
+    if(m_editorHistory.isApplying){
         return;
     }
 
-    (void)pushUndoStateIfChanged();
+    (void)::llvc::pushUndoSnapshotIfChanged(m_prj, m_editorHistory);
     m_prj.audioVolumePct(static_cast<int32_t>(lround(args.NewValue())));
     updateAudioUiAndPlaybackState();
     if(m_prj.keepAudio() && m_prj.audioVolumePct() > 100){
@@ -1567,14 +1456,12 @@ bool MainWindow::hasCutMarkerNearTime100ns(int64_t time100ns) const{
 }
 
 bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
-    const auto markerCountBefore{m_prj.frameIndex().size()};
-    (void)pushUndoStateIfChanged();
-    if(!m_prj.toggleSelectedKeyframeAtTime100ns(time100ns, m_mediaInfo.frameRate)){
+    const auto result{::llvc::toggleSelectedKeyframe(m_prj, m_mediaInfo.frameRate, m_editorHistory, time100ns)};
+    if(!result.changed){
         return false;
     }
 
-    const auto markerCountAfter{m_prj.frameIndex().size()};
-    if(m_appSettings.autoReevaluateCutMarkersOnPlacement && markerCountAfter > markerCountBefore){
+    if(m_appSettings.autoReevaluateCutMarkersOnPlacement && result.markerCountIncreased){
         (void)reevaluateClearCutMarkers(false);
     }
 
@@ -1890,8 +1777,7 @@ void MainWindow::renderCutOverlays(){
 
 
 bool MainWindow::toggleCutBlockAtTime100ns(int64_t time100ns){
-    (void)pushUndoStateIfChanged();
-    if(!m_prj.toggleCutBlockAtTime100ns(time100ns)){
+    if(!::llvc::toggleCutBlock(m_prj, m_editorHistory, time100ns)){
         return false;
     }
 
@@ -1902,8 +1788,7 @@ bool MainWindow::toggleCutBlockAtTime100ns(int64_t time100ns){
 }
 
 bool MainWindow::setCutBlockAtTime100ns(int64_t time100ns, bool cutScene){
-    (void)pushUndoStateIfChanged();
-    if(!m_prj.setCutBlockAtTime100ns(time100ns, cutScene)){
+    if(!::llvc::setCutBlock(m_prj, m_editorHistory, time100ns, cutScene)){
         return false;
     }
 
@@ -2051,7 +1936,7 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
         return false;
     }
 
-    (void)pushUndoStateIfChanged();
+    (void)::llvc::pushUndoSnapshotIfChanged(m_prj, m_editorHistory);
     sort(markers.begin(), markers.end(), [](const auto& a, const auto& b){ return a.time100ns < b.time100ns; });
     markers.erase(unique(markers.begin(), markers.end(), [](const auto& a, const auto& b){ return a.time100ns == b.time100ns; }), markers.end());
     m_prj.frameIndex(std::move(markers));
@@ -4547,8 +4432,8 @@ bool MainWindow::sourceHasAudio() const{
 }
 
 void MainWindow::syncAudioCrossfadeComboSelection(){
-    const auto previousGuard{m_isApplyingUndoRedoState};
-    m_isApplyingUndoRedoState = true;
+    const auto previousGuard{m_editorHistory.isApplying};
+    m_editorHistory.isApplying = true;
 
     const auto combo{AudioCrossfadeComboBox()};
     const auto items{combo.Items()};
@@ -4566,7 +4451,7 @@ void MainWindow::syncAudioCrossfadeComboSelection(){
             const auto tag{unbox_value<hstring>(item.Tag())};
             if(stoi(wstring(tag.c_str())) == m_prj.audioXfadeMs()){
                 combo.SelectedIndex(static_cast<int32_t>(i));
-                m_isApplyingUndoRedoState = previousGuard;
+                m_editorHistory.isApplying = previousGuard;
                 return;
             }
         }catch(...){ }
@@ -4584,7 +4469,7 @@ void MainWindow::syncAudioCrossfadeComboSelection(){
         }
     }
 
-    m_isApplyingUndoRedoState = previousGuard;
+    m_editorHistory.isApplying = previousGuard;
 }
 
 void MainWindow::applyAudioSettingsToPlayer(){
@@ -4612,8 +4497,8 @@ void MainWindow::updateAudioUiAndPlaybackState(){
         m_prj.keepAudio(false);
     }
 
-    const auto previousGuard{m_isApplyingUndoRedoState};
-    m_isApplyingUndoRedoState = true;
+    const auto previousGuard{m_editorHistory.isApplying};
+    m_editorHistory.isApplying = true;
     KeepAudioCheckBox().IsEnabled(hasAudio && !audioHardDisabled);
     KeepAudioCheckBox().IsChecked(box_value(hasAudio && !audioHardDisabled && m_prj.keepAudio()).as<IReference<bool>>());
     AudioCrossfadeComboBox().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
@@ -4624,7 +4509,7 @@ void MainWindow::updateAudioUiAndPlaybackState(){
     const auto showPreviewBoostHint{hasAudio && !audioHardDisabled && m_prj.keepAudio() && m_prj.audioVolumePct() > 100};
     AudioPreviewBoostHintText().Visibility(showPreviewBoostHint ? Visibility::Visible : Visibility::Collapsed);
 
-    m_isApplyingUndoRedoState = previousGuard;
+    m_editorHistory.isApplying = previousGuard;
     applyAudioSettingsToPlayer();
 }
 

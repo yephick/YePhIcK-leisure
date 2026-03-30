@@ -2,6 +2,7 @@ module;
 
 #include <Windows.h>
 #include <winrt/Windows.Storage.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
@@ -42,7 +43,7 @@ struct AppSettingsState final{
     bool generateExportTimeReport{false};
     bool restorePreviewDetachedOnStartup{false};
     bool restorePreviewFullscreenOnStartup{false};
-    optional<WindowPlacementState> separatePreviewPlacement{};
+    std::optional<WindowPlacementState> separatePreviewPlacement{};
 };
 
 wstring trim(wstring value);
@@ -53,7 +54,7 @@ vector<pair<uint32_t, uint32_t>> parseIndexPairs(const wstring& text);
 int32_t pixelsToDips(int32_t pixelValue, uint32_t dpi);
 int32_t dipsToPixels(int32_t dipValue, uint32_t dpi);
 bool isRectVisibleOnAnyMonitor(const RECT& rect);
-optional<WindowPlacementState> captureWindowPlacement(HWND hwnd);
+std::optional<WindowPlacementState> captureWindowPlacement(HWND hwnd);
 bool applyWindowPlacement(HWND hwnd, const WindowPlacementState& state, HWND fallbackWindow = nullptr, bool restoreMaximized = false);
 bool restoreWindowPlacementFromSettings(HWND hwnd, HWND fallbackWindow = nullptr, bool restoreMaximized = false);
 void saveWindowPlacementToSettings(HWND hwnd);
@@ -257,7 +258,7 @@ bool isRectVisibleOnAnyMonitor(const RECT& rect){
     return ::IntersectRect(&intersection, &rect, &monitorInfo.rcWork) != FALSE;
 }
 
-optional<WindowPlacementState> captureWindowPlacement(HWND hwnd){
+std::optional<WindowPlacementState> captureWindowPlacement(HWND hwnd){
     if(!hwnd){
         return nullopt;
     }
