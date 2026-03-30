@@ -1006,6 +1006,28 @@ void MainWindow::refreshEditorUiState(){
     refreshStatusInfoSection();
 }
 
+void MainWindow::applyEditorCommandResult(const ::llvc::EditorCommandResult& result){
+    if(!result.changed){
+        return;
+    }
+
+    if(result.refreshTimelineTicks){
+        renderTimelineTicks();
+    }
+    if(result.refreshKeyframeTicks){
+        renderKeyframeTicks();
+    }
+    if(result.refreshCutOverlays){
+        renderCutOverlays();
+    }
+    if(result.refreshVideoDetails){
+        refreshVideoDetailsPanel();
+    }
+    if(result.refreshWindowTitle){
+        updateWindowTitle();
+    }
+}
+
 bool MainWindow::undoLastEdit(){
     if(m_editorHistory.undoStack.empty()){
         setStatusMessage(L"Nothing to undo");
@@ -1472,20 +1494,16 @@ bool MainWindow::hasCutMarkerNearTime100ns(int64_t time100ns) const{
 }
 
 bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
-    const auto result{::llvc::toggleSelectedKeyframe(m_prj, m_mediaInfo.frameRate, m_editorHistory, time100ns)};
+    const auto result{::llvc::executeToggleMarkerCommand(m_prj, m_mediaInfo.frameRate, m_editorHistory, time100ns)};
     if(!result.changed){
         return false;
     }
 
+    applyEditorCommandResult(result);
+
     if(m_appSettings.autoReevaluateCutMarkersOnPlacement && result.markerCountIncreased){
         (void)reevaluateClearCutMarkers(false);
     }
-
-    renderTimelineTicks();
-    renderKeyframeTicks();
-    renderCutOverlays();
-    refreshVideoDetailsPanel();
-    updateWindowTitle();
     return true;
 }
 
@@ -1792,24 +1810,22 @@ void MainWindow::renderCutOverlays(){
 
 
 bool MainWindow::toggleCutBlockAtTime100ns(int64_t time100ns){
-    if(!::llvc::toggleCutBlock(m_prj, m_editorHistory, time100ns)){
+    const auto result{::llvc::executeToggleCutBlockCommand(m_prj, m_editorHistory, time100ns)};
+    if(!result.changed){
         return false;
     }
 
-    renderCutOverlays();
-    refreshVideoDetailsPanel();
-    updateWindowTitle();
+    applyEditorCommandResult(result);
     return true;
 }
 
 bool MainWindow::setCutBlockAtTime100ns(int64_t time100ns, bool cutScene){
-    if(!::llvc::setCutBlock(m_prj, m_editorHistory, time100ns, cutScene)){
+    const auto result{::llvc::executeSetCutBlockCommand(m_prj, m_editorHistory, time100ns, cutScene)};
+    if(!result.changed){
         return false;
     }
 
-    renderCutOverlays();
-    refreshVideoDetailsPanel();
-    updateWindowTitle();
+    applyEditorCommandResult(result);
     return true;
 }
 
@@ -1839,140 +1855,16 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
         return false;
     }
 
-    const auto boundaries{m_prj.buildSceneBoundaries100ns()};
-    if(boundaries.size() < 2){
-        return false;
-    }
-
     const auto cursorTime100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())};
     if(!cursorTime100ns){
         return false;
     }
-
-    auto sceneIndex{boundaries.size() - 2};
-    for(size_t i{}; i + 1 < boundaries.size(); ++i){
-        if(*cursorTime100ns < boundaries[i + 1]){
-            sceneIndex = i;
-            break;
-        }
-    }
-
-    auto markers{m_prj.frameIndex()};
-    if(markers.empty()){
+    const auto result{::llvc::executeRapNudgeCommand(m_prj, m_tl, rapTimes100ns, m_editorHistory, *cursorTime100ns, expandScene)};
+    if(!result.changed){
         return false;
     }
 
-    const auto previousCutRanges{m_prj.buildCutRanges100ns()};
-
-    const auto moveBoundaryToDirectionalRap = [&](size_t boundaryIndex, bool moveTowardEarlier, int64_t minExclusive, int64_t maxExclusive) -> bool{
-        if(boundaryIndex == 0 || boundaryIndex >= (boundaries.size() - 1)){
-            return false;
-        }
-
-        const auto markerIndex{boundaryIndex - 1};
-        if(markerIndex >= markers.size()){
-            return false;
-        }
-
-        const auto currentBoundaryTime{boundaries[boundaryIndex]};
-        if(binary_search(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)){
-            return false;
-        }
-
-        int64_t replacementBoundaryTime{};
-        if(moveTowardEarlier){
-            const auto it{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)};
-            if(it == rapTimes100ns.begin()){
-                return false;
-            }
-            replacementBoundaryTime = *(it - 1);
-        }else{
-            const auto it{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), currentBoundaryTime)};
-            if(it == rapTimes100ns.end()){
-                return false;
-            }
-            replacementBoundaryTime = *it;
-        }
-
-        if(replacementBoundaryTime <= minExclusive || replacementBoundaryTime >= maxExclusive){
-            return false;
-        }
-
-        markers[markerIndex].time100ns = replacementBoundaryTime;
-        markers[markerIndex].cleanPoint = true;
-        markers[markerIndex].evaluated = true;
-        return true;
-    };
-
-    const auto sceneCount{boundaries.size() - 1};
-    vector<bool> isCut(sceneCount, false);
-    for(const auto cutSceneIndex: m_prj.cutScenes()){
-        if(cutSceneIndex < sceneCount){
-            isCut[cutSceneIndex] = true;
-        }
-    }
-
-    const auto targetCutState{sceneIndex < sceneCount ? isCut[sceneIndex] : false};
-    auto blockStartSceneIndex{sceneIndex};
-    auto blockEndSceneIndex{sceneIndex};
-
-    while(blockStartSceneIndex > 0 && isCut[blockStartSceneIndex - 1] == targetCutState){
-        --blockStartSceneIndex;
-    }
-    while((blockEndSceneIndex + 1) < sceneCount && isCut[blockEndSceneIndex + 1] == targetCutState){
-        ++blockEndSceneIndex;
-    }
-
-    const auto leftBoundaryIndex{blockStartSceneIndex};
-    const auto rightBoundaryIndex{blockEndSceneIndex + 1};
-
-    auto changed{false};
-    constexpr auto noMinBound{std::numeric_limits<int64_t>::lowest()};
-    constexpr auto noMaxBound{std::numeric_limits<int64_t>::max()};
-
-    if(expandScene){
-        if(leftBoundaryIndex > 0){
-            changed = moveBoundaryToDirectionalRap(leftBoundaryIndex, true, noMinBound, boundaries[rightBoundaryIndex]) || changed;
-        }
-        if(rightBoundaryIndex + 1 < boundaries.size()){
-            const auto leftTimeAfterMove{leftBoundaryIndex > 0 ? markers[leftBoundaryIndex - 1].time100ns : boundaries[leftBoundaryIndex]};
-            changed = moveBoundaryToDirectionalRap(rightBoundaryIndex, false, leftTimeAfterMove, noMaxBound) || changed;
-        }
-    }else{
-        if(rightBoundaryIndex + 1 < boundaries.size()){
-            changed = moveBoundaryToDirectionalRap(rightBoundaryIndex, true, boundaries[leftBoundaryIndex], noMaxBound) || changed;
-        }
-        if(leftBoundaryIndex > 0){
-            const auto rightTimeAfterMove{rightBoundaryIndex + 1 < boundaries.size() ? markers[rightBoundaryIndex - 1].time100ns : boundaries[rightBoundaryIndex]};
-            changed = moveBoundaryToDirectionalRap(leftBoundaryIndex, false, noMinBound, rightTimeAfterMove) || changed;
-        }
-    }
-
-    if(!changed){
-        return false;
-    }
-
-    (void)::llvc::pushUndoSnapshotIfChanged(m_prj, m_editorHistory);
-    sort(markers.begin(), markers.end(), [](const auto& a, const auto& b){ return a.time100ns < b.time100ns; });
-    markers.erase(unique(markers.begin(), markers.end(), [](const auto& a, const auto& b){ return a.time100ns == b.time100ns; }), markers.end());
-    m_prj.frameIndex(std::move(markers));
-    m_prj.refreshSelectedMarkers();
-
-    const auto sceneBoundaries{m_prj.buildSceneBoundaries100ns()};
-    vector<uint32_t> scenes;
-    for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
-        const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
-        if(m_tl.isTimeInsideRanges(midpoint, previousCutRanges)){
-            scenes.push_back(static_cast<uint32_t>(i));
-        }
-    }
-    m_prj.cutScenes(std::move(scenes));
-
-    renderTimelineTicks();
-    renderKeyframeTicks();
-    renderCutOverlays();
-    refreshVideoDetailsPanel();
-    updateWindowTitle();
+    applyEditorCommandResult(result);
     return true;
 }
 

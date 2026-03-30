@@ -17,6 +17,7 @@ import llvc.Timeline;
 import llvc.Media;
 import llvc.Utils;
 import llvc.EditorController;
+import llvc.EditorCommands;
 import llvc.Dialogs;
 import llvc.ExportCoordinator;
 
@@ -254,6 +255,7 @@ private:
     void clearUndoRedoHistory();
     bool undoLastEdit();
     bool redoLastEdit();
+    void applyEditorCommandResult(const ::llvc::EditorCommandResult& result);
     void refreshEditorUiState();
     void updateAudioUiAndPlaybackState();
     void setVideoDetailsPanelExpanded(bool expanded);

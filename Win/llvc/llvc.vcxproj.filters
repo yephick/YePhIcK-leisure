@@ -13,6 +13,7 @@
     <ClCompile Include="pch.cpp" />
     <ClCompile Include="Generated Files\module.g.cpp" />
     <ClCompile Include="EditorController.ixx" />
+    <ClCompile Include="EditorCommands.ixx" />
     <ClCompile Include="ExportCoordinator.ixx" />
     <ClCompile Include="Dialogs.ixx" />
     <ClCompile Include="Project.ixx" />
