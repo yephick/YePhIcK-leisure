@@ -175,6 +175,11 @@ private:
     ::llvc::Timeline m_tl{};
 
     ::llvc::EditorHistoryState m_editorHistory{};
+    std::optional<::llvc::EditorSnapshot> m_lastReevaluatedEditorSnapshot{};
+    hstring m_lastReevaluatedRapSourcePath{};
+    mutable std::optional<::llvc::EditorSnapshot> m_cachedEffectiveExportPlanSnapshot{};
+    mutable hstring m_cachedEffectiveExportPlanSourcePath{};
+    mutable std::optional<::llvc::EffectiveExportPlan> m_cachedEffectiveExportPlan{};
     winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_mainWindowClosedRevoker{};
 
 private:
@@ -238,6 +243,7 @@ private:
     void ensureCurrentTimelineCursorVisible();
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
+    bool cutPlanUsesUnevaluatedSceneEdgeMarkers() const;
     bool projectHasRequestedCuts() const;
     std::optional<::llvc::EffectiveExportPlan> tryBuildEffectiveExportPlan(const std::function<void(double)>& progressCallback = {}) const;
     bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns) const;

@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -17,6 +17,7 @@ struct IndexedFrameSample{
     int64_t time100ns{};
     int64_t duration100ns{};
     bool cleanPoint{};
+    bool evaluated{};
     uint32_t sampleIndex{};
 };
 
@@ -106,11 +107,11 @@ namespace llvc{
 
 using namespace std;
 
-vector<int64_t> buildCleanKeyframeTimes100ns(const vector<IndexedFrameSample>& index){
+vector<int64_t> buildEvaluatedKeyframeTimes100ns(const vector<IndexedFrameSample>& index){
     vector<int64_t> times;
     times.reserve(index.size());
     for(const auto& sample: index){
-        if(sample.cleanPoint){
+        if(sample.evaluated){
             times.push_back(sample.time100ns);
         }
     }
@@ -136,6 +137,7 @@ constexpr auto P_KEEP_AUDIO{L"keep_audio"};
 constexpr auto P_AUDIO_CROSSFADE_MS{L"audio_crossfade_ms"};
 constexpr auto P_AUDIO_VOLUME_PCT{L"audio_volume_pct"};
 constexpr auto P_CUT_MARKERS{L"cut_markers"};
+constexpr auto P_RAP_CUT_MARKERS{L"RAP_cut_markers"};
 constexpr auto P_CUT_SCENES{L"cut_scenes"};
 
 struct LoadedProjectData{
@@ -145,6 +147,7 @@ struct LoadedProjectData{
     wstring audioXfadeMs;
     wstring audioVolumePct;
     wstring markers;
+    wstring rapMarkers;
     wstring cutScenes;
 };
 
@@ -169,6 +172,7 @@ LoadedProjectData _parseProjectLines(const Windows::Foundation::Collections::IVe
         if(key == P_FILE_PATH)          { data.loadedFilePath = value; } else
         if(key == P_STORYLINE_ZOOM)     { data.zoomLevel      = value; } else
         if(key == P_CUT_MARKERS)        { data.markers        = value; } else
+        if(key == P_RAP_CUT_MARKERS)    { data.rapMarkers     = value; } else
         if(key == P_CUT_SCENES)         { data.cutScenes      = value; } else
         if(key == P_KEEP_AUDIO)         { data.keepAudio      = value; } else
         if(key == P_AUDIO_CROSSFADE_MS) { data.audioXfadeMs   = value; }
@@ -196,12 +200,21 @@ Project::AAction Project::open(const SFile& file){
     try{ m_zoom = stod(projectData.zoomLevel); } catch(...){}
 
     m_frameIndex = std::move(_parseKeyframeVector(projectData.markers));
+    auto evaluatedMarkerTimes{parseInt64List(projectData.rapMarkers)};
+    sort(evaluatedMarkerTimes.begin(), evaluatedMarkerTimes.end());
+    evaluatedMarkerTimes.erase(unique(evaluatedMarkerTimes.begin(), evaluatedMarkerTimes.end()), evaluatedMarkerTimes.end());
+    for(auto& marker: m_frameIndex){
+        const auto evaluated{binary_search(evaluatedMarkerTimes.begin(), evaluatedMarkerTimes.end(), marker.time100ns)};
+        marker.evaluated = evaluated;
+        marker.cleanPoint = evaluated;
+    }
     sort(m_frameIndex.begin(), m_frameIndex.end(), [](const auto& a, const auto& b){ return a.time100ns < b.time100ns; });
     refreshSelectedMarkers();
 
     const auto markerCount{m_frameIndex.size()};
     const auto sceneCount{static_cast<uint32_t>(markerCount + 1)};
     const auto cutScenes{parseIndexList(projectData.cutScenes)};
+    m_cutScenes.clear();
     for(const auto sceneIndex: cutScenes){
         if(sceneIndex < sceneCount){
             m_cutScenes.push_back(sceneIndex);
@@ -223,6 +236,7 @@ Project::AAction Project::save(const SFile& file){
     lines.emplace_back(wstring(P_AUDIO_CROSSFADE_MS) + L"=" + to_wstring(m_audioCrossfadeMs));
     lines.emplace_back(wstring(P_AUDIO_VOLUME_PCT) + L"=" + to_wstring(m_audioVolumePct));
     lines.emplace_back(wstring(P_CUT_MARKERS) + L"=" + _serializeCutMarkers());
+    lines.emplace_back(wstring(P_RAP_CUT_MARKERS) + L"=" + serializeInt64List(buildEvaluatedKeyframeTimes100ns(m_frameIndex)));
     lines.emplace_back(wstring(P_CUT_SCENES) + L"=" + serializeIndexList(m_cutScenes));
 
     co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(move(lines)));
@@ -280,13 +294,7 @@ void Project::cutScenes(const vector<uint32_t>& v){
 }
 
 vector<IndexedFrameSample> Project::buildRapMarkersFromSelection() const{
-    vector<IndexedFrameSample> rapMarkers;
-    rapMarkers.reserve(m_selectedKeyFrames.size());
-    for(const auto index: m_selectedKeyFrames){
-        if(index < m_frameIndex.size()){
-            rapMarkers.push_back(m_frameIndex[index]);
-        }
-    }
+    auto rapMarkers{m_frameIndex};
     sort(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){ return a.time100ns < b.time100ns; });
     rapMarkers.erase(unique(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){ return a.time100ns == b.time100ns; }), rapMarkers.end());
     return rapMarkers;
@@ -571,7 +579,7 @@ bool Project::toggleSelectedKeyframeAtTime100ns(int64_t time100ns, double fps){
         remapCutScenesAfterMarkerInsertion(insertPos);
 
         const auto frameNumber{static_cast<uint32_t>(clicked100ns / 10'000'000.0 * fps)};
-        m_frameIndex.insert(insertIt, IndexedFrameSample{.time100ns = clicked100ns, .duration100ns = 0, .cleanPoint = true, .sampleIndex = frameNumber});
+        m_frameIndex.insert(insertIt, IndexedFrameSample{.time100ns = clicked100ns, .duration100ns = 0, .cleanPoint = false, .evaluated = false, .sampleIndex = frameNumber});
     }
 
     refreshSelectedMarkers();
@@ -640,7 +648,7 @@ std::optional<size_t> Project::_sceneIndexAtTime100ns(int64_t time100ns) const{
 
 wstring Project::_buildProjectSnapshot() const{
     const auto snapshot{std::format(
-        L"{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n",
+        L"{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n",
         P_STORYLINE_ZOOM,
         m_zoom,
         P_KEEP_AUDIO,
@@ -651,6 +659,8 @@ wstring Project::_buildProjectSnapshot() const{
         m_audioVolumePct,
         P_CUT_MARKERS,
         _serializeCutMarkers(),
+        P_RAP_CUT_MARKERS,
+        serializeInt64List(buildEvaluatedKeyframeTimes100ns(m_frameIndex)),
         P_CUT_SCENES,
         serializeIndexList(m_cutScenes)
     )};
@@ -658,11 +668,9 @@ wstring Project::_buildProjectSnapshot() const{
 }
 
 wstring Project::_serializeCutMarkers() const{
-    const auto markers{buildRapMarkersFromSelection()};
     wstring out;
     bool first{true};
-    for(const auto& k: markers){
-        if(!k.cleanPoint){ continue; }
+    for(const auto& k: m_frameIndex){
         if(!first){ out += L";"; }
         first = false;
         out += std::format(L"{}", k.time100ns);
@@ -686,7 +694,7 @@ vector<IndexedFrameSample> Project::_parseKeyframeVector(const wstring& text){
                 if(!sampleToken.empty()){
                     sampleIndex = stoul(sampleToken);
                 }
-                out.push_back(IndexedFrameSample{.time100ns = t, .duration100ns = 0, .cleanPoint = true, .sampleIndex = sampleIndex});
+                out.push_back(IndexedFrameSample{.time100ns = t, .duration100ns = 0, .cleanPoint = false, .evaluated = false, .sampleIndex = sampleIndex});
             }catch(...){}
         }
         if(sep == wstring::npos){ break; }

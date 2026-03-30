@@ -51,6 +51,8 @@ wstring serializeIndexList(const vector<uint32_t>& values);
 wstring serializeIndexPairs(const vector<pair<uint32_t, uint32_t>>& values);
 vector<uint32_t> parseIndexList(const wstring& text);
 vector<pair<uint32_t, uint32_t>> parseIndexPairs(const wstring& text);
+wstring serializeInt64List(const vector<int64_t>& values);
+vector<int64_t> parseInt64List(const wstring& text);
 int32_t pixelsToDips(int32_t pixelValue, uint32_t dpi);
 int32_t dipsToPixels(int32_t dipValue, uint32_t dpi);
 bool isRectVisibleOnAnyMonitor(const RECT& rect);
@@ -233,6 +235,32 @@ vector<pair<uint32_t, uint32_t>> parseIndexPairs(const wstring& text){
         start = sep + 1;
     }
     return pairs;
+}
+
+wstring serializeInt64List(const vector<int64_t>& values){
+    wstring out;
+    for(size_t i{0}; i < values.size(); ++i){
+        if(i > 0){ out += L","; }
+        out += to_wstring(values[i]);
+    }
+    return out;
+}
+
+vector<int64_t> parseInt64List(const wstring& text){
+    vector<int64_t> values;
+    size_t start{};
+    while(start <= text.size()){
+        const auto pos{text.find(L',', start)};
+        auto token{trim(text.substr(start, pos == wstring::npos ? wstring::npos : pos - start))};
+        if(!token.empty()){
+            try{ values.push_back(stoll(token)); } catch(...){}
+        }
+        if(pos == wstring::npos){ break; }
+        start = pos + 1;
+    }
+    sort(values.begin(), values.end());
+    values.erase(unique(values.begin(), values.end()), values.end());
+    return values;
 }
 
 int32_t pixelsToDips(int32_t pixelValue, uint32_t dpi){

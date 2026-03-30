@@ -1258,7 +1258,22 @@ bool MainWindow::reevaluateClearCutMarkers(bool pushUndoState){
         return false;
     }
 
+    const auto sourcePath{m_prj.videoFile().Path()};
+    const auto beforeSnapshot{::llvc::captureEditorSnapshot(m_prj)};
+    if(m_lastReevaluatedEditorSnapshot
+        && sourcePath == m_lastReevaluatedRapSourcePath
+        && ::llvc::isSameEditorSnapshot(beforeSnapshot, *m_lastReevaluatedEditorSnapshot)){
+        m_pendingReevaluateWithoutUndoAfterRapLookup = false;
+        setStatusMessage(L"Cut markers are already reevaluated for the current RAP scan");
+        return true;
+    }
+
     const auto result{::llvc::reevaluateClearCutMarkers(m_prj, m_tl, rapTimes100ns, m_editorHistory, pushUndoState)};
+    m_lastReevaluatedEditorSnapshot = ::llvc::captureEditorSnapshot(m_prj);
+    m_lastReevaluatedRapSourcePath = sourcePath;
+    m_cachedEffectiveExportPlanSnapshot = m_lastReevaluatedEditorSnapshot;
+    m_cachedEffectiveExportPlanSourcePath = sourcePath;
+    m_cachedEffectiveExportPlan = m_prj.buildEffectiveExportPlanWithRapPreroll(m_prj.timelineDuration100ns(), rapTimes100ns);
 
     renderTimelineTicks();
     renderKeyframeTicks();
@@ -1266,7 +1281,7 @@ bool MainWindow::reevaluateClearCutMarkers(bool pushUndoState){
     refreshVideoDetailsPanel();
     updateWindowTitle();
 
-    wstring status{L"Reevaluated clear cut markers against RAP frames"};
+    wstring status{L"Reevaluated cut markers against RAP frames"};
     m_pendingReevaluateWithoutUndoAfterRapLookup = false;
     if(result.replacedCount == 0){
         status += L" (no changes needed)";
@@ -1712,15 +1727,21 @@ void MainWindow::renderKeyframeTicks(){
     }
 
     const auto width {TimelineTickCanvas().Width()};
-
-    for(const auto x: m_tl.buildKeyframeTickPositions(m_prj.frameIndex(), width, m_timelineDurationSeconds)){
-
+    const auto total100ns{static_cast<double>(m_prj.timelineDuration100ns())};
+    for(const auto& marker: m_prj.frameIndex()){
+        if(total100ns <= 0){
+            continue;
+        }
+        const auto x{clamp((marker.time100ns / total100ns) * width, 0.0, width)};
         Shapes::Line tick{};
         tick.X1(x);
         tick.X2(x);
         tick.Y1(0);
         tick.Y2(8.0);
-        tick.Stroke(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(255, 255, 80, 80)));
+        const auto color{marker.cleanPoint
+            ? Windows::UI::ColorHelper::FromArgb(255, 72, 214, 104)
+            : Windows::UI::ColorHelper::FromArgb(255, 255, 80, 80)};
+        tick.Stroke(Media::SolidColorBrush(color));
         tick.StrokeThickness(2.0);
         TimelineTickCanvas().Children().Append(tick);
     }
@@ -1885,6 +1906,7 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
 
         markers[markerIndex].time100ns = replacementBoundaryTime;
         markers[markerIndex].cleanPoint = true;
+        markers[markerIndex].evaluated = true;
         return true;
     };
 
@@ -2173,14 +2195,68 @@ bool MainWindow::projectHasRequestedCuts() const{
     return !m_prj.buildCutRanges100ns().empty();
 }
 
+bool MainWindow::cutPlanUsesUnevaluatedSceneEdgeMarkers() const{
+    const auto& markers{m_prj.frameIndex()};
+    if(markers.empty()){
+        return false;
+    }
+
+    const auto sceneCount{markers.size() + 1};
+    vector<bool> isCut(sceneCount, false);
+    for(const auto sceneIndex: m_prj.cutScenes()){
+        if(sceneIndex < sceneCount){
+            isCut[sceneIndex] = true;
+        }
+    }
+
+    for(size_t boundaryIndex{1}; boundaryIndex < sceneCount; ++boundaryIndex){
+        if(isCut[boundaryIndex - 1] == isCut[boundaryIndex]){
+            continue;
+        }
+        if(!markers[boundaryIndex - 1].cleanPoint){
+            return true;
+        }
+    }
+
+    return false;
+}
+
 std::optional<::llvc::EffectiveExportPlan> MainWindow::tryBuildEffectiveExportPlan(const std::function<void(double)>& progressCallback) const{
     const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
     if(sourceDuration100ns <= 0){
         return std::nullopt;
     }
 
-    if(!projectHasRequestedCuts()){
-        return m_prj.buildEffectiveExportPlanWithRapPreroll(sourceDuration100ns, {}, progressCallback);
+    const auto sourcePath{m_prj.videoFile() ? m_prj.videoFile().Path() : hstring{}};
+    const auto currentSnapshot{::llvc::captureEditorSnapshot(m_prj)};
+    if(m_cachedEffectiveExportPlan
+        && sourcePath == m_cachedEffectiveExportPlanSourcePath
+        && m_cachedEffectiveExportPlanSnapshot
+        && ::llvc::isSameEditorSnapshot(currentSnapshot, *m_cachedEffectiveExportPlanSnapshot)){
+        if(progressCallback){
+            progressCallback(100.0);
+        }
+        return m_cachedEffectiveExportPlan;
+    }
+
+    if(!projectHasRequestedCuts() || !cutPlanUsesUnevaluatedSceneEdgeMarkers()){
+        auto plan{::llvc::EffectiveExportPlan{
+            .requestedCutRanges100ns = m_prj.buildCutRanges100ns(),
+            .effectiveCutRanges100ns = m_prj.buildCutRanges100ns(),
+            .sourceDuration100ns = sourceDuration100ns,
+            .requestedOutputDuration100ns = m_prj.outputDuration100ns(),
+            .effectiveOutputDuration100ns = m_prj.outputDuration100ns(),
+            .hasRequestedCuts = projectHasRequestedCuts(),
+            .emptyAfterAlignment = false,
+            .materiallyDifferent = false,
+        }};
+        if(progressCallback){
+            progressCallback(100.0);
+        }
+        m_cachedEffectiveExportPlanSnapshot = currentSnapshot;
+        m_cachedEffectiveExportPlanSourcePath = sourcePath;
+        m_cachedEffectiveExportPlan = plan;
+        return plan;
     }
 
     vector<int64_t> rapTimes100ns;
@@ -2188,7 +2264,11 @@ std::optional<::llvc::EffectiveExportPlan> MainWindow::tryBuildEffectiveExportPl
         return std::nullopt;
     }
 
-    return m_prj.buildEffectiveExportPlanWithRapPreroll(sourceDuration100ns, rapTimes100ns, progressCallback);
+    auto plan{m_prj.buildEffectiveExportPlanWithRapPreroll(sourceDuration100ns, rapTimes100ns, progressCallback)};
+    m_cachedEffectiveExportPlanSnapshot = currentSnapshot;
+    m_cachedEffectiveExportPlanSourcePath = sourcePath;
+    m_cachedEffectiveExportPlan = plan;
+    return plan;
 }
 
 void MainWindow::queueRapLookup(bool queueReevaluate, int nudgeDirection){
@@ -3025,8 +3105,8 @@ AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& ar
         L"* Export: Render a lossless cut based on your selected ranges (auto-adjusting to proper cut points if necessary). Use F7 as a shortcut.\n\n"
         L"Usage workflow:\n"
         L"1) File -> Load video (or drag and drop a supported file).\n"
-        L"2) Right-click to place boundary markers around scenes you may want to remove.\n"
-        L"3) Reevaluate cut markers to land on proper RAP frames.\n"
+        L"2) Right-click to place red boundary markers around scenes you may want to remove.\n"
+        L"3) Reevaluate cut markers to turn true RAP markers green while preserving off-RAP red markers.\n"
         L"4) Ctrl+Left-Click scene blocks to toggle which scenes are cut (dark = cut, clear = kept).\n"
         L"5) Optionally adjust Keep audio and Audio cross-fade settings, then preview playback.\n"
         L"6) Use File -> Save project, then File -> Export video (or press F7) to generate the final cut.");
@@ -3184,6 +3264,11 @@ void MainWindow::resetProjectState(){
     m_cachedRapTimes100ns.clear();
     m_cachedRapLookupAttempted = false;
     m_cachedRapLookupSucceeded = false;
+    m_lastReevaluatedEditorSnapshot.reset();
+    m_lastReevaluatedRapSourcePath.clear();
+    m_cachedEffectiveExportPlanSnapshot.reset();
+    m_cachedEffectiveExportPlanSourcePath.clear();
+    m_cachedEffectiveExportPlan.reset();
     m_isRapLookupInProgress = false;
     m_hasTimelineRenderCompleted = false;
     m_pendingReevaluateAfterRapLookup = false;
@@ -3504,11 +3589,11 @@ void MainWindow::refreshStatusInfoSection(){
         return;
     }
 
-    if(projectHasRequestedCuts()){
+    if(projectHasRequestedCuts() && cutPlanUsesUnevaluatedSceneEdgeMarkers()){
         if(m_hasTimelineRenderCompleted && !m_isRapLookupInProgress && !m_cachedRapLookupAttempted){
             const auto weakSelf{get_weak()};
             DispatcherQueue().TryEnqueue([weakSelf]{
-                if(const auto self{weakSelf.get()}; self && self->projectHasRequestedCuts()){
+                if(const auto self{weakSelf.get()}; self && self->projectHasRequestedCuts() && self->cutPlanUsesUnevaluatedSceneEdgeMarkers()){
                     self->queueRapLookup(false, 0);
                 }
             });
@@ -4392,6 +4477,11 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_cachedRapTimes100ns.clear();
     m_cachedRapLookupAttempted = false;
     m_cachedRapLookupSucceeded = false;
+    m_lastReevaluatedEditorSnapshot.reset();
+    m_lastReevaluatedRapSourcePath.clear();
+    m_cachedEffectiveExportPlanSnapshot.reset();
+    m_cachedEffectiveExportPlanSourcePath.clear();
+    m_cachedEffectiveExportPlan.reset();
     m_isRapLookupInProgress = false;
     m_hasTimelineRenderCompleted = false;
     m_pendingReevaluateAfterRapLookup = false;
@@ -4756,7 +4846,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         false,
         requestedCutBlockCount,
         nullptr);
-    setStatusMessage(L"Reevaluating cut plan to RAP frames...");
+    const auto needsRapReevaluation{projectHasRequestedCuts() && cutPlanUsesUnevaluatedSceneEdgeMarkers()};
+    setStatusMessage(needsRapReevaluation ? L"Reevaluating cut plan to RAP frames..." : L"Preparing export plan...");
     clearErrorMessage();
     setOperationInProgress(true, false);
     setOperationProgress(0);
@@ -4766,7 +4857,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     setExportOverlayStageState(ExportOverlayStage::Rap, L"In progress", 0.0, true);
     const auto exportOverallStartedAt{chrono::steady_clock::now()};
 
-    if(projectHasRequestedCuts()){
+    if(needsRapReevaluation){
         const auto rapReady{co_await ensureRapMarkersAvailableAsync(
             L"Reevaluating cut plan to RAP frames...",
             [weak = get_weak()](double pct){
@@ -4807,7 +4898,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         }
     }
 
-    if(projectHasRequestedCuts()){
+    if(needsRapReevaluation){
         if(m_cancelExportRequested){
             m_isExportInProgress = false;
             m_lastExportSucceeded = false;

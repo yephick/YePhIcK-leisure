@@ -79,7 +79,7 @@ bool isSameEditorSnapshot(const EditorSnapshot& left, const EditorSnapshot& righ
     for(size_t i{}; i < left.frameIndex.size(); ++i){
         const auto& a{left.frameIndex[i]};
         const auto& b{right.frameIndex[i]};
-        if(a.time100ns != b.time100ns || a.duration100ns != b.duration100ns || a.cleanPoint != b.cleanPoint || a.sampleIndex != b.sampleIndex){
+        if(a.time100ns != b.time100ns || a.duration100ns != b.duration100ns || a.cleanPoint != b.cleanPoint || a.evaluated != b.evaluated || a.sampleIndex != b.sampleIndex){
             return false;
         }
     }
@@ -190,7 +190,7 @@ ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, const Timeli
 
     vector<IndexedFrameSample> updatedMarkers;
     updatedMarkers.reserve(originalMarkers.size() * 2);
-    optional<int64_t> preservedTailCutStartTime100ns;
+    std::optional<int64_t> preservedTailCutStartTime100ns;
     if(!previousCutRanges.empty()){
         const auto totalDuration100ns{project.timelineDuration100ns()};
         const auto& tailCutRange{previousCutRanges.back()};
@@ -202,24 +202,81 @@ ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, const Timeli
         }
     }
 
-    for(const auto& marker: originalMarkers){
-        if(preservedTailCutStartTime100ns && marker.time100ns == *preservedTailCutStartTime100ns){
-            updatedMarkers.push_back(marker);
-            continue;
+    vector<pair<int64_t, int64_t>> alignedCutRanges;
+    alignedCutRanges.reserve(previousCutRanges.size());
+    const auto totalDuration100ns{project.timelineDuration100ns()};
+    for(const auto& [start, end]: previousCutRanges){
+        int64_t alignedStart{start};
+        int64_t alignedEnd{end};
+
+        const auto preserveTailStart{preservedTailCutStartTime100ns && start == *preservedTailCutStartTime100ns && end >= totalDuration100ns};
+        if(start > 0 && !preserveTailStart){
+            const auto startRapIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), start)};
+            if(startRapIt == rapTimes100ns.end()){
+                continue;
+            }
+            alignedStart = *startRapIt;
         }
 
-        if(binary_search(rapTimes100ns.begin(), rapTimes100ns.end(), marker.time100ns)){
-            updatedMarkers.push_back(marker);
-            continue;
+        if(end < totalDuration100ns){
+            const auto endRapIt{upper_bound(rapTimes100ns.begin(), rapTimes100ns.end(), end)};
+            if(endRapIt == rapTimes100ns.begin()){
+                continue;
+            }
+            alignedEnd = *(endRapIt - 1);
         }
 
-        ++result.replacedCount;
-        const auto nextIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), marker.time100ns)};
+        if(alignedEnd > alignedStart){
+            alignedCutRanges.emplace_back(alignedStart, alignedEnd);
+        }
+    }
+
+    const auto addGreenMarker = [&updatedMarkers](int64_t time100ns){
+        updatedMarkers.push_back(IndexedFrameSample{
+            .time100ns = time100ns,
+            .duration100ns = 0,
+            .cleanPoint = true,
+            .evaluated = true,
+            .sampleIndex = 0,
+        });
+    };
+
+    const auto addBracketRapMarkersAround = [&](int64_t time100ns){
+        const auto nextIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), time100ns)};
         if(nextIt != rapTimes100ns.begin()){
-            updatedMarkers.push_back(IndexedFrameSample{.time100ns = *(nextIt - 1), .duration100ns = 0, .cleanPoint = true, .sampleIndex = 0});
+            const auto previousRapTime100ns{*(nextIt - 1)};
+            if(previousRapTime100ns > 0){
+                addGreenMarker(previousRapTime100ns);
+            }
         }
-        if(nextIt != rapTimes100ns.end()){
-            updatedMarkers.push_back(IndexedFrameSample{.time100ns = *nextIt, .duration100ns = 0, .cleanPoint = true, .sampleIndex = 0});
+        if(nextIt != rapTimes100ns.end() && *nextIt != time100ns && *nextIt < totalDuration100ns){
+            addGreenMarker(*nextIt);
+        }
+    };
+
+    for(auto marker: originalMarkers){
+        const auto isTrueRap{binary_search(rapTimes100ns.begin(), rapTimes100ns.end(), marker.time100ns)};
+        if(isTrueRap){
+            marker.cleanPoint = true;
+            marker.evaluated = true;
+        }else{
+            marker.cleanPoint = false;
+            marker.evaluated = false;
+            ++result.replacedCount;
+        }
+        updatedMarkers.push_back(marker);
+
+        if(!isTrueRap){
+            addBracketRapMarkersAround(marker.time100ns);
+        }
+    }
+
+    for(const auto& [start, end]: alignedCutRanges){
+        if(start > 0){
+            addGreenMarker(start);
+        }
+        if(end > 0 && end < totalDuration100ns){
+            addGreenMarker(end);
         }
     }
 
@@ -233,7 +290,7 @@ ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, const Timeli
     vector<uint32_t> scenes;
     for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
         const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
-        if(timeline.isTimeInsideRanges(midpoint, previousCutRanges)){
+        if(timeline.isTimeInsideRanges(midpoint, alignedCutRanges)){
             scenes.push_back(static_cast<uint32_t>(i));
         }
     }
