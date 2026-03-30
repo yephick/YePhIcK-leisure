@@ -40,6 +40,7 @@ import llvc.EditorController;
 import llvc.Export;
 import llvc.Media;
 import llvc.Utils;
+import llvc.ExportCoordinator;
 
 #pragma comment(lib, "Shell32.lib")
 #pragma comment(lib, "Comctl32.lib")
@@ -4821,8 +4822,6 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             L"The current cut selection does not contain a safe RAP-aligned cut range. Adjust markers or reevaluate clear cut markers first.");
         co_return;
     }
-    const auto rapStageDurationMs{chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - exportOverallStartedAt)};
-
     const auto outputDuration100ns{effectivePlan.effectiveOutputDuration100ns};
     const auto effectiveCutRanges100ns{effectivePlan.effectiveCutRanges100ns};
     configureExportOverlay(
@@ -4833,189 +4832,105 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         effectivePlan.materiallyDifferent,
         effectiveCutRanges100ns.size(),
         &effectivePlan);
-    setExportOverlayStageComplete(ExportOverlayStage::Rap, effectivePlan.materiallyDifferent ? L"Adjusted" : L"Done");
-    setOperationProgress(5.0);
-    setStatusMessage(L"Exporting...");
 
-    winrt::apartment_context uiThread;
-    MFLifetime mf{};
+    ::llvc::ExportCoordinatorResult exportResult{};
+    co_await ::llvc::runExportAsync(::llvc::ExportCoordinatorRequest{
+        .project = &m_prj,
+        .media = m_media.get(),
+        .mediaInfo = &m_mediaInfo,
+        .sourcePath = sourcePath,
+        .outputPath = outputPath,
+        .temporaryOutputPath = temporaryOutputPath,
+        .exportComment = makeExportComment(sourceFsPath),
+        .sourceDuration100ns = sourceDuration100ns,
+        .sourceSizeBytes = sourceSizeEc ? 0 : sourceSizeBytes,
+        .sourceHasAudio = sourceHasAudio(),
+        .needsRapReevaluation = needsRapReevaluation,
+        .ensureRapMarkersAvailableAsync = [this](const wstring& statusMessage, const function<void(double)>& progressCallback) -> Windows::Foundation::IAsyncOperation<bool>{
+            co_return co_await ensureRapMarkersAvailableAsync(statusMessage, progressCallback);
+        },
+        .reevaluateCutMarkers = [this](bool pushUndoState){
+            return reevaluateClearCutMarkers(pushUndoState);
+        },
+        .buildEffectiveExportPlan = [this](const function<void(double)>& progressCallback) -> std::optional<::llvc::EffectiveExportPlan>{
+            return tryBuildEffectiveExportPlan(progressCallback);
+        },
+        .onStatus = [weak = get_weak()](const wstring& message){
+            if(const auto ui = weak.get()){
+                if(ui->DispatcherQueue().HasThreadAccess()){
+                    ui->setStatusMessage(message);
+                    return;
+                }
 
-    winrt::hstring exportErrorMessage{};
-    auto exportSucceeded{false};
-    auto exportCanceled{false};
-    const auto exportComment{makeExportComment(sourceFsPath)};
-    std::optional<chrono::milliseconds> videoStageDurationMs;
-    std::optional<chrono::milliseconds> audioStageDurationMs;
-    std::optional<chrono::milliseconds> finalizeStageDurationMs;
-    co_await winrt::resume_background();
-
-    try{
-        auto enqueueOverlayStageState = [self = get_weak()](ExportOverlayStage stage, wstring label, std::optional<double> progressPercent, bool active){
-            if(const auto strong = self.get()){
-                strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), stage, label = std::move(label), progressPercent, active](){
-                    if(const auto ui = weak.get()){
-                        ui->setExportOverlayStageState(stage, label, progressPercent, active);
-                    }
-                });
-            }
-        };
-        auto enqueueStatusMessage = [self = get_weak()](wstring message){
-            if(const auto strong = self.get()){
-                strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), message = std::move(message)](){
-                    if(const auto ui = weak.get()){
+                ui->DispatcherQueue().TryEnqueue([uiWeak = weak, message](){
+                    if(const auto ui = uiWeak.get()){
                         ui->setStatusMessage(message);
                     }
                 });
             }
-        };
-        auto enqueueStageComplete = [&](ExportOverlayStage stage, wstring label = L"Done"){
-            enqueueOverlayStageState(stage, std::move(label), 100.0, false);
-        };
-        auto enqueueStageSkipped = [&](ExportOverlayStage stage, wstring reason){
-            enqueueOverlayStageState(stage, std::move(reason), 0.0, false);
-        };
-        auto enqueueOverallProgress = [self = get_weak()](double pct){
-            if(const auto strong = self.get()){
-                strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct](){
-                    if(const auto ui = weak.get()){
+        },
+        .onOverallProgress = [weak = get_weak()](double pct){
+            if(const auto ui = weak.get()){
+                if(ui->DispatcherQueue().HasThreadAccess()){
+                    ui->setOperationProgress(pct);
+                    return;
+                }
+
+                ui->DispatcherQueue().TryEnqueue([uiWeak = weak, pct](){
+                    if(const auto ui = uiWeak.get()){
                         ui->setOperationProgress(pct);
                     }
                 });
             }
-        };
-        auto throwIfExportCanceled = [this](){
-            if(m_cancelExportRequested.load()){
-                throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+        },
+        .onStageState = [weak = get_weak()](::llvc::ExportStage stage, wstring label, optional<double> progressPercent, bool active){
+            const auto mapStage = [](const ::llvc::ExportStage exportStage){
+                switch(exportStage){
+                case ::llvc::ExportStage::Rap: return ExportOverlayStage::Rap;
+                case ::llvc::ExportStage::Video: return ExportOverlayStage::Video;
+                case ::llvc::ExportStage::Audio: return ExportOverlayStage::Audio;
+                case ::llvc::ExportStage::Finalize: return ExportOverlayStage::Finalize;
+                }
+                return ExportOverlayStage::Finalize;
+            };
+
+            if(const auto ui = weak.get()){
+                if(ui->DispatcherQueue().HasThreadAccess()){
+                    ui->setExportOverlayStageState(mapStage(stage), label, progressPercent, active);
+                    return;
+                }
+
+                ui->DispatcherQueue().TryEnqueue([uiWeak = weak, stage, label = std::move(label), progressPercent, active](){
+                    if(const auto ui = uiWeak.get()){
+                        const auto mapStage = [](const ::llvc::ExportStage exportStage){
+                            switch(exportStage){
+                            case ::llvc::ExportStage::Rap: return ExportOverlayStage::Rap;
+                            case ::llvc::ExportStage::Video: return ExportOverlayStage::Video;
+                            case ::llvc::ExportStage::Audio: return ExportOverlayStage::Audio;
+                            case ::llvc::ExportStage::Finalize: return ExportOverlayStage::Finalize;
+                            }
+                            return ExportOverlayStage::Finalize;
+                        };
+                        ui->setExportOverlayStageState(mapStage(stage), label, progressPercent, active);
+                    }
+                });
             }
-        };
-
-        const auto hasAudioForExport{m_prj.keepAudio() && sourceHasAudio() && m_mediaInfo.audioExportSupport == CapabilityState::Supported};
-        const auto overallRapShare{5.0};
-        const auto overallVideoShare{hasAudioForExport ? 65.0 : 80.0};
-        const auto overallAudioShare{hasAudioForExport ? 20.0 : 0.0};
-        const auto overallFinalizeBase{overallRapShare + overallVideoShare + overallAudioShare};
-        std::optional<chrono::steady_clock::time_point> videoStageStartedAt;
-        std::optional<chrono::steady_clock::time_point> audioStageStartedAt;
-
-        ::llvc::VideoSource::ExportRequest request{
-            .temporaryOutputPath = temporaryOutputPath,
-            .sourceDuration100ns = sourceDuration100ns,
-            .outputDuration100ns = outputDuration100ns,
-            .effectiveCutRanges100ns = effectiveCutRanges100ns,
-            .keepAudio = m_prj.keepAudio(),
-            .audioCrossfadeMs = m_prj.audioXfadeMs(),
-            .audioVolumePct = m_prj.audioVolumePct(),
-            .onVideoProgress = [self = get_weak(), &videoStageStartedAt, &videoStageDurationMs, overallRapShare, overallVideoShare](double pct){
-                const auto now{chrono::steady_clock::now()};
-                if(!videoStageStartedAt){
-                    videoStageStartedAt = now;
-                }
-                if(pct >= 100.0 && videoStageStartedAt && !videoStageDurationMs){
-                    videoStageDurationMs = chrono::duration_cast<chrono::milliseconds>(now - *videoStageStartedAt);
-                }
-
-                if(const auto strong = self.get()){
-                    strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct, overallRapShare, overallVideoShare](){
-                        if(const auto ui = weak.get()){
-                            ui->setExportOverlayStageState(ExportOverlayStage::Video, L"In progress", pct, true);
-                            ui->setOperationProgress(overallRapShare + ((pct * overallVideoShare) / 100.0));
-                        }
-                    });
-                }
-            },
-            .onAudioProgress = [self = get_weak(), &audioStageStartedAt, &audioStageDurationMs, overallRapShare, overallVideoShare, overallAudioShare](double pct){
-                const auto now{chrono::steady_clock::now()};
-                if(!audioStageStartedAt){
-                    audioStageStartedAt = now;
-                }
-                if(pct >= 100.0 && audioStageStartedAt && !audioStageDurationMs){
-                    audioStageDurationMs = chrono::duration_cast<chrono::milliseconds>(now - *audioStageStartedAt);
-                }
-
-                if(const auto strong = self.get()){
-                    strong->DispatcherQueue().TryEnqueue([weak = strong->get_weak(), pct, overallRapShare, overallVideoShare, overallAudioShare](){
-                        if(const auto ui = weak.get()){
-                            ui->setStatusMessage(L"Writing audio...");
-                            ui->setExportOverlayStageState(ExportOverlayStage::Audio, L"In progress", pct, true);
-                            ui->setOperationProgress(overallRapShare + overallVideoShare + ((pct * overallAudioShare) / 100.0));
-                        }
-                    });
-                }
-            },
-            .shouldCancel = [self = get_weak()](){
-                if(const auto strong = self.get()){
-                    return strong->m_cancelExportRequested.load();
-                }
-                return false;
-            }};
-
-        m_media->exportLossless(request);
-
-        if(videoStageStartedAt && !videoStageDurationMs){
-            videoStageDurationMs = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - *videoStageStartedAt);
-        }
-        enqueueStageComplete(ExportOverlayStage::Video);
-        if(hasAudioForExport){
-            if(audioStageStartedAt && !audioStageDurationMs){
-                audioStageDurationMs = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - *audioStageStartedAt);
+        },
+        .shouldCancel = [weak = get_weak()](){
+            if(const auto ui = weak.get()){
+                return ui->m_cancelExportRequested.load();
             }
-            enqueueStageComplete(ExportOverlayStage::Audio);
-        }else{
-            enqueueStageSkipped(ExportOverlayStage::Audio, L"Not needed");
-        }
+            return false;
+        },
+    }, exportResult);
 
-        throwIfExportCanceled();
-        enqueueStatusMessage(L"Building indices and metadata...");
-        enqueueOverlayStageState(ExportOverlayStage::Finalize, L"In progress", std::nullopt, true);
-        enqueueOverallProgress(min(99.0, overallFinalizeBase + 5.0));
-        throwIfExportCanceled();
-        const auto finalizeStageStartedAt{chrono::steady_clock::now()};
-        enqueueOverlayStageState(ExportOverlayStage::Finalize, L"Applying metadata", std::nullopt, true);
-        applyExportFileMetadata(sourcePath, temporaryOutputPath, exportComment);
-
-        throwIfExportCanceled();
-        enqueueOverlayStageState(ExportOverlayStage::Finalize, L"Replacing final file", std::nullopt, true);
-        std::error_code outputExistsEc;
-        if(filesystem::exists(outputPath, outputExistsEc)){
-            const auto backupPath{buildTemporaryBackupPath(outputPath)};
-            if(backupPath.empty()){
-                throw hresult_error(E_FAIL, L"Could not create a backup path for the final export target.");
-            }
-
-            throwIfExportCanceled();
-            if(!::ReplaceFileW(outputPath.c_str(), temporaryOutputPath.c_str(), backupPath.c_str(), REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)){
-                const auto replaceError{::GetLastError()};
-                std::error_code cleanupEc;
-                filesystem::remove(backupPath, cleanupEc);
-                throw hresult_error(HRESULT_FROM_WIN32(replaceError), L"Could not replace the final export target.");
-            }
-
-            std::error_code cleanupEc;
-            filesystem::remove(backupPath, cleanupEc);
-        }else if(outputExistsEc){
-            throw hresult_error(HRESULT_FROM_WIN32(outputExistsEc.value()), winrt::to_hstring(outputExistsEc.message()));
-        }else{
-            throwIfExportCanceled();
-            if(!::MoveFileExW(temporaryOutputPath.c_str(), outputPath.c_str(), MOVEFILE_WRITE_THROUGH)){
-                throw hresult_error(HRESULT_FROM_WIN32(::GetLastError()), L"Could not move the final export target into place.");
-            }
-        }
-        finalizeStageDurationMs = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - finalizeStageStartedAt);
-        enqueueStageComplete(ExportOverlayStage::Finalize);
-        exportSucceeded = true;
-    }catch(const hresult_error& ex){
-        if(ex.code() == HRESULT_FROM_WIN32(ERROR_CANCELLED)){
-            exportCanceled = true;
-            std::error_code ec;
-            filesystem::remove(temporaryOutputPath, ec);
-        }else{
-            exportErrorMessage = ex.message();
-            std::error_code ec;
-            filesystem::remove(temporaryOutputPath, ec);
-        }
-    }
-
-    co_await uiThread;
+    winrt::hstring exportErrorMessage{exportResult.errorMessage};
+    const auto exportSucceeded{exportResult.succeeded};
+    const auto exportCanceled{exportResult.canceled};
+    const auto rapStageDurationMs{exportResult.rapStageDurationMs};
+    const auto videoStageDurationMs{exportResult.videoStageDurationMs};
+    const auto audioStageDurationMs{exportResult.audioStageDurationMs};
+    const auto finalizeStageDurationMs{exportResult.finalizeStageDurationMs};
 
     if(exportSucceeded){
         setOperationProgress(100);

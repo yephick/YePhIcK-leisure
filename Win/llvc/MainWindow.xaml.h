@@ -18,6 +18,7 @@ import llvc.Media;
 import llvc.Utils;
 import llvc.EditorController;
 import llvc.Dialogs;
+import llvc.ExportCoordinator;
 
 namespace winrt::llvc::implementation{
 
