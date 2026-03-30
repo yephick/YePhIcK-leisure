@@ -1733,7 +1733,8 @@ void MainWindow::renderTimelineTicks(){
         return;
     }
 
-    ::llvc::renderTimelineMajorTicks(m_tl, TimelineTickCanvas(), width, m_timelineDurationSeconds);
+    const auto visibleWidth{max(1.0, TimelineScrollViewer().ViewportWidth())};
+    ::llvc::renderTimelineMajorTicks(m_tl, TimelineTickCanvas(), width, m_timelineDurationSeconds, visibleWidth);
 }
 
 void MainWindow::renderKeyframeTicks(){

@@ -20,7 +20,8 @@ void renderTimelineMajorTicks(
     const Timeline& timeline,
     const winrt::Microsoft::UI::Xaml::Controls::Canvas& tickCanvas,
     double width,
-    double durationSeconds);
+    double durationSeconds,
+    double visibleWidth);
 
 void renderTimelineKeyframeTicks(
     const winrt::Microsoft::UI::Xaml::Controls::Canvas& tickCanvas,
@@ -43,14 +44,20 @@ namespace Controls = ::winrt::Microsoft::UI::Xaml::Controls;
 namespace Media = ::winrt::Microsoft::UI::Xaml::Media;
 namespace Shapes = ::winrt::Microsoft::UI::Xaml::Shapes;
 
-void renderTimelineMajorTicks(const Timeline& timeline, const Controls::Canvas& tickCanvas, double width, double durationSeconds){
+void renderTimelineMajorTicks(const Timeline& timeline, const Controls::Canvas& tickCanvas, double width, double durationSeconds, double visibleWidth){
     tickCanvas.Children().Clear();
     tickCanvas.Width(width);
     if(durationSeconds <= 0 || width <= 0){
         return;
     }
 
-    for(const auto& tickData: timeline.buildMajorTicks(width, durationSeconds)){
+    const auto effectiveVisibleWidth{max(visibleWidth, 1.0)};
+    const auto minimumVisibleTickCount{10};
+    const auto visibleWidthDrivenTickCount{static_cast<int>(ceil((width / effectiveVisibleWidth) * minimumVisibleTickCount))};
+    const auto spacingDrivenTickCount{static_cast<int>(ceil(width / 120.0))};
+    const auto derivedTickCount{max(minimumVisibleTickCount, max(visibleWidthDrivenTickCount, spacingDrivenTickCount))};
+    const auto ticks{timeline.buildMajorTicks(width, durationSeconds, derivedTickCount)};
+    for(const auto& tickData: ticks){
         Shapes::Line majorTick{};
         majorTick.X1(tickData.x);
         majorTick.X2(tickData.x);

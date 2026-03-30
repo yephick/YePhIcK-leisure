@@ -28,7 +28,7 @@ struct Timeline final{
     double timeToCanvasX(int64_t time100ns, int64_t duration100ns, double width) const;
     double dragTargetOffset(double dragStartOffset, double pointerDeltaX, double canvasWidth, double viewportWidth) const;
     std::optional<double> cursorOffsetToEnsureVisible(double cursorLeft, double currentOffset, double viewportWidth, double canvasWidth, double padding = 48.0) const;
-    vector<TimelineMajorTick> buildMajorTicks(double width, double durationSeconds) const;
+    vector<TimelineMajorTick> buildMajorTicks(double width, double durationSeconds, int desiredTickCount = 0) const;
     vector<double> buildKeyframeTickPositions(const vector<IndexedFrameSample>& frameIndex, double width, double durationSeconds) const;
     vector<TimelineCutOverlay> buildCutOverlays(const vector<pair<int64_t, int64_t>>& cutRanges100ns, double width, double durationSeconds) const;
     bool isTimeInsideRanges(int64_t time100ns, const vector<pair<int64_t, int64_t>>& ranges) const;
@@ -129,13 +129,15 @@ std::optional<double> Timeline::cursorOffsetToEnsureVisible(double cursorLeft, d
     return std::nullopt;
 }
 
-vector<TimelineMajorTick> Timeline::buildMajorTicks(double width, double durationSeconds) const{
+vector<TimelineMajorTick> Timeline::buildMajorTicks(double width, double durationSeconds, int desiredTickCount) const{
     vector<TimelineMajorTick> ticks;
     if(width <= 0 || durationSeconds <= 0){
         return ticks;
     }
 
-    const auto majorTickCount{clamp(static_cast<int>(ceil(width / 120.0)), 6, 36)};
+    const auto majorTickCount{desiredTickCount > 0
+        ? max(1, desiredTickCount)
+        : clamp(static_cast<int>(ceil(width / 120.0)), 6, 36)};
     ticks.reserve(static_cast<size_t>(majorTickCount + 1));
 
     for(int i{}; i <= majorTickCount; ++i){
