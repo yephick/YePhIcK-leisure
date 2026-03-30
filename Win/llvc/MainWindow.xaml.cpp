@@ -1488,16 +1488,9 @@ bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
     return true;
 }
 
-AAction MainWindow::toggleSelectedKeyframeAtTime100nsAsync(int64_t time100ns){
-    const auto removingExistingMarker{hasCutMarkerNearTime100ns(time100ns)};
-    if(m_appSettings.autoReevaluateCutMarkersOnPlacement && !removingExistingMarker){
-        const auto rapReady{co_await ensureRapMarkersAvailableAsync(L"Scanning source for RAP markers and aligning new cut marker...")};
-        if(!rapReady){
-            co_return;
-        }
-    }
-
+fire_and_forget MainWindow::toggleSelectedKeyframeAtTime100nsAsync(int64_t time100ns){
     (void)toggleSelectedKeyframeAtTime100ns(time100ns);
+    co_return;
 }
 
 
@@ -3048,7 +3041,7 @@ AAction MainWindow::recentVideoMenuItem_Click(const Control& sender, const REArg
     }
 
     if(openFailed){
-        co_await showInfoDialogAsync(L"Open failed", L"Could not open selected recent video.");
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Open failed", L"Could not open selected recent video.");
     }
 
     tryFocusTimelineCanvas(FocusState::Programmatic);
@@ -3074,7 +3067,7 @@ AAction MainWindow::recentProjectMenuItem_Click(const Control& sender, const REA
     }
 
     if(openFailed){
-        co_await showInfoDialogAsync(L"Open failed", L"Could not open selected recent project.");
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Open failed", L"Could not open selected recent project.");
     }
 
     tryFocusTimelineCanvas(FocusState::Programmatic);
@@ -3090,39 +3083,13 @@ AAction MainWindow::exitMenuItem_Click(const Control&, const REArgs&){
 }
 
 AAction MainWindow::manualMenuItem_Click(const Control& sender, const REArgs& args){
-    co_await showInfoDialogAsync(
-        L"Quick manual",
-        L"Functions:\n"
-        L"* Load video: Open .mp4/.mov/.avi/.webm/.wmv source footage for timeline editing.\n"
-        L"* Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
-        L"* Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
-        L"* Boundary RAP nudging: Ctrl+< shrinks the current scene by nudging both scene edges inward to RAPs, Ctrl+> expands by nudging both edges outward to RAPs.\n"
-        L"* Preview start/pause/stop skipping cut scenes.\n"
-        L"* Timeline navigation: Left/Right steps a frame, Up/Down jumps between markers, PageUp/PageDown seeks backward/forward 10 seconds, and 0-9 jumps to 0%-90% of the timeline.\n"
-        L"* Preview window: Tools -> Preview in separate window opens a movable second window; use F11 to toggle full-screen.\n"
-        L"* Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
-        L"* Project files: Save and reopen .llvc projects with timeline state.\n"
-        L"* Export: Render a lossless cut based on your selected ranges (auto-adjusting to proper cut points if necessary). Use F7 as a shortcut.\n\n"
-        L"Usage workflow:\n"
-        L"1) File -> Load video (or drag and drop a supported file).\n"
-        L"2) Right-click to place red boundary markers around scenes you may want to remove.\n"
-        L"3) Reevaluate cut markers to turn true RAP markers green while preserving off-RAP red markers.\n"
-        L"4) Ctrl+Left-Click scene blocks to toggle which scenes are cut (dark = cut, clear = kept).\n"
-        L"5) Optionally adjust Keep audio and Audio cross-fade settings, then preview playback.\n"
-        L"6) Use File -> Save project, then File -> Export video (or press F7) to generate the final cut.");
+    co_await ::llvc::showQuickManualDialogAsync(Content().XamlRoot());
 }
 
 AAction MainWindow::aboutMenuItem_Click(const Control&, const REArgs&){
     const auto manifestVersion{getAppManifestVersionString()};
     const auto manifestDescription{getAppManifestDescriptionString()};
-    const wstring aboutText{
-        manifestDescription
-        + L"\n\n"
-        + wstring{L"Version "}
-        + manifestVersion
-        + L"\n\n"
-        + L"\xA9 02'2026 YePhIcK"};
-    co_await showInfoDialogAsync(L"About ClipRazor: Lossless Video Cutter", hstring{aboutText.c_str()});
+    co_await ::llvc::showAboutDialogAsync(Content().XamlRoot(), manifestVersion.c_str(), manifestDescription.c_str());
 }
 
 AAction MainWindow::optionsMenuItem_Click(const Control&, const REArgs&){
@@ -3272,6 +3239,7 @@ void MainWindow::resetProjectState(){
     m_isRapLookupInProgress = false;
     m_hasTimelineRenderCompleted = false;
     m_pendingReevaluateAfterRapLookup = false;
+    m_pendingReevaluateWithoutUndoAfterRapLookup = false;
     m_pendingNudgeDirectionAfterRapLookup = 0;
     m_exportEtaText.clear();
     m_lastExportEtaProgress.reset();
@@ -3334,15 +3302,7 @@ IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){
         co_return true;
     }
 
-    Controls::ContentDialog dialog{};
-    dialog.XamlRoot(Content().XamlRoot());
-    dialog.Title(box_value(L"Unsaved changes"));
-    dialog.Content(box_value(L"Current project has unsaved changes. Save before continuing?"));
-    dialog.PrimaryButtonText(L"Save");
-    dialog.SecondaryButtonText(L"Don't save");
-    dialog.CloseButtonText(L"Cancel");
-
-    const auto choice{co_await dialog.ShowAsync()};
+    const auto choice{co_await ::llvc::showUnsavedProjectPromptAsync(Content().XamlRoot())};
     if(choice == Controls::ContentDialogResult::Primary){
         co_await saveProjectMenuItem_Click(nullptr, RoutedEventArgs{});
         co_return !m_prj.isDirty();
@@ -3393,15 +3353,6 @@ AAction MainWindow::saveProjectFileAsync(const SFile& file){
     clearErrorMessage();
     updateWindowTitle();
     refreshStatusInfoSection();
-}
-
-AAction MainWindow::showInfoDialogAsync(const hstring& title, const hstring& message){
-    Controls::ContentDialog dialog{};
-    dialog.XamlRoot(Content().XamlRoot());
-    dialog.Title(box_value(title));
-    dialog.Content(box_value(message));
-    dialog.CloseButtonText(L"OK");
-    co_await dialog.ShowAsync();
 }
 
 IOpBool MainWindow::confirmAdjustedExportPlanAsync(const ::llvc::EffectiveExportPlan& plan){
@@ -4082,7 +4033,7 @@ AAction MainWindow::deleteExportArtifactsAsync(bool deleteSource, bool deletePro
         }
         failureText += failures[i];
     }
-    co_await showInfoDialogAsync(L"Delete failed", failureText.c_str());
+    co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Delete failed", failureText.c_str());
 }
 
 void MainWindow::setOperationInProgress(bool active, bool indeterminate){
@@ -4213,13 +4164,13 @@ AAction MainWindow::exportOverlayOpenExportButton_Click(const Control&, const RE
     }
 
     if(fileMissing || !file){
-        co_await showInfoDialogAsync(L"Open exported file", L"The exported file could not be found.");
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Open exported file", L"The exported file could not be found.");
         co_return;
     }
 
     const auto launched{co_await Launcher::LaunchFileAsync(file)};
     if(!launched){
-        co_await showInfoDialogAsync(L"Open exported file", L"Windows could not open the exported file with a default app.");
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Open exported file", L"Windows could not open the exported file with a default app.");
     }
 }
 
@@ -4232,62 +4183,16 @@ AAction MainWindow::exportOverlayDeleteProjectButton_Click(const Control&, const
 }
 
 AAction MainWindow::showOptionsDialogAsync(){
-    Controls::StackPanel panel{};
-    panel.Spacing(10);
-
-    Controls::TextBlock videosLabel{};
-    videosLabel.Text(L"Recent videos to keep (1-20)");
-    Controls::NumberBox videosCount{};
-    videosCount.Minimum(1);
-    videosCount.Maximum(20);
-    videosCount.SpinButtonPlacementMode(Controls::NumberBoxSpinButtonPlacementMode::Inline);
-    videosCount.Value(m_appSettings.maxRecentVideos);
-
-    Controls::TextBlock projectsLabel{};
-    projectsLabel.Text(L"Recent projects to keep (1-20)");
-    Controls::NumberBox projectsCount{};
-    projectsCount.Minimum(1);
-    projectsCount.Maximum(20);
-    projectsCount.SpinButtonPlacementMode(Controls::NumberBoxSpinButtonPlacementMode::Inline);
-    projectsCount.Value(m_appSettings.maxRecentProjects);
-
-    Controls::CheckBox deleteAfterExportCheckBox{};
-    deleteAfterExportCheckBox.Content(box_value(L"Delete source video and project file after successful export"));
-    deleteAfterExportCheckBox.IsChecked(m_appSettings.deleteSourceAndProjectAfterExport);
-
-    Controls::CheckBox autoReevaluateCutMarkersOnPlacementCheckBox{};
-    autoReevaluateCutMarkersOnPlacementCheckBox.Content(box_value(L"Auto-reevaluate cut markers when placing them"));
-    autoReevaluateCutMarkersOnPlacementCheckBox.IsChecked(m_appSettings.autoReevaluateCutMarkersOnPlacement);
-
-    Controls::CheckBox generateExportTimeReportCheckBox{};
-    generateExportTimeReportCheckBox.Content(box_value(L"Copy export time report to clipboard after export"));
-    generateExportTimeReportCheckBox.IsChecked(m_appSettings.generateExportTimeReport);
-
-    panel.Children().Append(videosLabel);
-    panel.Children().Append(videosCount);
-    panel.Children().Append(projectsLabel);
-    panel.Children().Append(projectsCount);
-    panel.Children().Append(deleteAfterExportCheckBox);
-    panel.Children().Append(autoReevaluateCutMarkersOnPlacementCheckBox);
-    panel.Children().Append(generateExportTimeReportCheckBox);
-
-    Controls::ContentDialog dialog{};
-    dialog.XamlRoot(Content().XamlRoot());
-    dialog.Title(box_value(L"Options"));
-    dialog.Content(panel);
-    dialog.PrimaryButtonText(L"Save");
-    dialog.CloseButtonText(L"Cancel");
-
-    const auto dialogResult{co_await dialog.ShowAsync()};
-    if(dialogResult != Controls::ContentDialogResult::Primary){
+    auto updatedSettings{m_appSettings};
+    if(!co_await ::llvc::showOptionsDialogAsync(Content().XamlRoot(), updatedSettings)){
         co_return;
     }
 
-    m_appSettings.maxRecentVideos = static_cast<uint32_t>(clamp(static_cast<int>(lround(videosCount.Value())), 1, 20));
-    m_appSettings.maxRecentProjects = static_cast<uint32_t>(clamp(static_cast<int>(lround(projectsCount.Value())), 1, 20));
-    m_appSettings.deleteSourceAndProjectAfterExport = deleteAfterExportCheckBox.IsChecked().GetBoolean();
-    m_appSettings.autoReevaluateCutMarkersOnPlacement = autoReevaluateCutMarkersOnPlacementCheckBox.IsChecked().GetBoolean();
-    m_appSettings.generateExportTimeReport = generateExportTimeReportCheckBox.IsChecked().GetBoolean();
+    m_appSettings.maxRecentVideos = updatedSettings.maxRecentVideos;
+    m_appSettings.maxRecentProjects = updatedSettings.maxRecentProjects;
+    m_appSettings.deleteSourceAndProjectAfterExport = updatedSettings.deleteSourceAndProjectAfterExport;
+    m_appSettings.autoReevaluateCutMarkersOnPlacement = updatedSettings.autoReevaluateCutMarkersOnPlacement;
+    m_appSettings.generateExportTimeReport = updatedSettings.generateExportTimeReport;
 
     if(m_appSettings.recentVideos.size() > m_appSettings.maxRecentVideos){
         m_appSettings.recentVideos.resize(m_appSettings.maxRecentVideos);
@@ -4327,30 +4232,7 @@ AAction MainWindow::promptDeleteSourceAndProjectAfterExportAsync(const std::wstr
         co_return;
     }
 
-    const wchar_t* dialogTitle{
-        canDeleteSource && canDeleteProject
-            ? L"Delete source video and project file?"
-            : (canDeleteSource ? L"Delete source video?" : L"Delete project file?")};
-    const wchar_t* dialogContent{
-        canDeleteSource && canDeleteProject
-            ? L"The export completed successfully.\n\nDelete the original source video and the project file now?"
-            : (canDeleteSource
-                ? L"The export completed successfully.\n\nDelete the original source video now?"
-                : L"The export completed successfully.\n\nDelete the project file now?")};
-    const wchar_t* primaryButtonText{
-        canDeleteSource && canDeleteProject
-            ? L"Delete both"
-            : (canDeleteSource ? L"Delete source" : L"Delete project")};
-
-    Controls::ContentDialog dialog{};
-    dialog.XamlRoot(Content().XamlRoot());
-    dialog.Title(box_value(dialogTitle));
-    dialog.Content(box_value(dialogContent));
-    dialog.PrimaryButtonText(primaryButtonText);
-    dialog.CloseButtonText(L"Keep files");
-    dialog.DefaultButton(Controls::ContentDialogButton::Close);
-
-    if((co_await dialog.ShowAsync()) != Controls::ContentDialogResult::Primary){
+    if(!co_await ::llvc::showDeleteAfterExportPromptAsync(Content().XamlRoot(), canDeleteSource, canDeleteProject)){
         co_return;
     }
 
@@ -4463,7 +4345,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
         setStatusMessage(status);
         setErrorMessage(inspected.errorMessage);
         setOperationInProgress(false);
-        co_await showInfoDialogAsync(L"Unsupported media", hstring(status));
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Unsupported media", hstring(status));
         co_return;
     }
 
@@ -4485,6 +4367,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_isRapLookupInProgress = false;
     m_hasTimelineRenderCompleted = false;
     m_pendingReevaluateAfterRapLookup = false;
+    m_pendingReevaluateWithoutUndoAfterRapLookup = false;
     m_pendingNudgeDirectionAfterRapLookup = 0;
     m_projectPath.clear();
 
@@ -4754,21 +4637,21 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
 }
 AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     if(!m_prj.videoFile()){
-        co_await showInfoDialogAsync(L"Export video", L"Load a video before exporting.");
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export video", L"Load a video before exporting.");
         co_return;
     }
 
     const wstring sourcePath{m_prj.videoFile().Path().c_str()};
     if(!m_media){
-        co_await showInfoDialogAsync(L"Export video", L"This source container is not supported for export.");
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export video", L"This source container is not supported for export.");
         co_return;
     }
     if(m_mediaInfo.losslessExportSupport != CapabilityState::Supported || m_mediaInfo.supportedExportExtensions.empty()){
-        co_await showInfoDialogAsync(L"Export video", L"This source can be opened and previewed, but lossless export is not available on this machine.");
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export video", L"This source can be opened and previewed, but lossless export is not available on this machine.");
         co_return;
     }
     if(sourceHasAudio() && m_prj.keepAudio() && m_mediaInfo.audioExportSupport != CapabilityState::Supported){
-        co_await showInfoDialogAsync(L"Export video", L"Audio is not supported for export from this source yet. Turn off Keep audio first.");
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export video", L"Audio is not supported for export from this source yet. Turn off Keep audio first.");
         co_return;
     }
 
@@ -4808,25 +4691,14 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     }
 
     if(pathsMatchInsensitive(outputPath, sourcePath)){
-        Controls::ContentDialog overwriteDialog{};
-        overwriteDialog.XamlRoot(Content().XamlRoot());
-        overwriteDialog.Title(box_value(L"Overwrite source video?"));
-        overwriteDialog.Content(box_value(
-            L"The selected export target is the same as the source video.\n\n"
-            L"llvc will export to a temporary file first, then replace the source file only if export succeeds.\n\n"
-            L"Continue?"));
-        overwriteDialog.PrimaryButtonText(L"Overwrite source");
-        overwriteDialog.CloseButtonText(L"Cancel");
-        overwriteDialog.DefaultButton(Controls::ContentDialogButton::Close);
-
-        if((co_await overwriteDialog.ShowAsync()) != Controls::ContentDialogResult::Primary){
+        if(!co_await ::llvc::showOverwriteSourcePromptAsync(Content().XamlRoot())){
             co_return;
         }
     }
 
     const auto temporaryOutputPath{buildTemporaryExportPath(outputPath)};
     if(temporaryOutputPath.empty()){
-        co_await showInfoDialogAsync(L"Export failed", L"Could not create a temporary export file path.");
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export failed", L"Could not create a temporary export file path.");
         co_return;
     }
 
@@ -4893,7 +4765,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             setStatusMessage(L"Could not build a RAP-aligned cut plan for the current source");
             refreshStatusInfoSection();
             refreshVideoDetailsPanel();
-            co_await showInfoDialogAsync(L"Export blocked", L"Could not build a RAP-aligned cut plan for the current source.");
+            co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export blocked", L"Could not build a RAP-aligned cut plan for the current source.");
             co_return;
         }
     }
@@ -4921,7 +4793,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             setOperationInProgress(false);
             updateExportOverlayActionButtons();
             if(!m_cancelExportRequested){
-                co_await showInfoDialogAsync(L"Export blocked", L"Could not build a RAP-aligned cut plan for the current source.");
+                co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export blocked", L"Could not build a RAP-aligned cut plan for the current source.");
             }
             co_return;
         }
@@ -4932,7 +4804,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         m_isExportInProgress = false;
         setExportOverlayStageState(ExportOverlayStage::Rap, L"Failed", 0.0, false);
         setOperationInProgress(false);
-        co_await showInfoDialogAsync(L"Export blocked", L"The export plan is not ready yet. Wait for the RAP analysis to finish and try again.");
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export blocked", L"The export plan is not ready yet. Wait for the RAP analysis to finish and try again.");
         co_return;
     }
     const auto effectivePlan{*effectivePlanOpt};
@@ -4943,7 +4815,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         setStatusMessage(L"Export blocked: no safe RAP-aligned cut range");
         refreshStatusInfoSection();
         refreshVideoDetailsPanel();
-        co_await showInfoDialogAsync(
+        co_await ::llvc::showInfoDialogAsync(
+            Content().XamlRoot(),
             L"Export blocked",
             L"The current cut selection does not contain a safe RAP-aligned cut range. Adjust markers or reevaluate clear cut markers first.");
         co_return;
@@ -5260,7 +5133,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     }
 
     if(!exportErrorMessage.empty()){
-        co_await showInfoDialogAsync(L"Export failed", exportErrorMessage);
+        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export failed", exportErrorMessage);
     }
 }
 

@@ -17,6 +17,7 @@ import llvc.Timeline;
 import llvc.Media;
 import llvc.Utils;
 import llvc.EditorController;
+import llvc.Dialogs;
 
 namespace winrt::llvc::implementation{
 
@@ -205,10 +206,7 @@ private:
     void addRecentVideo(const hstring& path);
     void addRecentProject(const hstring& path);
     void removeRecentPath(const hstring& path);
-    AAction showInfoDialogAsync(const hstring& title, const hstring& message);
     AAction openFromLaunchArgumentsAsync(const hstring& arguments);
-    AAction showOptionsDialogAsync();
-    AAction promptDeleteSourceAndProjectAfterExportAsync(const std::wstring& exportedPath);
     AAction openProjectFileAsync(const SFile& file);
     AAction saveProjectFileAsync(const SFile& file);
     void resetProjectState();
@@ -218,6 +216,7 @@ private:
     static MediaInspectionResult inspectMediaFile(const wstring& filePath);
     static wstring guidToCodecName(const _GUID& subtype, bool isVideo);
     AAction loadVideoFileAsync(const SFile& file);
+    AAction showOptionsDialogAsync();
     fire_and_forget renderTimelineAsync();
     void updateTimelineCursorFromPlayback();
     void syncTimelineHorizontalScrollBar();
@@ -228,7 +227,7 @@ private:
     bool hasCutMarkerNearTime100ns(int64_t time100ns) const;
     std::optional<int64_t> timelinePointToTime100ns(double pointerX, double width) const;
     bool toggleSelectedKeyframeAtTime100ns(int64_t time100ns);
-    AAction toggleSelectedKeyframeAtTime100nsAsync(int64_t time100ns);
+    fire_and_forget toggleSelectedKeyframeAtTime100nsAsync(int64_t time100ns);
     bool toggleCutBlockAtTime100ns(int64_t time100ns);
     bool setCutBlockAtTime100ns(int64_t time100ns, bool cutScene);
     bool toggleCutMarkerAtCursor();
@@ -281,6 +280,7 @@ private:
     std::chrono::seconds estimateStageDuration(ExportOverlayStage stage) const;
     static const wchar_t* exportStageDisplayName(ExportOverlayStage stage) noexcept;
     AAction deleteExportArtifactsAsync(bool deleteSource, bool deleteProject);
+    AAction promptDeleteSourceAndProjectAfterExportAsync(const std::wstring& exportedPath);
     void setOperationInProgress(bool active, bool indeterminate = false);
     void setOperationProgress(double percent);
     void refreshExportEta(double percent);
