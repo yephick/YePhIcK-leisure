@@ -81,8 +81,6 @@ using FState = MainWindow::FState;
 using IOpBool = MainWindow::IOpBool;
 using TS = MainWindow::TS;
 
-constexpr auto W_POS_L{L"WindowLeft"};
-
 namespace{
 
 LRESULT CALLBACK MainWindowSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR refData){
@@ -959,26 +957,6 @@ std::wstring readShellStringProperty(const std::wstring& filePath, const PROPERT
 }
 
 }
-constexpr auto W_POS_T{L"WindowTop"};
-constexpr auto W_POS_W{L"WindowWidth"};
-constexpr auto W_POS_H{L"WindowHeight"};
-constexpr auto W_POS_DPI{L"WindowDpi"};
-constexpr auto S_RECENT_VIDEOS{L"RecentVideos"};
-constexpr auto S_RECENT_PROJECTS{L"RecentProjects"};
-constexpr auto S_MAX_RECENT_VIDEOS{L"MaxRecentVideos"};
-constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
-constexpr auto S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT{L"DeleteSourceAndProjectAfterExport"};
-constexpr auto S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT{L"AutoReevaluateCutMarkersOnPlacement"};
-constexpr auto S_GENERATE_EXPORT_TIME_REPORT{L"GenerateExportTimeReport"};
-constexpr auto S_DEFAULT_MAX_RECENT{5};
-constexpr auto S_SEPARATE_PREVIEW_DETACHED{L"SeparatePreviewDetached"};
-constexpr auto S_SEPARATE_PREVIEW_L{L"SeparatePreviewLeft"};
-constexpr auto S_SEPARATE_PREVIEW_T{L"SeparatePreviewTop"};
-constexpr auto S_SEPARATE_PREVIEW_W{L"SeparatePreviewWidth"};
-constexpr auto S_SEPARATE_PREVIEW_H{L"SeparatePreviewHeight"};
-constexpr auto S_SEPARATE_PREVIEW_DPI{L"SeparatePreviewDpi"};
-constexpr auto S_SEPARATE_PREVIEW_FULLSCREEN{L"SeparatePreviewFullscreen"};
-
 constexpr auto P_FILE_PATH{L"file_path"};
 constexpr auto P_STORYLINE_ZOOM{L"storyline_zoom"};
 constexpr auto P_KEEP_AUDIO{L"keep_audio"};
@@ -1141,7 +1119,7 @@ MainWindow::MainWindow(const hstring& launchArguments){
     updateWindowTitle();
     refreshStatusInfoSection();
 
-    if(m_restorePreviewDetachedOnStartup){
+    if(m_appSettings.restorePreviewDetachedOnStartup){
         (void)setSeparatePreviewWindowOpen(true);
     }
 
@@ -1202,115 +1180,20 @@ HWND MainWindow::getWindowHandle() const{
 
 
 void MainWindow::restoreWindowPlacement(){
-    const auto localSettings{ApplicationData::Current().LocalSettings()};
-    const auto values{localSettings.Values()};
-
-    if(!values.HasKey(W_POS_L) || !values.HasKey(W_POS_T) || !values.HasKey(W_POS_W) || !values.HasKey(W_POS_H)){
-        return;
-    }
-
-    ::llvc::WindowPlacementState state{};
-    state.left = unbox_value<int32_t>(values.Lookup(W_POS_L));
-    state.top = unbox_value<int32_t>(values.Lookup(W_POS_T));
-    state.widthDips = unbox_value<int32_t>(values.Lookup(W_POS_W));
-    state.heightDips = unbox_value<int32_t>(values.Lookup(W_POS_H));
-    state.dpi = values.HasKey(W_POS_DPI) ? unbox_value<int32_t>(values.Lookup(W_POS_DPI)) : 96;
-
     const auto hwnd{getWindowHandle()};
-    if(!applyWindowPlacement(hwnd, state, hwnd, false)){
-        values.Remove(W_POS_L);
-        values.Remove(W_POS_T);
-        values.Remove(W_POS_W);
-        values.Remove(W_POS_H);
-        values.Remove(W_POS_DPI);
-    }
+    (void)::llvc::restoreWindowPlacementFromSettings(hwnd, hwnd, false);
 }
 
 void MainWindow::loadAppSettings(){
-    const auto values{ApplicationData::Current().LocalSettings().Values()};
-
-    m_maxRecentVideos = S_DEFAULT_MAX_RECENT;
-    m_maxRecentProjects = S_DEFAULT_MAX_RECENT;
-
-    if(values.HasKey(S_MAX_RECENT_VIDEOS)){
-        const auto parsed{unbox_value<int32_t>(values.Lookup(S_MAX_RECENT_VIDEOS))};
-        m_maxRecentVideos = static_cast<uint32_t>(clamp(parsed, 1, 20));
-    }
-    if(values.HasKey(S_MAX_RECENT_PROJECTS)){
-        const auto parsed{unbox_value<int32_t>(values.Lookup(S_MAX_RECENT_PROJECTS))};
-        m_maxRecentProjects = static_cast<uint32_t>(clamp(parsed, 1, 20));
-    }
-
-    if(values.HasKey(S_RECENT_VIDEOS)){
-        m_recentVideos = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_VIDEOS)).c_str());
-    }
-    if(values.HasKey(S_RECENT_PROJECTS)){
-        m_recentProjects = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
-    }
-    m_deleteSourceAndProjectAfterExport = values.HasKey(S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT)
-        && unbox_value<bool>(values.Lookup(S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT));
-    m_autoReevaluateCutMarkersOnPlacement = values.HasKey(S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT)
-        && unbox_value<bool>(values.Lookup(S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT));
-    m_generateExportTimeReport = values.HasKey(S_GENERATE_EXPORT_TIME_REPORT)
-        && unbox_value<bool>(values.Lookup(S_GENERATE_EXPORT_TIME_REPORT));
-    if(m_recentVideos.size() > m_maxRecentVideos){
-        m_recentVideos.resize(m_maxRecentVideos);
-    }
-    if(m_recentProjects.size() > m_maxRecentProjects){
-        m_recentProjects.resize(m_maxRecentProjects);
-    }
-
-    m_restorePreviewDetachedOnStartup = values.HasKey(S_SEPARATE_PREVIEW_DETACHED)
-        && unbox_value<bool>(values.Lookup(S_SEPARATE_PREVIEW_DETACHED));
-
-    if(values.HasKey(S_SEPARATE_PREVIEW_L) && values.HasKey(S_SEPARATE_PREVIEW_T) && values.HasKey(S_SEPARATE_PREVIEW_W) && values.HasKey(S_SEPARATE_PREVIEW_H)){
-        m_separatePreviewLeft = unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_L));
-        m_separatePreviewTop = unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_T));
-        m_separatePreviewWidthDips = max<int32_t>(320, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_W)));
-        m_separatePreviewHeightDips = max<int32_t>(200, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_H)));
-        m_separatePreviewDpi = values.HasKey(S_SEPARATE_PREVIEW_DPI) ? max<int32_t>(96, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_DPI))) : 96;
-        m_hasSeparatePreviewPlacement = true;
-    }
-
-    m_restorePreviewFullscreenOnStartup = values.HasKey(S_SEPARATE_PREVIEW_FULLSCREEN)
-        && unbox_value<bool>(values.Lookup(S_SEPARATE_PREVIEW_FULLSCREEN));
+    m_appSettings = ::llvc::loadAppSettings();
 }
 
 void MainWindow::saveAppSettings() const{
-    const auto values{ApplicationData::Current().LocalSettings().Values()};
-    values.Insert(S_MAX_RECENT_VIDEOS, box_value(static_cast<int32_t>(m_maxRecentVideos)));
-    values.Insert(S_MAX_RECENT_PROJECTS, box_value(static_cast<int32_t>(m_maxRecentProjects)));
-    values.Insert(S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT, box_value(m_deleteSourceAndProjectAfterExport));
-    values.Insert(S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT, box_value(m_autoReevaluateCutMarkersOnPlacement));
-    values.Insert(S_GENERATE_EXPORT_TIME_REPORT, box_value(m_generateExportTimeReport));
-    values.Insert(S_RECENT_VIDEOS, box_value(hstring(joinRecentItems(m_recentVideos))));
-    values.Insert(S_RECENT_PROJECTS, box_value(hstring(joinRecentItems(m_recentProjects))));
-    values.Insert(S_SEPARATE_PREVIEW_DETACHED, box_value(m_restorePreviewDetachedOnStartup));
-    values.Insert(S_SEPARATE_PREVIEW_FULLSCREEN, box_value(m_restorePreviewFullscreenOnStartup));
-
-    if(m_hasSeparatePreviewPlacement){
-        values.Insert(S_SEPARATE_PREVIEW_L, box_value(m_separatePreviewLeft));
-        values.Insert(S_SEPARATE_PREVIEW_T, box_value(m_separatePreviewTop));
-        values.Insert(S_SEPARATE_PREVIEW_W, box_value(m_separatePreviewWidthDips));
-        values.Insert(S_SEPARATE_PREVIEW_H, box_value(m_separatePreviewHeightDips));
-        values.Insert(S_SEPARATE_PREVIEW_DPI, box_value(m_separatePreviewDpi));
-    }
+    ::llvc::saveAppSettings(m_appSettings);
 }
 
 void MainWindow::saveWindowPlacement() const{
-    const auto hwnd{getWindowHandle()};
-    const auto captured{::llvc::captureWindowPlacement(hwnd)};
-    if(!captured){
-        return;
-    }
-
-    const auto localSettings{ApplicationData::Current().LocalSettings()};
-    const auto values{localSettings.Values()};
-    values.Insert(W_POS_L, box_value(captured->left));
-    values.Insert(W_POS_T, box_value(captured->top));
-    values.Insert(W_POS_W, box_value(captured->widthDips));
-    values.Insert(W_POS_H, box_value(captured->heightDips));
-    values.Insert(W_POS_DPI, box_value(captured->dpi));
+    ::llvc::saveWindowPlacementToSettings(getWindowHandle());
 }
 
 void MainWindow::onClosed(const Control&, const WEArgs&){
@@ -1329,8 +1212,8 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
     m_mainWindowActivatedRevoker.revoke();
     m_mainWindowClosedRevoker.revoke();
 
-    m_restorePreviewDetachedOnStartup = m_isSeparatePreviewWindowOpen;
-    m_restorePreviewFullscreenOnStartup = m_isSeparatePreviewWindowOpen && m_isSeparatePreviewFullscreen;
+    m_appSettings.restorePreviewDetachedOnStartup = m_isSeparatePreviewWindowOpen;
+    m_appSettings.restorePreviewFullscreenOnStartup = m_isSeparatePreviewWindowOpen && m_isSeparatePreviewFullscreen;
 
     if(m_detachedPreviewPlayer){
         m_detachedPreviewPlayer.SetMediaPlayer(nullptr);
@@ -1691,7 +1574,7 @@ bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
     }
 
     const auto markerCountAfter{m_prj.frameIndex().size()};
-    if(m_autoReevaluateCutMarkersOnPlacement && markerCountAfter > markerCountBefore){
+    if(m_appSettings.autoReevaluateCutMarkersOnPlacement && markerCountAfter > markerCountBefore){
         (void)reevaluateClearCutMarkers(false);
     }
 
@@ -1705,7 +1588,7 @@ bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
 
 AAction MainWindow::toggleSelectedKeyframeAtTime100nsAsync(int64_t time100ns){
     const auto removingExistingMarker{hasCutMarkerNearTime100ns(time100ns)};
-    if(m_autoReevaluateCutMarkersOnPlacement && !removingExistingMarker){
+    if(m_appSettings.autoReevaluateCutMarkersOnPlacement && !removingExistingMarker){
         const auto rapReady{co_await ensureRapMarkersAvailableAsync(L"Scanning source for RAP markers and aligning new cut marker...")};
         if(!rapReady){
             co_return;
@@ -2872,11 +2755,11 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         m_detachedPreviewSplashImage = detachedSplash;
         m_isSeparatePreviewWindowOpen = true;
         m_isSeparatePreviewFullscreen = false;
-        m_restorePreviewDetachedOnStartup = true;
+        m_appSettings.restorePreviewDetachedOnStartup = true;
         PreviewPlayer().SetMediaPlayer(nullptr);
         updatePreviewPlaceholderVisibility();
 
-        if(m_restorePreviewFullscreenOnStartup){
+        if(m_appSettings.restorePreviewFullscreenOnStartup){
             (void)toggleSeparatePreviewFullscreen();
         }
 
@@ -2901,7 +2784,7 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
     m_detachedPreviewSplashImage = nullptr;
     m_isSeparatePreviewWindowOpen = false;
     m_isSeparatePreviewFullscreen = false;
-    m_restorePreviewDetachedOnStartup = false;
+    m_appSettings.restorePreviewDetachedOnStartup = false;
     updatePreviewPlaceholderVisibility();
     SeparatePreviewWindowMenuItem().IsChecked(false);
     setStatusMessage(L"Preview restored to main window");
@@ -2921,7 +2804,7 @@ void MainWindow::onSeparatePreviewWindowClosed(const Control&, const WEArgs&){
     m_isSeparatePreviewWindowOpen = false;
     m_isSeparatePreviewFullscreen = false;
     if(!m_isClosing){
-        m_restorePreviewDetachedOnStartup = false;
+        m_appSettings.restorePreviewDetachedOnStartup = false;
     }
     PreviewPlayer().SetMediaPlayer(m_player);
     m_detachedPreviewPlayer = nullptr;
@@ -2950,27 +2833,21 @@ void MainWindow::saveSeparatePreviewPlacement(HWND previewHwnd){
     }
 
     const auto dpi{::GetDpiForWindow(previewHwnd)};
-    m_separatePreviewLeft = static_cast<int32_t>(bounds.left);
-    m_separatePreviewTop = static_cast<int32_t>(bounds.top);
-    m_separatePreviewWidthDips = pixelsToDips(static_cast<int32_t>(bounds.right - bounds.left), dpi);
-    m_separatePreviewHeightDips = pixelsToDips(static_cast<int32_t>(bounds.bottom - bounds.top), dpi);
-    m_separatePreviewDpi = static_cast<int32_t>(dpi);
-    m_hasSeparatePreviewPlacement = true;
+    m_appSettings.separatePreviewPlacement = ::llvc::WindowPlacementState{
+        .left = static_cast<int32_t>(bounds.left),
+        .top = static_cast<int32_t>(bounds.top),
+        .widthDips = pixelsToDips(static_cast<int32_t>(bounds.right - bounds.left), dpi),
+        .heightDips = pixelsToDips(static_cast<int32_t>(bounds.bottom - bounds.top), dpi),
+        .dpi = static_cast<int32_t>(dpi),
+    };
 }
 
 void MainWindow::restoreSeparatePreviewPlacement(HWND previewHwnd){
-    if(!previewHwnd || !m_hasSeparatePreviewPlacement){
+    if(!previewHwnd || !m_appSettings.separatePreviewPlacement){
         return;
     }
 
-    ::llvc::WindowPlacementState state{};
-    state.left = m_separatePreviewLeft;
-    state.top = m_separatePreviewTop;
-    state.widthDips = m_separatePreviewWidthDips;
-    state.heightDips = m_separatePreviewHeightDips;
-    state.dpi = m_separatePreviewDpi;
-
-    (void)applyWindowPlacement(previewHwnd, state, getWindowHandle(), false);
+    (void)applyWindowPlacement(previewHwnd, *m_appSettings.separatePreviewPlacement, getWindowHandle(), false);
 
 }
 
@@ -3018,7 +2895,7 @@ bool MainWindow::toggleSeparatePreviewFullscreen(){
             SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
         m_isSeparatePreviewFullscreen = true;
-        m_restorePreviewFullscreenOnStartup = true;
+        m_appSettings.restorePreviewFullscreenOnStartup = true;
         setStatusMessage(L"Separate preview: full-screen on");
         return true;
     }
@@ -3035,7 +2912,7 @@ bool MainWindow::toggleSeparatePreviewFullscreen(){
         SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
     m_isSeparatePreviewFullscreen = false;
-    m_restorePreviewFullscreenOnStartup = false;
+    m_appSettings.restorePreviewFullscreenOnStartup = false;
     setStatusMessage(L"Separate preview: full-screen off");
     return true;
 }
@@ -3351,11 +3228,11 @@ void _refreshRecentFilesMenu(MenuFlyoutSubItem menu, const vector<hstring>& rece
 }
 
 void MainWindow::refreshRecentVideosMenu(){
-    _refreshRecentFilesMenu(RecentVideosMenu(), m_recentVideos, {this, &MainWindow::recentVideoMenuItem_Click});
+    _refreshRecentFilesMenu(RecentVideosMenu(), m_appSettings.recentVideos, {this, &MainWindow::recentVideoMenuItem_Click});
 }
 
 void MainWindow::refreshRecentProjectsMenu(){
-    _refreshRecentFilesMenu(RecentProjectsMenu(), m_recentProjects, {this, &MainWindow::recentProjectMenuItem_Click});
+    _refreshRecentFilesMenu(RecentProjectsMenu(), m_appSettings.recentProjects, {this, &MainWindow::recentProjectMenuItem_Click});
 }
 
 void _addRecentVideo(vector<hstring>& recent, size_t maxCount, const hstring& path){
@@ -3371,7 +3248,7 @@ void MainWindow::addRecentVideo(const hstring& path){
         return;
     }
 
-    _addRecentVideo(m_recentVideos, m_maxRecentVideos, path);
+    _addRecentVideo(m_appSettings.recentVideos, m_appSettings.maxRecentVideos, path);
     addPathToShellRecentDocuments(path);
     refreshRecentVideosMenu();
     saveAppSettings();
@@ -3382,7 +3259,7 @@ void MainWindow::addRecentProject(const hstring& path){
         return;
     }
 
-    _addRecentVideo(m_recentProjects, m_maxRecentProjects, path);
+    _addRecentVideo(m_appSettings.recentProjects, m_appSettings.maxRecentProjects, path);
     addPathToShellRecentDocuments(path);
     refreshRecentProjectsMenu();
     saveAppSettings();
@@ -3397,8 +3274,8 @@ void MainWindow::removeRecentPath(const hstring& path){
         recent.erase(remove(recent.begin(), recent.end(), path), recent.end());
     }};
 
-    erasePath(m_recentVideos);
-    erasePath(m_recentProjects);
+    erasePath(m_appSettings.recentVideos);
+    erasePath(m_appSettings.recentProjects);
     (void)removePathFromShellRecentDocuments(path.c_str());
     refreshRecentVideosMenu();
     refreshRecentProjectsMenu();
@@ -4394,7 +4271,7 @@ AAction MainWindow::showOptionsDialogAsync(){
     videosCount.Minimum(1);
     videosCount.Maximum(20);
     videosCount.SpinButtonPlacementMode(Controls::NumberBoxSpinButtonPlacementMode::Inline);
-    videosCount.Value(m_maxRecentVideos);
+    videosCount.Value(m_appSettings.maxRecentVideos);
 
     Controls::TextBlock projectsLabel{};
     projectsLabel.Text(L"Recent projects to keep (1-20)");
@@ -4402,19 +4279,19 @@ AAction MainWindow::showOptionsDialogAsync(){
     projectsCount.Minimum(1);
     projectsCount.Maximum(20);
     projectsCount.SpinButtonPlacementMode(Controls::NumberBoxSpinButtonPlacementMode::Inline);
-    projectsCount.Value(m_maxRecentProjects);
+    projectsCount.Value(m_appSettings.maxRecentProjects);
 
     Controls::CheckBox deleteAfterExportCheckBox{};
     deleteAfterExportCheckBox.Content(box_value(L"Delete source video and project file after successful export"));
-    deleteAfterExportCheckBox.IsChecked(m_deleteSourceAndProjectAfterExport);
+    deleteAfterExportCheckBox.IsChecked(m_appSettings.deleteSourceAndProjectAfterExport);
 
     Controls::CheckBox autoReevaluateCutMarkersOnPlacementCheckBox{};
     autoReevaluateCutMarkersOnPlacementCheckBox.Content(box_value(L"Auto-reevaluate cut markers when placing them"));
-    autoReevaluateCutMarkersOnPlacementCheckBox.IsChecked(m_autoReevaluateCutMarkersOnPlacement);
+    autoReevaluateCutMarkersOnPlacementCheckBox.IsChecked(m_appSettings.autoReevaluateCutMarkersOnPlacement);
 
     Controls::CheckBox generateExportTimeReportCheckBox{};
     generateExportTimeReportCheckBox.Content(box_value(L"Copy export time report to clipboard after export"));
-    generateExportTimeReportCheckBox.IsChecked(m_generateExportTimeReport);
+    generateExportTimeReportCheckBox.IsChecked(m_appSettings.generateExportTimeReport);
 
     panel.Children().Append(videosLabel);
     panel.Children().Append(videosCount);
@@ -4436,17 +4313,17 @@ AAction MainWindow::showOptionsDialogAsync(){
         co_return;
     }
 
-    m_maxRecentVideos = static_cast<uint32_t>(clamp(static_cast<int>(lround(videosCount.Value())), 1, 20));
-    m_maxRecentProjects = static_cast<uint32_t>(clamp(static_cast<int>(lround(projectsCount.Value())), 1, 20));
-    m_deleteSourceAndProjectAfterExport = deleteAfterExportCheckBox.IsChecked().GetBoolean();
-    m_autoReevaluateCutMarkersOnPlacement = autoReevaluateCutMarkersOnPlacementCheckBox.IsChecked().GetBoolean();
-    m_generateExportTimeReport = generateExportTimeReportCheckBox.IsChecked().GetBoolean();
+    m_appSettings.maxRecentVideos = static_cast<uint32_t>(clamp(static_cast<int>(lround(videosCount.Value())), 1, 20));
+    m_appSettings.maxRecentProjects = static_cast<uint32_t>(clamp(static_cast<int>(lround(projectsCount.Value())), 1, 20));
+    m_appSettings.deleteSourceAndProjectAfterExport = deleteAfterExportCheckBox.IsChecked().GetBoolean();
+    m_appSettings.autoReevaluateCutMarkersOnPlacement = autoReevaluateCutMarkersOnPlacementCheckBox.IsChecked().GetBoolean();
+    m_appSettings.generateExportTimeReport = generateExportTimeReportCheckBox.IsChecked().GetBoolean();
 
-    if(m_recentVideos.size() > m_maxRecentVideos){
-        m_recentVideos.resize(m_maxRecentVideos);
+    if(m_appSettings.recentVideos.size() > m_appSettings.maxRecentVideos){
+        m_appSettings.recentVideos.resize(m_appSettings.maxRecentVideos);
     }
-    if(m_recentProjects.size() > m_maxRecentProjects){
-        m_recentProjects.resize(m_maxRecentProjects);
+    if(m_appSettings.recentProjects.size() > m_appSettings.maxRecentProjects){
+        m_appSettings.recentProjects.resize(m_appSettings.maxRecentProjects);
     }
 
     refreshRecentVideosMenu();
@@ -5327,7 +5204,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     }
     updateExportOverlayActionButtons();
 
-    if(m_generateExportTimeReport){
+    if(m_appSettings.generateExportTimeReport){
         const auto totalDurationMs{chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - exportOverallStartedAt)};
         const auto formatMs{[](const std::optional<chrono::milliseconds>& value) -> wstring{
             if(!value){
@@ -5402,7 +5279,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         setStatusMessage(exportSucceeded ? L"Export completed and timing report copied to clipboard" : L"Export timing report copied to clipboard");
     }
 
-    if(exportSucceeded && m_deleteSourceAndProjectAfterExport){
+    if(exportSucceeded && m_appSettings.deleteSourceAndProjectAfterExport){
         co_await promptDeleteSourceAndProjectAfterExportAsync(outputPath);
     }
 

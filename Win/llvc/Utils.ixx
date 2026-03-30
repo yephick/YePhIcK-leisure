@@ -1,6 +1,7 @@
-﻿module;
+module;
 
 #include <Windows.h>
+#include <winrt/Windows.Storage.h>
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
@@ -31,6 +32,19 @@ struct WindowPlacementState final{
     bool maximized{false};
 };
 
+struct AppSettingsState final{
+    vector<winrt::hstring> recentVideos{};
+    vector<winrt::hstring> recentProjects{};
+    uint32_t maxRecentVideos{5};
+    uint32_t maxRecentProjects{5};
+    bool deleteSourceAndProjectAfterExport{false};
+    bool autoReevaluateCutMarkersOnPlacement{false};
+    bool generateExportTimeReport{false};
+    bool restorePreviewDetachedOnStartup{false};
+    bool restorePreviewFullscreenOnStartup{false};
+    optional<WindowPlacementState> separatePreviewPlacement{};
+};
+
 wstring trim(wstring value);
 wstring serializeIndexList(const vector<uint32_t>& values);
 wstring serializeIndexPairs(const vector<pair<uint32_t, uint32_t>>& values);
@@ -41,6 +55,10 @@ int32_t dipsToPixels(int32_t dipValue, uint32_t dpi);
 bool isRectVisibleOnAnyMonitor(const RECT& rect);
 optional<WindowPlacementState> captureWindowPlacement(HWND hwnd);
 bool applyWindowPlacement(HWND hwnd, const WindowPlacementState& state, HWND fallbackWindow = nullptr, bool restoreMaximized = false);
+bool restoreWindowPlacementFromSettings(HWND hwnd, HWND fallbackWindow = nullptr, bool restoreMaximized = false);
+void saveWindowPlacementToSettings(HWND hwnd);
+AppSettingsState loadAppSettings();
+void saveAppSettings(const AppSettingsState& state);
 
 }
 
@@ -49,6 +67,7 @@ namespace llvc{
 using namespace std;
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
+using namespace Windows::Storage;
 
 bool isInMenuSubtree(const DependencyObject& object){
     auto current{object};
@@ -74,6 +93,25 @@ bool isInDialogSubtree(const DependencyObject& object){
 
 namespace{
 constexpr wchar_t RECENT_DELIMITER{0x1F};
+constexpr auto W_POS_L{L"WindowLeft"};
+constexpr auto W_POS_T{L"WindowTop"};
+constexpr auto W_POS_W{L"WindowWidth"};
+constexpr auto W_POS_H{L"WindowHeight"};
+constexpr auto W_POS_DPI{L"WindowDpi"};
+constexpr auto S_RECENT_VIDEOS{L"RecentVideos"};
+constexpr auto S_RECENT_PROJECTS{L"RecentProjects"};
+constexpr auto S_MAX_RECENT_VIDEOS{L"MaxRecentVideos"};
+constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
+constexpr auto S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT{L"DeleteSourceAndProjectAfterExport"};
+constexpr auto S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT{L"AutoReevaluateCutMarkersOnPlacement"};
+constexpr auto S_GENERATE_EXPORT_TIME_REPORT{L"GenerateExportTimeReport"};
+constexpr auto S_SEPARATE_PREVIEW_DETACHED{L"SeparatePreviewDetached"};
+constexpr auto S_SEPARATE_PREVIEW_L{L"SeparatePreviewLeft"};
+constexpr auto S_SEPARATE_PREVIEW_T{L"SeparatePreviewTop"};
+constexpr auto S_SEPARATE_PREVIEW_W{L"SeparatePreviewWidth"};
+constexpr auto S_SEPARATE_PREVIEW_H{L"SeparatePreviewHeight"};
+constexpr auto S_SEPARATE_PREVIEW_DPI{L"SeparatePreviewDpi"};
+constexpr auto S_SEPARATE_PREVIEW_FULLSCREEN{L"SeparatePreviewFullscreen"};
 }
 
 wstring formatGuid(const _GUID& guid){
@@ -286,6 +324,123 @@ bool applyWindowPlacement(HWND hwnd, const WindowPlacementState& state, HWND fal
     }
 
     return true;
+}
+
+bool restoreWindowPlacementFromSettings(HWND hwnd, HWND fallbackWindow, bool restoreMaximized){
+    const auto values{ApplicationData::Current().LocalSettings().Values()};
+    if(!values.HasKey(W_POS_L) || !values.HasKey(W_POS_T) || !values.HasKey(W_POS_W) || !values.HasKey(W_POS_H)){
+        return false;
+    }
+
+    WindowPlacementState state{};
+    state.left = unbox_value<int32_t>(values.Lookup(W_POS_L));
+    state.top = unbox_value<int32_t>(values.Lookup(W_POS_T));
+    state.widthDips = unbox_value<int32_t>(values.Lookup(W_POS_W));
+    state.heightDips = unbox_value<int32_t>(values.Lookup(W_POS_H));
+    state.dpi = values.HasKey(W_POS_DPI) ? unbox_value<int32_t>(values.Lookup(W_POS_DPI)) : 96;
+
+    if(applyWindowPlacement(hwnd, state, fallbackWindow, restoreMaximized)){
+        return true;
+    }
+
+    values.Remove(W_POS_L);
+    values.Remove(W_POS_T);
+    values.Remove(W_POS_W);
+    values.Remove(W_POS_H);
+    values.Remove(W_POS_DPI);
+    return false;
+}
+
+void saveWindowPlacementToSettings(HWND hwnd){
+    const auto captured{captureWindowPlacement(hwnd)};
+    if(!captured){
+        return;
+    }
+
+    const auto values{ApplicationData::Current().LocalSettings().Values()};
+    values.Insert(W_POS_L, box_value(captured->left));
+    values.Insert(W_POS_T, box_value(captured->top));
+    values.Insert(W_POS_W, box_value(captured->widthDips));
+    values.Insert(W_POS_H, box_value(captured->heightDips));
+    values.Insert(W_POS_DPI, box_value(captured->dpi));
+}
+
+AppSettingsState loadAppSettings(){
+    AppSettingsState state{};
+    const auto values{ApplicationData::Current().LocalSettings().Values()};
+
+    if(values.HasKey(S_MAX_RECENT_VIDEOS)){
+        const auto parsed{unbox_value<int32_t>(values.Lookup(S_MAX_RECENT_VIDEOS))};
+        state.maxRecentVideos = static_cast<uint32_t>(clamp(parsed, 1, 20));
+    }
+    if(values.HasKey(S_MAX_RECENT_PROJECTS)){
+        const auto parsed{unbox_value<int32_t>(values.Lookup(S_MAX_RECENT_PROJECTS))};
+        state.maxRecentProjects = static_cast<uint32_t>(clamp(parsed, 1, 20));
+    }
+
+    if(values.HasKey(S_RECENT_VIDEOS)){
+        state.recentVideos = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_VIDEOS)).c_str());
+    }
+    if(values.HasKey(S_RECENT_PROJECTS)){
+        state.recentProjects = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_PROJECTS)).c_str());
+    }
+
+    state.deleteSourceAndProjectAfterExport = values.HasKey(S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT)
+        && unbox_value<bool>(values.Lookup(S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT));
+    state.autoReevaluateCutMarkersOnPlacement = values.HasKey(S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT)
+        && unbox_value<bool>(values.Lookup(S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT));
+    state.generateExportTimeReport = values.HasKey(S_GENERATE_EXPORT_TIME_REPORT)
+        && unbox_value<bool>(values.Lookup(S_GENERATE_EXPORT_TIME_REPORT));
+    state.restorePreviewDetachedOnStartup = values.HasKey(S_SEPARATE_PREVIEW_DETACHED)
+        && unbox_value<bool>(values.Lookup(S_SEPARATE_PREVIEW_DETACHED));
+    state.restorePreviewFullscreenOnStartup = values.HasKey(S_SEPARATE_PREVIEW_FULLSCREEN)
+        && unbox_value<bool>(values.Lookup(S_SEPARATE_PREVIEW_FULLSCREEN));
+
+    if(state.recentVideos.size() > state.maxRecentVideos){
+        state.recentVideos.resize(state.maxRecentVideos);
+    }
+    if(state.recentProjects.size() > state.maxRecentProjects){
+        state.recentProjects.resize(state.maxRecentProjects);
+    }
+
+    if(values.HasKey(S_SEPARATE_PREVIEW_L) && values.HasKey(S_SEPARATE_PREVIEW_T) && values.HasKey(S_SEPARATE_PREVIEW_W) && values.HasKey(S_SEPARATE_PREVIEW_H)){
+        WindowPlacementState placement{};
+        placement.left = unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_L));
+        placement.top = unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_T));
+        placement.widthDips = max<int32_t>(320, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_W)));
+        placement.heightDips = max<int32_t>(200, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_H)));
+        placement.dpi = values.HasKey(S_SEPARATE_PREVIEW_DPI) ? max<int32_t>(96, unbox_value<int32_t>(values.Lookup(S_SEPARATE_PREVIEW_DPI))) : 96;
+        state.separatePreviewPlacement = placement;
+    }
+
+    return state;
+}
+
+void saveAppSettings(const AppSettingsState& state){
+    const auto values{ApplicationData::Current().LocalSettings().Values()};
+    values.Insert(S_MAX_RECENT_VIDEOS, box_value(static_cast<int32_t>(state.maxRecentVideos)));
+    values.Insert(S_MAX_RECENT_PROJECTS, box_value(static_cast<int32_t>(state.maxRecentProjects)));
+    values.Insert(S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT, box_value(state.deleteSourceAndProjectAfterExport));
+    values.Insert(S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT, box_value(state.autoReevaluateCutMarkersOnPlacement));
+    values.Insert(S_GENERATE_EXPORT_TIME_REPORT, box_value(state.generateExportTimeReport));
+    values.Insert(S_RECENT_VIDEOS, box_value(hstring(joinRecentItems(state.recentVideos))));
+    values.Insert(S_RECENT_PROJECTS, box_value(hstring(joinRecentItems(state.recentProjects))));
+    values.Insert(S_SEPARATE_PREVIEW_DETACHED, box_value(state.restorePreviewDetachedOnStartup));
+    values.Insert(S_SEPARATE_PREVIEW_FULLSCREEN, box_value(state.restorePreviewFullscreenOnStartup));
+
+    if(state.separatePreviewPlacement){
+        values.Insert(S_SEPARATE_PREVIEW_L, box_value(state.separatePreviewPlacement->left));
+        values.Insert(S_SEPARATE_PREVIEW_T, box_value(state.separatePreviewPlacement->top));
+        values.Insert(S_SEPARATE_PREVIEW_W, box_value(state.separatePreviewPlacement->widthDips));
+        values.Insert(S_SEPARATE_PREVIEW_H, box_value(state.separatePreviewPlacement->heightDips));
+        values.Insert(S_SEPARATE_PREVIEW_DPI, box_value(state.separatePreviewPlacement->dpi));
+    }else{
+        values.Remove(S_SEPARATE_PREVIEW_L);
+        values.Remove(S_SEPARATE_PREVIEW_T);
+        values.Remove(S_SEPARATE_PREVIEW_W);
+        values.Remove(S_SEPARATE_PREVIEW_H);
+        values.Remove(S_SEPARATE_PREVIEW_DPI);
+    }
 }
 
 }

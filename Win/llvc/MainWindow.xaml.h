@@ -15,6 +15,7 @@ struct _GUID;
 import llvc.Project;
 import llvc.Timeline;
 import llvc.Media;
+import llvc.Utils;
 
 namespace winrt::llvc::implementation{
 
@@ -135,13 +136,7 @@ private:
     bool m_pendingReevaluateAfterRapLookup{false};
     bool m_pendingReevaluateWithoutUndoAfterRapLookup{false};
     int m_pendingNudgeDirectionAfterRapLookup{0};
-    vector<hstring> m_recentVideos{};
-    vector<hstring> m_recentProjects{};
-    uint32_t m_maxRecentVideos{5};
-    uint32_t m_maxRecentProjects{5};
-    bool m_deleteSourceAndProjectAfterExport{false};
-    bool m_autoReevaluateCutMarkersOnPlacement{false};
-    bool m_generateExportTimeReport{false};
+    ::llvc::AppSettingsState m_appSettings{};
     hstring m_projectPath{};
     bool m_isClosing{false};
     bool m_isExportInProgress{false};
@@ -169,14 +164,6 @@ private:
     winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
     bool m_isSeparatePreviewWindowOpen{false};
     bool m_isSeparatePreviewFullscreen{false};
-    bool m_restorePreviewDetachedOnStartup{false};
-    bool m_hasSeparatePreviewPlacement{false};
-    bool m_restorePreviewFullscreenOnStartup{false};
-    int32_t m_separatePreviewLeft{0};
-    int32_t m_separatePreviewTop{0};
-    int32_t m_separatePreviewWidthDips{960};
-    int32_t m_separatePreviewHeightDips{540};
-    int32_t m_separatePreviewDpi{96};
     RECT m_separatePreviewRestoreRect{0, 0, 0, 0};
     LONG_PTR m_separatePreviewRestoreStyle{0};
     LONG_PTR m_separatePreviewRestoreExStyle{0};
