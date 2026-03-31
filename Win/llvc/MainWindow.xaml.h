@@ -124,19 +124,14 @@ struct MainWindow: MainWindowT<MainWindow>{
     void requestExportCancel();
 
 private:
-    struct TimelineWheelZoomAnchor final{
-        int64_t time100ns{};
-        double viewportPointerX{};
-    };
-
     struct TimelineInteractionState final{
         bool isDragging{false};
         bool dragMoved{false};
         uint32_t dragPointerId{0};
         double dragStartX{0};
         double dragStartOffset{0};
-        std::optional<double> pendingScrollbarRatio{};
-        std::optional<TimelineWheelZoomAnchor> pendingWheelZoomAnchor{};
+        std::optional<::llvc::TimelineScrollbarAnchor> pendingScrollbarAnchor{};
+        std::optional<::llvc::TimelinePointerZoomAnchor> pendingWheelZoomAnchor{};
     };
 
     struct SeparatePreviewState final{
@@ -166,8 +161,10 @@ private:
     bool m_isRapLookupInProgress{false};
     bool m_hasTimelineRenderCompleted{false};
     bool m_isUiReadyForEvents{false};
+    bool m_isSyncingTimelineScrollBar{false};
     bool m_pendingReevaluateAfterRapLookup{false};
     bool m_pendingReevaluateWithoutUndoAfterRapLookup{false};
+    std::vector<int64_t> m_pendingAutoEvaluateMarkerTimes100ns{};
     int m_pendingNudgeDirectionAfterRapLookup{0};
     ::llvc::AppSettingsState m_appSettings{};
     hstring m_projectPath{};
@@ -238,14 +235,16 @@ private:
     AAction showOptionsDialogAsync();
     fire_and_forget renderTimelineAsync();
     void updateTimelineCursorFromPlayback();
+    void updateTimelineCursorFromPosition(int64_t position100ns);
     void syncTimelineHorizontalScrollBar();
+    void updateTimelineCursorFromViewportOffset(double offset);
     void renderTimelineTicks();
     void seekTimelineToCanvasX(double pointerX);
     void renderKeyframeTicks();
     void renderCutOverlays();
-    bool hasCutMarkerNearTime100ns(int64_t time100ns) const;
     std::optional<int64_t> timelinePointToTime100ns(double pointerX, double width) const;
     bool toggleSelectedKeyframeAtTime100ns(int64_t time100ns);
+    bool evaluatePlacedMarkerAtTime100ns(int64_t time100ns);
     fire_and_forget toggleSelectedKeyframeAtTime100nsAsync(int64_t time100ns);
     bool toggleCutBlockAtTime100ns(int64_t time100ns);
     bool setCutBlockAtTime100ns(int64_t time100ns, bool cutScene);
@@ -261,11 +260,10 @@ private:
     void ensureCurrentTimelineCursorVisible();
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
-    bool cutPlanUsesUnevaluatedSceneEdgeMarkers() const;
-    bool projectHasRequestedCuts() const;
     std::optional<::llvc::EffectiveExportPlan> tryBuildEffectiveExportPlan(const std::function<void(double)>& progressCallback = {}) const;
     bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns) const;
     bool reevaluateClearCutMarkers(bool pushUndoState);
+    bool reevaluateAll(bool pushUndoState);
     void queueRapLookup(bool queueReevaluate, int nudgeDirection);
     IOpBool ensureRapMarkersAvailableAsync(const wstring& statusMessage, const std::function<void(double)>& progressCallback = {});
     fire_and_forget runRapLookupAsync();
@@ -277,6 +275,14 @@ private:
     void updateAudioUiAndPlaybackState();
     void setVideoDetailsPanelExpanded(bool expanded);
     void refreshVideoDetailsPanel();
+    static wstring buildEstimatedOutputText(
+        const ::llvc::Project& project,
+        const MediaInspectionResult& mediaInfo,
+        bool hasTimelineRenderCompleted,
+        bool isRapLookupInProgress,
+        bool cachedRapLookupAttempted,
+        bool cachedRapLookupSucceeded,
+        const std::optional<::llvc::EffectiveExportPlan>& effectivePlan);
     wstring buildSourcePropertiesText() const;
     void applyAudioSettingsToPlayer();
     void syncAudioCrossfadeComboSelection();
@@ -315,6 +321,9 @@ private:
     void adjustTimelineZoomBy(int delta);
     void saveSeparatePreviewPlacement(HWND previewHwnd);
     void restoreSeparatePreviewPlacement(HWND previewHwnd);
+    void resetProjectStateImpl();
+    bool handleStorylineKeyDownImpl(const KRArgs& args);
+    wstring buildSourcePropertiesTextImpl() const;
     static TS secondsToTimeSpan(double seconds);
 };
 

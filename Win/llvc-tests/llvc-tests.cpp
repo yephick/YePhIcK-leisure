@@ -66,6 +66,34 @@ void testUtilsParsing(){
     expectEqual(llvc::trim(L" \t hello world \r\n"), wstring(L"hello world"), "trim should remove surrounding whitespace");
 }
 
+void testUtilsWorkflowPolicies(){
+    llvc::AppSettingsState settings{};
+    llvc::applySeparatePreviewOpened(settings);
+    expect(settings.restorePreviewDetachedOnStartup, "applySeparatePreviewOpened should mark detached preview on open");
+    llvc::applySeparatePreviewFullscreen(settings, true);
+    expect(settings.restorePreviewFullscreenOnStartup, "applySeparatePreviewFullscreen should remember fullscreen state");
+    llvc::applySeparatePreviewClosed(settings);
+    expect(!settings.restorePreviewDetachedOnStartup && !settings.restorePreviewFullscreenOnStartup, "applySeparatePreviewClosed should clear detached/fullscreen startup flags on close");
+
+    expectEqual(llvc::buildProjectLoadedStatus(false, false), wstring(L"Project loaded"), "buildProjectLoadedStatus should return the default project-loaded status");
+    expectEqual(llvc::buildProjectLoadedStatus(false, true), wstring(L""), "buildProjectLoadedStatus should stay quiet when the referenced video opened successfully");
+    expectEqual(llvc::buildProjectLoadedStatus(true, true), wstring(L"Project opened, but referenced video could not be loaded"), "buildProjectLoadedStatus should report missing referenced video");
+    expectEqual(llvc::buildTimelineLoadingStatus(L"demo.mp4"), wstring(L"Loaded: demo.mp4 (loading story line...)"), "buildTimelineLoadingStatus should build loading text");
+    expectEqual(llvc::buildTimelineReadyStatus(L"demo.mp4"), wstring(L"Loaded: demo.mp4 (story line ready)"), "buildTimelineReadyStatus should build ready text");
+
+    vector<winrt::hstring> recent{L"b.mp4", L"a.mp4"};
+    llvc::pushRecentItemFront(recent, 2, L"c.mp4");
+    expectEqual(recent, vector<winrt::hstring>{L"c.mp4", L"b.mp4"}, "pushRecentItemFront should push new items to the front and trim to the max size");
+    llvc::pushRecentItemFront(recent, 2, L"b.mp4");
+    expectEqual(recent, vector<winrt::hstring>{L"b.mp4", L"c.mp4"}, "pushRecentItemFront should move existing items to the front without duplicates");
+    llvc::removeRecentItem(recent, L"c.mp4");
+    expectEqual(recent, vector<winrt::hstring>{L"b.mp4"}, "removeRecentItem should remove matching items");
+
+    vector<winrt::hstring> zeroCapacityRecent{L"keep.mp4"};
+    llvc::pushRecentItemFront(zeroCapacityRecent, 0, L"drop.mp4");
+    expect(zeroCapacityRecent.empty(), "pushRecentItemFront should trim everything when maxCount is zero");
+}
+
 void testTimelineIntervalNormalization(){
     constexpr auto sentinel{numeric_limits<uint32_t>::max()};
     const auto normalized{llvc::normalizeAndMergeIndexIntervals({
@@ -160,6 +188,42 @@ void testTimelineTickDensityAndLabels(){
     const auto requestedTicks{timeline.buildMajorTicks(500.0, 95.0, 10)};
     expectEqual(requestedTicks.size(), size_t{11}, "buildMajorTicks should honor an explicit desired tick count");
     expectEqual(requestedTicks[5].label, wstring(L"0:48"), "buildMajorTicks should round labels to the nearest second");
+}
+
+void testTimelineZoomAnchorsAndThumbnailPlanning(){
+    llvc::Timeline timeline{};
+
+    const auto scrollbarAnchor{llvc::TimelineScrollbarAnchor::capture(25.0, 100.0)};
+    expect(scrollbarAnchor.has_value(), "TimelineScrollbarAnchor should capture a valid scrollbar ratio");
+    expectNear(scrollbarAnchor->restoreOffset(300.0), 75.0, 0.001, "TimelineScrollbarAnchor should restore proportionally");
+    expectEqual(llvc::TimelineScrollbarAnchor::capture(0.0, 0.0)->restoreOffset(250.0), 0.0, "TimelineScrollbarAnchor should restore zero offset when the original extent was not scrollable");
+
+    const llvc::TimelinePointerZoomAnchor pointerAnchor{
+        .time100ns = 5LL * llvc::Timeline::HnsPerSecond,
+        .viewportPointerX = 120.0,
+    };
+    expectNear(pointerAnchor.restoreOffset(timeline, 10LL * llvc::Timeline::HnsPerSecond, 1000.0, 300.0), 380.0, 0.001, "TimelinePointerZoomAnchor should keep the hovered time under the same pointer position");
+
+    const auto stripPlan{timeline.buildThumbnailStripPlan(120.0, 8.0)};
+    expect(stripPlan.totalWidth > 0.0, "buildThumbnailStripPlan should produce a positive width");
+    expect(stripPlan.thumbnailCount >= 1, "buildThumbnailStripPlan should produce at least one thumbnail");
+    expect(stripPlan.thumbnailWidth > 0.0, "buildThumbnailStripPlan should produce a positive thumbnail width");
+
+    const auto visibleRange{timeline.visibleThumbnailRange(320.0, 210.0, 100.0, 12)};
+    expectEqual(visibleRange.first, 3, "visibleThumbnailRange should locate the first visible thumbnail");
+    expectEqual(visibleRange.last, 5, "visibleThumbnailRange should locate the last visible thumbnail");
+
+    vector<bool> built(8, false);
+    built[2] = true;
+    built[3] = true;
+    const llvc::TimelineThumbnailIndexRange buildRange{.first = 2, .last = 4};
+    expectEqual(timeline.chooseNextThumbnailIndex(built, buildRange, false), 4, "chooseNextThumbnailIndex should prefer unfinished visible thumbnails");
+    built[4] = true;
+    expectEqual(timeline.chooseNextThumbnailIndex(built, buildRange, true), 5, "chooseNextThumbnailIndex should expand outward after visible thumbnails are built");
+
+    const auto postActions{timeline.buildRenderPostActions(L"sample.mp4", true, false, false)};
+    expect(postActions.shouldQueueRapLookup, "buildRenderPostActions should request RAP lookup when cuts exist and no lookup has started");
+    expectEqual(postActions.readyStatus, wstring(L"Loaded: sample.mp4 (story line ready)"), "buildRenderPostActions should build the ready status line");
 }
 
 void testProjectCutRangesAndBoundaries(){
@@ -318,6 +382,77 @@ void testProjectEffectiveExportPreservesAlreadySafeTailCut(){
     expectEqual(plan.effectiveOutputDuration100ns, int64_t{600}, "tail cut should remove the trailing duration only once");
 }
 
+void testProjectEstimateCoordinatorHelpers(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(200, true, true), marker(600, false, false)});
+    project.refreshSelectedMarkers();
+
+    expect(!llvc::projectHasRequestedCuts(project), "projectHasRequestedCuts should report false when there are no cut scenes");
+    expect(!llvc::cutPlanUsesUnevaluatedSceneEdgeMarkers(project), "cutPlanUsesUnevaluatedSceneEdgeMarkers should ignore red markers that are not scene edges");
+    expect(!llvc::effectiveExportPlanNeedsRapAlignment(project), "effectiveExportPlanNeedsRapAlignment should stay false without requested cuts");
+
+    project.cutScenes({1});
+    expect(llvc::projectHasRequestedCuts(project), "projectHasRequestedCuts should report true for cut scenes");
+    expect(llvc::cutPlanUsesUnevaluatedSceneEdgeMarkers(project), "cutPlanUsesUnevaluatedSceneEdgeMarkers should detect red scene-edge markers");
+    expect(llvc::effectiveExportPlanNeedsRapAlignment(project), "effectiveExportPlanNeedsRapAlignment should require RAP alignment for red scene-edge markers");
+
+    project.frameIndex({marker(200, true, true), marker(600, true, true)});
+    project.refreshSelectedMarkers();
+    expect(!llvc::cutPlanUsesUnevaluatedSceneEdgeMarkers(project), "cutPlanUsesUnevaluatedSceneEdgeMarkers should accept fully evaluated scene edges");
+    expect(!llvc::effectiveExportPlanNeedsRapAlignment(project), "effectiveExportPlanNeedsRapAlignment should skip reevaluation when cut edges are already green");
+
+    const auto directPlan{llvc::buildDirectEffectiveExportPlan(project, 1'000)};
+    expectEqual(directPlan.requestedCutRanges100ns, vector<pair<int64_t, int64_t>>{{200, 600}}, "buildDirectEffectiveExportPlan should preserve the current cut ranges");
+    expectEqual(directPlan.effectiveCutRanges100ns, vector<pair<int64_t, int64_t>>{{200, 600}}, "buildDirectEffectiveExportPlan should match effective ranges to requested ranges");
+    expectEqual(directPlan.effectiveOutputDuration100ns, int64_t{600}, "buildDirectEffectiveExportPlan should preserve the current output duration");
+    expect(!directPlan.materiallyDifferent, "buildDirectEffectiveExportPlan should report no material changes");
+}
+
+void testExportPreflightAndPlanSummary(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.videoFile(winrt::Windows::Storage::StorageFile{nullptr});
+    const auto missingVideo{llvc::buildExportPreflightState(project, true, true, true, false, true)};
+    expect(!missingVideo.canExport, "buildExportPreflightState should block when no video is loaded");
+
+    const auto tempPath{filesystem::temp_directory_path() / L"llvc-tests-export-preflight.tmp"};
+    {
+        ofstream tempFile(tempPath, ios::binary | ios::trunc);
+        tempFile << "x";
+    }
+    project.videoFile(winrt::Windows::Storage::StorageFile::GetFileFromPathAsync(tempPath.wstring()).get());
+    project.frameIndex({marker(200, true, true), marker(600, false, false)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({1});
+    const auto preflight{llvc::buildExportPreflightState(project, true, true, true, false, true)};
+    expect(preflight.canExport, "buildExportPreflightState should allow supported exports");
+    expect(preflight.needsRapReevaluation, "buildExportPreflightState should report RAP reevaluation need for red scene-edge markers");
+    expectEqual(preflight.requestedCutBlockCount, size_t{1}, "buildExportPreflightState should report requested cut blocks");
+
+    const llvc::EffectiveExportPlan plan{
+        .requestedCutRanges100ns = {{100, 300}},
+        .effectiveCutRanges100ns = {{120, 250}},
+        .sourceDuration100ns = 1'000,
+        .requestedOutputDuration100ns = 800,
+        .effectiveOutputDuration100ns = 870,
+        .hasRequestedCuts = true,
+        .emptyAfterAlignment = false,
+        .materiallyDifferent = true,
+    };
+    const auto summary{llvc::summarizeEffectiveExportPlan(plan)};
+    expectEqual(summary.repositionedMarkers, size_t{2}, "summarizeEffectiveExportPlan should count moved cut boundaries");
+    expectEqual(summary.shrunkCutScenes, size_t{1}, "summarizeEffectiveExportPlan should count shrunk cut scenes");
+    expectEqual(summary.shrunkTotal100ns, int64_t{70}, "summarizeEffectiveExportPlan should sum shrink duration");
+
+    const auto overlayEstimates{llvc::buildExportOverlayEstimates(1000, 10'000'000, 5'000'000, false, true, 20)};
+    expectEqual(overlayEstimates.estimatedTargetBytes, uint64_t{500}, "buildExportOverlayEstimates should scale target size by output duration");
+    expectEqual(overlayEstimates.estimatedSavingsBytes, uint64_t{500}, "buildExportOverlayEstimates should compute estimated savings");
+    expectEqual(overlayEstimates.estimatedDroppedAudioBytes, uint64_t{10}, "buildExportOverlayEstimates should estimate dropped audio bytes when audio is removed");
+
+    filesystem::remove(tempPath);
+}
+
 void testEditorHistoryUndoRedo(){
     llvc::Project project{};
     project.timelineDuration100ns(100'000'000);
@@ -435,6 +570,67 @@ void testEditorReevaluationPreservesTailCutBoundary(){
     expectEqual(project.cutScenes(), vector<uint32_t>{2, 3}, "tail-cut reevaluation should preserve the tail cut while remapping across the inserted RAP brackets");
 }
 
+void testEvaluatePlacedMarkerAffectsOnlyNewMarker(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(200, false, false), marker(600, false, false)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({1});
+    const auto beforeCutRanges{project.buildCutRanges100ns()};
+
+    const auto result{llvc::evaluatePlacedMarkerAgainstRap(project, {550, 650}, 600)};
+    expect(result.changed, "evaluatePlacedMarkerAgainstRap should update the just-placed marker when RAP data is available");
+    expectEqual(result.addedRapMarkerCount, uint32_t{2}, "evaluatePlacedMarkerAgainstRap should add surrounding RAP markers for the placed marker");
+
+    const auto& markers{project.frameIndex()};
+    expectEqual(markers.size(), size_t{4}, "evaluatePlacedMarkerAgainstRap should only add RAP markers around the targeted marker");
+    expectEqual(markers[0].time100ns, int64_t{200}, "evaluatePlacedMarkerAgainstRap should preserve earlier red markers");
+    expect(!markers[0].evaluated && !markers[0].cleanPoint, "evaluatePlacedMarkerAgainstRap should leave earlier red markers untouched");
+    expectEqual(markers[1].time100ns, int64_t{550}, "evaluatePlacedMarkerAgainstRap should add the left RAP marker for the targeted marker");
+    expect(markers[1].evaluated && markers[1].cleanPoint, "left RAP marker should be green");
+    expectEqual(markers[2].time100ns, int64_t{600}, "evaluatePlacedMarkerAgainstRap should preserve the targeted user marker");
+    expect(!markers[2].evaluated && !markers[2].cleanPoint, "targeted off-RAP marker should stay red");
+    expectEqual(markers[3].time100ns, int64_t{650}, "evaluatePlacedMarkerAgainstRap should add the right RAP marker for the targeted marker");
+    expectEqual(project.buildCutRanges100ns(), beforeCutRanges, "evaluatePlacedMarkerAgainstRap should preserve the original cut time ranges while adding helper markers");
+}
+
+void testEvaluatePlacedMarkerPreservesExistingCutRangesWhenInsertedIntoKeptScene(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(200, true, true), marker(400, false, false), marker(800, true, true)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({2});
+
+    const auto beforeCutRanges{project.buildCutRanges100ns()};
+    const auto result{llvc::evaluatePlacedMarkerAgainstRap(project, {350, 450}, 400)};
+    expect(result.changed, "evaluatePlacedMarkerAgainstRap should add RAP helper markers around an off-RAP inserted marker");
+    expectEqual(result.addedRapMarkerCount, uint32_t{2}, "evaluatePlacedMarkerAgainstRap should report both added RAP helper markers");
+
+    const auto& markers{project.frameIndex()};
+    expectEqual(markers.size(), size_t{5}, "evaluatePlacedMarkerAgainstRap should preserve existing markers and add only the bracket markers");
+    expectEqual(markers[0].time100ns, int64_t{200}, "evaluatePlacedMarkerAgainstRap should keep the earlier evaluated marker");
+    expectEqual(markers[1].time100ns, int64_t{350}, "evaluatePlacedMarkerAgainstRap should add the left helper RAP marker");
+    expectEqual(markers[2].time100ns, int64_t{400}, "evaluatePlacedMarkerAgainstRap should preserve the inserted user marker");
+    expectEqual(markers[3].time100ns, int64_t{450}, "evaluatePlacedMarkerAgainstRap should add the right helper RAP marker");
+    expectEqual(markers[4].time100ns, int64_t{800}, "evaluatePlacedMarkerAgainstRap should keep the later evaluated marker");
+    expectEqual(project.buildCutRanges100ns(), beforeCutRanges, "evaluatePlacedMarkerAgainstRap should preserve the existing cut time ranges when adding helper markers inside a kept scene");
+}
+
+void testEditorReevaluationOnlyShrinksExistingCutScenes(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(300, false, false), marker(700, false, false)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({1});
+    llvc::EditorHistoryState history{};
+    llvc::Timeline timeline{};
+
+    const auto result{llvc::reevaluateClearCutMarkers(project, timeline, {250, 400, 650, 750}, history, true)};
+    expect(result.changed, "reevaluateClearCutMarkers should adjust cut scene boundaries when RAP markers are available");
+    expectEqual(project.buildCutRanges100ns(), vector<pair<int64_t, int64_t>>{{400, 650}}, "reevaluateClearCutMarkers should only shrink the existing cut range inward to RAP-safe bounds");
+    expectEqual(project.cutScenes().size(), size_t{1}, "reevaluateClearCutMarkers should keep exactly one cut scene after inserting helper markers around both boundaries");
+}
+
 struct NamedTest{
     const char* name;
     void (*fn)();
@@ -445,10 +641,12 @@ struct NamedTest{
 int wmain(){
     const vector<NamedTest> tests{
         {"UtilsParsing", &testUtilsParsing},
+        {"UtilsWorkflowPolicies", &testUtilsWorkflowPolicies},
         {"TimelineIntervalNormalization", &testTimelineIntervalNormalization},
         {"TimelineMath", &testTimelineMath},
         {"TimelineDerivedHelpers", &testTimelineDerivedHelpers},
         {"TimelineTickDensityAndLabels", &testTimelineTickDensityAndLabels},
+        {"TimelineZoomAnchorsAndThumbnailPlanning", &testTimelineZoomAnchorsAndThumbnailPlanning},
         {"ProjectCutRangesAndBoundaries", &testProjectCutRangesAndBoundaries},
         {"ProjectNoCutPlanAndEmptyAlignment", &testProjectNoCutPlanAndEmptyAlignment},
         {"ProjectEffectiveExportAlignment", &testProjectEffectiveExportAlignment},
@@ -460,12 +658,17 @@ int wmain(){
         {"ProjectEffectiveExportMergesAlignedBlocks", &testProjectEffectiveExportMergesAlignedBlocks},
         {"ProjectOutputDurationTracksMergedRanges", &testProjectOutputDurationTracksMergedRanges},
         {"ProjectEffectiveExportPreservesAlreadySafeTailCut", &testProjectEffectiveExportPreservesAlreadySafeTailCut},
+        {"ProjectEstimateCoordinatorHelpers", &testProjectEstimateCoordinatorHelpers},
+        {"ExportPreflightAndPlanSummary", &testExportPreflightAndPlanSummary},
         {"EditorHistoryUndoRedo", &testEditorHistoryUndoRedo},
         {"EditorHistorySnapshotGuards", &testEditorHistorySnapshotGuards},
         {"EditorCommands", &testEditorCommands},
         {"EditorCommandsNoOpCases", &testEditorCommandsNoOpCases},
         {"EditorReevaluationAddsBracketMarkersAndAdjustsScenes", &testEditorReevaluationAddsBracketMarkersAndAdjustsScenes},
         {"EditorReevaluationPreservesTailCutBoundary", &testEditorReevaluationPreservesTailCutBoundary},
+        {"EvaluatePlacedMarkerAffectsOnlyNewMarker", &testEvaluatePlacedMarkerAffectsOnlyNewMarker},
+        {"EvaluatePlacedMarkerPreservesExistingCutRangesWhenInsertedIntoKeptScene", &testEvaluatePlacedMarkerPreservesExistingCutRangesWhenInsertedIntoKeptScene},
+        {"EditorReevaluationOnlyShrinksExistingCutScenes", &testEditorReevaluationOnlyShrinksExistingCutScenes},
     };
 
     size_t failures{};

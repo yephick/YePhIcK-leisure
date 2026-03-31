@@ -46,6 +46,17 @@ struct AppSettingsState final{
     std::optional<WindowPlacementState> separatePreviewPlacement{};
 };
 
+void applySeparatePreviewOpened(AppSettingsState& settings);
+void applySeparatePreviewClosed(AppSettingsState& settings);
+void applySeparatePreviewFullscreen(AppSettingsState& settings, bool fullscreen);
+
+wstring buildProjectLoadedStatus(bool referencedVideoCouldNotBeLoaded, bool hasReferencedVideoPath);
+wstring buildTimelineReadyStatus(const wstring& videoName);
+wstring buildTimelineLoadingStatus(const wstring& videoName);
+
+void pushRecentItemFront(vector<winrt::hstring>& recent, size_t maxCount, const winrt::hstring& path);
+void removeRecentItem(vector<winrt::hstring>& recent, const winrt::hstring& path);
+
 wstring trim(wstring value);
 wstring serializeIndexList(const vector<uint32_t>& values);
 wstring serializeIndexPairs(const vector<pair<uint32_t, uint32_t>>& values);
@@ -261,6 +272,49 @@ vector<int64_t> parseInt64List(const wstring& text){
     sort(values.begin(), values.end());
     values.erase(unique(values.begin(), values.end()), values.end());
     return values;
+}
+
+void applySeparatePreviewOpened(AppSettingsState& settings){
+    settings.restorePreviewDetachedOnStartup = true;
+}
+
+void applySeparatePreviewClosed(AppSettingsState& settings){
+    settings.restorePreviewDetachedOnStartup = false;
+    settings.restorePreviewFullscreenOnStartup = false;
+}
+
+void applySeparatePreviewFullscreen(AppSettingsState& settings, bool fullscreen){
+    settings.restorePreviewFullscreenOnStartup = fullscreen;
+}
+
+wstring buildProjectLoadedStatus(bool referencedVideoCouldNotBeLoaded, bool hasReferencedVideoPath){
+    if(referencedVideoCouldNotBeLoaded){
+        return L"Project opened, but referenced video could not be loaded";
+    }
+    if(!hasReferencedVideoPath){
+        return L"Project loaded";
+    }
+    return L"";
+}
+
+wstring buildTimelineReadyStatus(const wstring& videoName){
+    return std::format(L"Loaded: {} (story line ready)", videoName);
+}
+
+wstring buildTimelineLoadingStatus(const wstring& videoName){
+    return std::format(L"Loaded: {} (loading story line...)", videoName);
+}
+
+void pushRecentItemFront(vector<hstring>& recent, size_t maxCount, const hstring& path){
+    recent.erase(std::remove(recent.begin(), recent.end(), path), recent.end());
+    recent.insert(recent.begin(), path);
+    if(recent.size() > maxCount){
+        recent.resize(maxCount);
+    }
+}
+
+void removeRecentItem(vector<hstring>& recent, const hstring& path){
+    recent.erase(std::remove(recent.begin(), recent.end(), path), recent.end());
 }
 
 int32_t pixelsToDips(int32_t pixelValue, uint32_t dpi){

@@ -41,6 +41,12 @@ struct ReevaluateMarkersResult final{
     uint32_t replacedCount{0};
 };
 
+struct EvaluatePlacedMarkerResult final{
+    bool changed{false};
+    bool markerEvaluated{false};
+    uint32_t addedRapMarkerCount{0};
+};
+
 EditorSnapshot captureEditorSnapshot(const Project& project);
 bool isSameEditorSnapshot(const EditorSnapshot& left, const EditorSnapshot& right);
 void clearEditorHistory(EditorHistoryState& history);
@@ -52,6 +58,7 @@ MarkerToggleResult toggleSelectedKeyframe(Project& project, double fps, EditorHi
 bool toggleCutBlock(Project& project, EditorHistoryState& history, int64_t time100ns);
 bool setCutBlock(Project& project, EditorHistoryState& history, int64_t time100ns, bool cutScene);
 ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, const Timeline& timeline, const vector<int64_t>& rapTimes100ns, EditorHistoryState& history, bool pushUndoState);
+EvaluatePlacedMarkerResult evaluatePlacedMarkerAgainstRap(Project& project, const vector<int64_t>& rapTimes100ns, int64_t markerTime100ns);
 
 }
 
@@ -302,6 +309,118 @@ ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, const Timeli
         result.undoSnapshotCreated = false;
     }
 
+    return result;
+}
+
+EvaluatePlacedMarkerResult evaluatePlacedMarkerAgainstRap(Project& project, const vector<int64_t>& rapTimes100ns, int64_t markerTime100ns){
+    EvaluatePlacedMarkerResult result{};
+    auto markers{project.frameIndex()};
+    if(markers.empty()){
+        return result;
+    }
+
+    const auto markerIt{find_if(markers.begin(), markers.end(), [markerTime100ns](const auto& marker){
+        return marker.time100ns == markerTime100ns;
+    })};
+    if(markerIt == markers.end()){
+        return result;
+    }
+
+    const auto beforeMarkers{markers};
+    const auto previousCutRanges{project.buildCutRanges100ns()};
+    const auto isTrueRap{binary_search(rapTimes100ns.begin(), rapTimes100ns.end(), markerTime100ns)};
+    if(isTrueRap){
+        markerIt->cleanPoint = true;
+        markerIt->evaluated = true;
+        result.markerEvaluated = true;
+    }else{
+        markerIt->cleanPoint = false;
+        markerIt->evaluated = false;
+
+        const auto totalDuration100ns{project.timelineDuration100ns()};
+        const auto nextIt{lower_bound(rapTimes100ns.begin(), rapTimes100ns.end(), markerTime100ns)};
+        if(nextIt != rapTimes100ns.begin()){
+            const auto previousRapTime100ns{*(nextIt - 1)};
+            if(previousRapTime100ns > 0){
+                markers.push_back(IndexedFrameSample{
+                    .time100ns = previousRapTime100ns,
+                    .duration100ns = 0,
+                    .cleanPoint = true,
+                    .evaluated = true,
+                    .sampleIndex = 0,
+                });
+            }
+        }
+        if(nextIt != rapTimes100ns.end() && *nextIt < totalDuration100ns){
+            markers.push_back(IndexedFrameSample{
+                .time100ns = *nextIt,
+                .duration100ns = 0,
+                .cleanPoint = true,
+                .evaluated = true,
+                .sampleIndex = 0,
+            });
+        }
+    }
+
+    sort(markers.begin(), markers.end(), [](const auto& a, const auto& b){ return a.time100ns < b.time100ns; });
+
+    vector<IndexedFrameSample> normalizedMarkers;
+    normalizedMarkers.reserve(markers.size());
+    for(const auto& marker: markers){
+        if(!normalizedMarkers.empty() && normalizedMarkers.back().time100ns == marker.time100ns){
+            normalizedMarkers.back().cleanPoint = normalizedMarkers.back().cleanPoint || marker.cleanPoint;
+            normalizedMarkers.back().evaluated = normalizedMarkers.back().evaluated || marker.evaluated;
+            normalizedMarkers.back().duration100ns = max(normalizedMarkers.back().duration100ns, marker.duration100ns);
+            normalizedMarkers.back().sampleIndex = min(normalizedMarkers.back().sampleIndex, marker.sampleIndex);
+            continue;
+        }
+        normalizedMarkers.push_back(marker);
+    }
+
+    result.addedRapMarkerCount = normalizedMarkers.size() > beforeMarkers.size()
+        ? static_cast<uint32_t>(normalizedMarkers.size() - beforeMarkers.size())
+        : 0;
+    result.changed = !equal(
+        beforeMarkers.begin(),
+        beforeMarkers.end(),
+        normalizedMarkers.begin(),
+        normalizedMarkers.begin() + min(beforeMarkers.size(), normalizedMarkers.size()),
+        [](const auto& left, const auto& right){
+            return left.time100ns == right.time100ns
+                && left.duration100ns == right.duration100ns
+                && left.cleanPoint == right.cleanPoint
+                && left.evaluated == right.evaluated
+                && left.sampleIndex == right.sampleIndex;
+        }) || beforeMarkers.size() != normalizedMarkers.size();
+
+    if(!result.changed){
+        return result;
+    }
+
+    project.frameIndex(std::move(normalizedMarkers));
+    project.refreshSelectedMarkers();
+
+    const auto isTimeInsideRanges = [&previousCutRanges](int64_t time100ns){
+        for(const auto& [start100ns, end100ns]: previousCutRanges){
+            if(time100ns < start100ns){
+                return false;
+            }
+            if(time100ns < end100ns){
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const auto sceneBoundaries{project.buildSceneBoundaries100ns()};
+    vector<uint32_t> scenes;
+    for(size_t i{}; i + 1 < sceneBoundaries.size(); ++i){
+        const auto midpoint{sceneBoundaries[i] + (sceneBoundaries[i + 1] - sceneBoundaries[i]) / 2};
+        if(isTimeInsideRanges(midpoint)){
+            scenes.push_back(static_cast<uint32_t>(i));
+        }
+    }
+    project.cutScenes(std::move(scenes));
     return result;
 }
 
