@@ -139,9 +139,16 @@ double TimelineScrollbarAnchor::restoreOffset(double maximumOffset) const{
 }
 
 double TimelinePointerZoomAnchor::restoreOffset(const Timeline& timeline, int64_t duration100ns, double totalWidth, double viewportWidth) const{
-    const auto anchorCanvasX{timeline.timeToCanvasX(time100ns, duration100ns, totalWidth)};
-    const auto maxOffset{max(0.0, totalWidth - max(0.0, viewportWidth))};
-    return clamp(anchorCanvasX - viewportPointerX, 0.0, maxOffset);
+    if(duration100ns <= 0 || totalWidth <= 0.0 || !isfinite(totalWidth) || !isfinite(viewportWidth) || !isfinite(viewportPointerX)){
+        return 0.0;
+    }
+
+    const auto safeViewportWidth{max(0.0, viewportWidth)};
+    const auto safeMaxOffset{max(0.0, totalWidth - safeViewportWidth)};
+    const auto safePointerX{clamp(viewportPointerX, 0.0, safeViewportWidth)};
+    const auto safeTime100ns{clamp<int64_t>(time100ns, 0, duration100ns)};
+    const auto anchorCanvasX{clamp(timeline.timeToCanvasX(safeTime100ns, duration100ns, totalWidth), 0.0, totalWidth)};
+    return clamp(anchorCanvasX - safePointerX, 0.0, safeMaxOffset);
 }
 
 std::optional<int64_t> Timeline::pointToTime100ns(double pointerX, double width, int64_t duration100ns) const{

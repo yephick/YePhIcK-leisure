@@ -36,6 +36,19 @@ using namespace std;
 using namespace winrt;
 namespace Controls = winrt::Microsoft::UI::Xaml::Controls;
 
+namespace{
+
+constexpr array kPageJumpSecondsOptions{0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0, 15.0, 20.0};
+
+wstring formatPageJumpSecondsLabel(double seconds){
+    if(floor(seconds) == seconds){
+        return std::format(L"{} seconds", static_cast<int>(seconds));
+    }
+    return std::format(L"{:.1f} seconds", seconds);
+}
+
+}
+
 DialogAction showInfoDialogAsync(const XamlRoot& xamlRoot, const hstring& title, const hstring& message){
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(xamlRoot);
@@ -55,7 +68,7 @@ DialogAction showQuickManualDialogAsync(const XamlRoot& xamlRoot){
         L"* Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
         L"* Boundary RAP nudging: Ctrl+< shrinks the current scene by nudging both scene edges inward to RAPs, Ctrl+> expands by nudging both edges outward to RAPs.\n"
         L"* Preview start/pause/stop skipping cut scenes.\n"
-        L"* Timeline navigation: Left/Right steps a frame, Up/Down jumps between markers, PageUp/PageDown seeks backward/forward 10 seconds, and 0-9 jumps to 0%-90% of the timeline.\n"
+        L"* Timeline navigation: Left/Right steps a frame, Up/Down jumps between markers, PageUp/PageDown seeks backward/forward by the configured jump duration, and 0-9 jumps to 0%-90% of the timeline.\n"
         L"* Preview window: Tools -> Preview in separate window opens a movable second window; use F11 to toggle full-screen.\n"
         L"* Audio controls: Keep/remove audio and configure cross-fade for segment transitions.\n"
         L"* Project files: Save and reopen .llvc projects with timeline state.\n"
@@ -110,6 +123,24 @@ DialogResult showOptionsDialogAsync(const XamlRoot& xamlRoot, AppSettingsState& 
     projectsCount.SpinButtonPlacementMode(Controls::NumberBoxSpinButtonPlacementMode::Inline);
     projectsCount.Value(settings.maxRecentProjects);
 
+    Controls::TextBlock pageJumpLabel{};
+    pageJumpLabel.Text(L"PageUp/PageDown jump duration");
+    Controls::TextBlock pageJumpValueText{};
+    const auto pageJumpIndex{min<size_t>(settings.pageJumpDurationIndex, kPageJumpSecondsOptions.size() - 1)};
+    pageJumpValueText.Text(hstring{formatPageJumpSecondsLabel(kPageJumpSecondsOptions[pageJumpIndex])});
+    Controls::Slider pageJumpSlider{};
+    pageJumpSlider.Minimum(0);
+    pageJumpSlider.Maximum(static_cast<double>(kPageJumpSecondsOptions.size() - 1));
+    pageJumpSlider.StepFrequency(1);
+    pageJumpSlider.SmallChange(1);
+    pageJumpSlider.LargeChange(1);
+    pageJumpSlider.TickFrequency(1);
+    pageJumpSlider.Value(static_cast<double>(pageJumpIndex));
+    pageJumpSlider.ValueChanged([&pageJumpValueText](const auto&, const Controls::Primitives::RangeBaseValueChangedEventArgs& args){
+        const auto index{clamp(static_cast<int>(lround(args.NewValue())), 0, static_cast<int>(kPageJumpSecondsOptions.size() - 1))};
+        pageJumpValueText.Text(hstring{formatPageJumpSecondsLabel(kPageJumpSecondsOptions[static_cast<size_t>(index)])});
+    });
+
     Controls::CheckBox deleteAfterExportCheckBox{};
     deleteAfterExportCheckBox.Content(box_value(L"Delete source video and project file after successful export"));
     deleteAfterExportCheckBox.IsChecked(settings.deleteSourceAndProjectAfterExport);
@@ -126,6 +157,9 @@ DialogResult showOptionsDialogAsync(const XamlRoot& xamlRoot, AppSettingsState& 
     panel.Children().Append(videosCount);
     panel.Children().Append(projectsLabel);
     panel.Children().Append(projectsCount);
+    panel.Children().Append(pageJumpLabel);
+    panel.Children().Append(pageJumpValueText);
+    panel.Children().Append(pageJumpSlider);
     panel.Children().Append(deleteAfterExportCheckBox);
     panel.Children().Append(autoReevaluateCutMarkersOnPlacementCheckBox);
     panel.Children().Append(generateExportTimeReportCheckBox);
@@ -143,6 +177,7 @@ DialogResult showOptionsDialogAsync(const XamlRoot& xamlRoot, AppSettingsState& 
 
     settings.maxRecentVideos = static_cast<uint32_t>(clamp(static_cast<int>(lround(videosCount.Value())), 1, 20));
     settings.maxRecentProjects = static_cast<uint32_t>(clamp(static_cast<int>(lround(projectsCount.Value())), 1, 20));
+    settings.pageJumpDurationIndex = static_cast<uint32_t>(clamp(static_cast<int>(lround(pageJumpSlider.Value())), 0, static_cast<int>(kPageJumpSecondsOptions.size() - 1)));
     settings.deleteSourceAndProjectAfterExport = deleteAfterExportCheckBox.IsChecked().GetBoolean();
     settings.autoReevaluateCutMarkersOnPlacement = autoReevaluateCutMarkersOnPlacementCheckBox.IsChecked().GetBoolean();
     settings.generateExportTimeReport = generateExportTimeReportCheckBox.IsChecked().GetBoolean();

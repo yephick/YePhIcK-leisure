@@ -82,6 +82,12 @@ using IOpBool = MainWindow::IOpBool;
 using TS = MainWindow::TS;
 
 namespace{
+constexpr array kPageJumpSecondsOptions{0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0, 15.0, 20.0};
+
+double pageJumpSecondsFromSettings(const ::llvc::AppSettingsState& settings){
+    return kPageJumpSecondsOptions[min<size_t>(settings.pageJumpDurationIndex, kPageJumpSecondsOptions.size() - 1)];
+}
+
 LRESULT CALLBACK MainWindowSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR refData){
     auto* self{reinterpret_cast<MainWindow*>(refData)};
     if(!self){
@@ -1261,8 +1267,6 @@ void MainWindow::stopButton_Click(const Control&, const REArgs&){
 
 
 bool MainWindow::reevaluateAll(bool pushUndoState){
-    auto& m_prj{this->m_prj};
-    auto& m_timelineDurationSeconds{this->m_timelineDurationSeconds};
     if(!m_prj.hasVideoFile() || m_timelineDurationSeconds <= 0){
         setStatusMessage(L"Load a video before reevaluating clear cut markers");
         return false;
@@ -1697,14 +1701,14 @@ void MainWindow::syncTimelineHorizontalScrollBar(){
 
     auto bar{TimelineHorizontalScrollBar()};
     bar.Minimum(0.0);
-    bar.Maximum(max(1.0, scrollableWidth));
+    bar.Maximum(scrollableWidth);
     bar.LargeChange(max(32.0, viewportWidth * 0.8));
     bar.SmallChange(24.0);
     bar.IsEnabled(scrollableWidth > 0.0);
     bar.Visibility(Visibility::Visible);
 
     const auto currentValue{bar.Value()};
-    const auto offset{clamp(scrollViewer.HorizontalOffset(), 0.0, bar.Maximum())};
+    const auto offset{clamp(scrollViewer.HorizontalOffset(), 0.0, scrollableWidth)};
     if(fabs(currentValue - offset) > 0.5){
         m_isSyncingTimelineScrollBar = true;
         bar.Value(offset);
@@ -1961,6 +1965,47 @@ bool MainWindow::seekBySeconds(int deltaSeconds){
     }
 
     const auto delta100ns{static_cast<int64_t>(deltaSeconds) * HNS_PER_SECOND};
+    const auto target100ns{clamp(current100ns + delta100ns, int64_t{0}, duration100ns)};
+
+    if(m_player){
+        m_player.PlaybackSession().Position(TimeSpan{target100ns});
+        updateTimelineCursorFromPosition(target100ns);
+        ensureCurrentTimelineCursorVisible();
+        return true;
+    }
+
+    const auto width{TimelineCanvas().Width()};
+    if(width <= 0){
+        return false;
+    }
+
+    const auto left{m_tl.timeToCanvasX(target100ns, duration100ns, width)};
+    Controls::Canvas::SetLeft(TimelineCursor(), left);
+    ensureTimelineCursorVisible(left);
+    syncTimelineHorizontalScrollBar();
+    return true;
+}
+
+bool MainWindow::seekBySeconds(double deltaSeconds){
+    if(deltaSeconds == 0.0){
+        return false;
+    }
+
+    const auto durationFromProject100ns{m_prj.timelineDuration100ns()};
+    const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
+    const auto duration100ns{max(durationFromProject100ns, durationFromTimeline100ns)};
+    if(duration100ns <= 0){
+        return false;
+    }
+
+    int64_t current100ns{};
+    if(m_player){
+        current100ns = max<int64_t>(0, m_player.PlaybackSession().Position().count());
+    }else if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
+        current100ns = *cursor100ns;
+    }
+
+    const auto delta100ns{static_cast<int64_t>(llround(deltaSeconds * static_cast<double>(HNS_PER_SECOND)))};
     const auto target100ns{clamp(current100ns + delta100ns, int64_t{0}, duration100ns)};
 
     if(m_player){
@@ -2434,11 +2479,11 @@ bool MainWindow::handleStorylineKeyDownImpl(const KRArgs& args){
         args.Handled(true);
         return true;
     case VirtualKey::PageUp:
-        (void)seekBySeconds(-5);
+        (void)seekBySeconds(-pageJumpSecondsFromSettings(m_appSettings));
         args.Handled(true);
         return true;
     case VirtualKey::PageDown:
-        (void)seekBySeconds(5);
+        (void)seekBySeconds(pageJumpSecondsFromSettings(m_appSettings));
         args.Handled(true);
         return true;
     case VirtualKey::Delete:
@@ -4058,6 +4103,7 @@ AAction MainWindow::showOptionsDialogAsync(){
 
     m_appSettings.maxRecentVideos = updatedSettings.maxRecentVideos;
     m_appSettings.maxRecentProjects = updatedSettings.maxRecentProjects;
+    m_appSettings.pageJumpDurationIndex = updatedSettings.pageJumpDurationIndex;
     m_appSettings.deleteSourceAndProjectAfterExport = updatedSettings.deleteSourceAndProjectAfterExport;
     m_appSettings.autoReevaluateCutMarkersOnPlacement = updatedSettings.autoReevaluateCutMarkersOnPlacement;
     m_appSettings.generateExportTimeReport = updatedSettings.generateExportTimeReport;

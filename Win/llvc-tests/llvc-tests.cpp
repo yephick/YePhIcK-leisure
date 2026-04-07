@@ -28,9 +28,44 @@ void expect(bool condition, const string& message){
     }
 }
 
+using RecentItem = decltype(llvc::AppSettingsState{}.recentVideos)::value_type;
+
+template<typename T>
+struct is_vector: false_type{};
+
+template<typename TValue, typename TAllocator>
+struct is_vector<vector<TValue, TAllocator>>: true_type{};
+
+template<typename T>
+struct is_pair: false_type{};
+
+template<typename TFirst, typename TSecond>
+struct is_pair<pair<TFirst, TSecond>>: true_type{};
+
+template<typename T>
+bool areEqual(const T& actual, const T& expected){
+    if constexpr (is_same_v<T, RecentItem>){
+        return wstring_view{actual.c_str()} == wstring_view{expected.c_str()};
+    }else if constexpr (is_vector<T>::value){
+        if(actual.size() != expected.size()){
+            return false;
+        }
+        for(size_t i{}; i < actual.size(); ++i){
+            if(!areEqual(actual[i], expected[i])){
+                return false;
+            }
+        }
+        return true;
+    }else if constexpr (is_pair<T>::value){
+        return areEqual(actual.first, expected.first) && areEqual(actual.second, expected.second);
+    }else{
+        return actual == expected;
+    }
+}
+
 template<typename T>
 void expectEqual(const T& actual, const T& expected, const string& message){
-    if(!(actual == expected)){
+    if(!areEqual(actual, expected)){
         throw TestFailure(message);
     }
 }
@@ -226,6 +261,40 @@ void testTimelineZoomAnchorsAndThumbnailPlanning(){
     expectEqual(postActions.readyStatus, wstring(L"Loaded: sample.mp4 (story line ready)"), "buildRenderPostActions should build the ready status line");
 }
 
+void testTimelineZoomOutAtEndOfVideo(){
+    llvc::Timeline timeline{};
+
+    const llvc::TimelinePointerZoomAnchor endPointerAnchor{
+        .time100ns = 10LL * llvc::Timeline::HnsPerSecond,
+        .viewportPointerX = 280.0,
+    };
+
+    expectNear(endPointerAnchor.restoreOffset(timeline, 10LL * llvc::Timeline::HnsPerSecond, 1000.0, 300.0), 700.0, 0.001, "TimelinePointerZoomAnchor should clamp end-of-video anchors to the final scroll extent");
+    expectNear(endPointerAnchor.restoreOffset(timeline, 10LL * llvc::Timeline::HnsPerSecond, 240.0, 300.0), 0.0, 0.001, "TimelinePointerZoomAnchor should stay stable when the zoomed-out strip is narrower than the viewport");
+
+    const auto scrollbarAnchorAtEnd{llvc::TimelineScrollbarAnchor::capture(700.0, 700.0)};
+    expect(scrollbarAnchorAtEnd.has_value(), "TimelineScrollbarAnchor should capture a valid far-right anchor at the video end");
+    expectNear(scrollbarAnchorAtEnd->restoreOffset(0.0), 0.0, 0.001, "TimelineScrollbarAnchor should restore a far-right anchor to zero when zooming out removes all scrollable extent");
+}
+
+void testTimelinePlanningEdgeCases(){
+    llvc::Timeline timeline{};
+
+    const auto fallbackStripPlan{timeline.buildThumbnailStripPlan(0.0, 8.0)};
+    expectEqual(fallbackStripPlan.totalWidth, 800.0, "buildThumbnailStripPlan should fall back to the minimum width when duration is empty");
+    expectEqual(fallbackStripPlan.thumbnailCount, 1, "buildThumbnailStripPlan should fall back to a single thumbnail when duration is empty");
+    expectEqual(fallbackStripPlan.thumbnailWidth, 800.0, "buildThumbnailStripPlan should make the fallback thumbnail span the full strip");
+
+    const auto invalidVisibleRange{timeline.visibleThumbnailRange(-25.0, 0.0, 0.0, 0)};
+    expectEqual(invalidVisibleRange.first, 0, "visibleThumbnailRange should default to zero for invalid input");
+    expectEqual(invalidVisibleRange.last, 0, "visibleThumbnailRange should default to zero for invalid input");
+
+    expectEqual(timeline.chooseNextThumbnailIndex({}, {.first = 0, .last = 0}, true), -1, "chooseNextThumbnailIndex should report no work when there are no thumbnails");
+
+    const auto quietPostActions{timeline.buildRenderPostActions(L"sample.mp4", true, true, false)};
+    expect(!quietPostActions.shouldQueueRapLookup, "buildRenderPostActions should stay quiet after RAP lookup was already attempted");
+}
+
 void testProjectCutRangesAndBoundaries(){
     llvc::Project project{};
     project.timelineDuration100ns(1'000);
@@ -235,6 +304,17 @@ void testProjectCutRangesAndBoundaries(){
 
     expectEqual(project.buildSceneBoundaries100ns(), vector<int64_t>{0, 100, 300, 600, 1'000}, "buildSceneBoundaries100ns should include edges and sorted markers");
     expectEqual(project.buildCutRanges100ns(), vector<pair<int64_t, int64_t>>{{100, 600}}, "buildCutRanges100ns should merge adjacent cut scenes");
+}
+
+void testProjectSceneBoundariesClampAndIgnoreInvalidCuts(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(-200), marker(200), marker(1'500), marker(200), marker(800)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({0, 2, 4, 9});
+
+    expectEqual(project.buildSceneBoundaries100ns(), vector<int64_t>{0, 200, 800, 1'000}, "buildSceneBoundaries100ns should clamp markers into the timeline and deduplicate equal boundaries");
+    expectEqual(project.buildCutRanges100ns(), vector<pair<int64_t, int64_t>>{{0, 200}, {800, 1'000}}, "buildCutRanges100ns should ignore invalid scene indices while preserving valid cuts");
 }
 
 void testProjectNoCutPlanAndEmptyAlignment(){
@@ -412,7 +492,7 @@ void testProjectEstimateCoordinatorHelpers(){
 void testExportPreflightAndPlanSummary(){
     llvc::Project project{};
     project.timelineDuration100ns(1'000);
-    project.videoFile(winrt::Windows::Storage::StorageFile{nullptr});
+    project.videoFilePath(L"");
     const auto missingVideo{llvc::buildExportPreflightState(project, true, true, true, false, true)};
     expect(!missingVideo.canExport, "buildExportPreflightState should block when no video is loaded");
 
@@ -421,7 +501,7 @@ void testExportPreflightAndPlanSummary(){
         ofstream tempFile(tempPath, ios::binary | ios::trunc);
         tempFile << "x";
     }
-    project.videoFile(winrt::Windows::Storage::StorageFile::GetFileFromPathAsync(tempPath.wstring()).get());
+    project.videoFilePath(winrt::hstring{tempPath.wstring()});
     project.frameIndex({marker(200, true, true), marker(600, false, false)});
     project.refreshSelectedMarkers();
     project.cutScenes({1});
@@ -471,6 +551,19 @@ void testEditorHistoryUndoRedo(){
     const auto redoResult{llvc::redo(project, history)};
     expect(redoResult.changed && !redoResult.wasUndo, "redo should restore the undone editor snapshot");
     expectEqual(project.frameIndex().size(), size_t{1}, "redo should restore the inserted marker");
+}
+
+void testEditorHistoryClearsRedoAfterNewEdit(){
+    llvc::Project project{};
+    project.timelineDuration100ns(100'000'000);
+    llvc::EditorHistoryState history{};
+
+    expect(llvc::toggleSelectedKeyframe(project, 30.0, history, 20'000'000).changed, "toggleSelectedKeyframe should create an initial edit");
+    expect(llvc::undo(project, history).changed, "undo should populate the redo stack");
+    expectEqual(history.redoStack.size(), size_t{1}, "undo should add one redo snapshot");
+
+    expect(llvc::toggleSelectedKeyframe(project, 30.0, history, 40'000'000).changed, "a new edit after undo should still be accepted");
+    expect(history.redoStack.empty(), "a new edit should clear stale redo history");
 }
 
 void testEditorHistorySnapshotGuards(){
@@ -631,6 +724,38 @@ void testEditorReevaluationOnlyShrinksExistingCutScenes(){
     expectEqual(project.cutScenes().size(), size_t{1}, "reevaluateClearCutMarkers should keep exactly one cut scene after inserting helper markers around both boundaries");
 }
 
+void testEditorReevaluationNoOpWithoutMarkers(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    llvc::EditorHistoryState history{};
+    llvc::Timeline timeline{};
+
+    const auto result{llvc::reevaluateClearCutMarkers(project, timeline, {100, 200}, history, true)};
+    expect(!result.changed, "reevaluateClearCutMarkers should stay unchanged when there are no markers");
+    expect(!result.hadMarkers, "reevaluateClearCutMarkers should report the missing marker set");
+    expect(!result.undoSnapshotCreated, "reevaluateClearCutMarkers should not create undo history when there is nothing to do");
+    expect(history.undoStack.empty(), "reevaluateClearCutMarkers should leave undo history untouched when there are no markers");
+}
+
+void testEditorCommandsRapNudgeExpandScene(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(300, false, false), marker(700, false, false)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({1});
+    llvc::EditorHistoryState history{};
+    llvc::Timeline timeline{};
+
+    const auto result{llvc::executeRapNudgeCommand(project, timeline, {200, 250, 350, 650, 750, 900}, history, 500, true)};
+    expect(result.changed, "executeRapNudgeCommand should expand the selected scene block when surrounding RAPs are available");
+    expectEqual(project.buildCutRanges100ns(), vector<pair<int64_t, int64_t>>{{250, 750}}, "executeRapNudgeCommand should preserve the cut block while expanding both boundaries outward");
+
+    const auto& markers{project.frameIndex()};
+    expectEqual(markers.size(), size_t{2}, "executeRapNudgeCommand should reuse the existing boundaries instead of creating new markers");
+    expectEqual(markers[0].time100ns, int64_t{250}, "executeRapNudgeCommand should move the left boundary to the previous RAP");
+    expectEqual(markers[1].time100ns, int64_t{750}, "executeRapNudgeCommand should move the right boundary to the next RAP");
+}
+
 struct NamedTest{
     const char* name;
     void (*fn)();
@@ -647,7 +772,10 @@ int wmain(){
         {"TimelineDerivedHelpers", &testTimelineDerivedHelpers},
         {"TimelineTickDensityAndLabels", &testTimelineTickDensityAndLabels},
         {"TimelineZoomAnchorsAndThumbnailPlanning", &testTimelineZoomAnchorsAndThumbnailPlanning},
+        {"TimelineZoomOutAtEndOfVideo", &testTimelineZoomOutAtEndOfVideo},
+        {"TimelinePlanningEdgeCases", &testTimelinePlanningEdgeCases},
         {"ProjectCutRangesAndBoundaries", &testProjectCutRangesAndBoundaries},
+        {"ProjectSceneBoundariesClampAndIgnoreInvalidCuts", &testProjectSceneBoundariesClampAndIgnoreInvalidCuts},
         {"ProjectNoCutPlanAndEmptyAlignment", &testProjectNoCutPlanAndEmptyAlignment},
         {"ProjectEffectiveExportAlignment", &testProjectEffectiveExportAlignment},
         {"ProjectTailCutPreservesLastMarker", &testProjectTailCutPreservesLastMarker},
@@ -661,6 +789,7 @@ int wmain(){
         {"ProjectEstimateCoordinatorHelpers", &testProjectEstimateCoordinatorHelpers},
         {"ExportPreflightAndPlanSummary", &testExportPreflightAndPlanSummary},
         {"EditorHistoryUndoRedo", &testEditorHistoryUndoRedo},
+        {"EditorHistoryClearsRedoAfterNewEdit", &testEditorHistoryClearsRedoAfterNewEdit},
         {"EditorHistorySnapshotGuards", &testEditorHistorySnapshotGuards},
         {"EditorCommands", &testEditorCommands},
         {"EditorCommandsNoOpCases", &testEditorCommandsNoOpCases},
@@ -669,6 +798,8 @@ int wmain(){
         {"EvaluatePlacedMarkerAffectsOnlyNewMarker", &testEvaluatePlacedMarkerAffectsOnlyNewMarker},
         {"EvaluatePlacedMarkerPreservesExistingCutRangesWhenInsertedIntoKeptScene", &testEvaluatePlacedMarkerPreservesExistingCutRangesWhenInsertedIntoKeptScene},
         {"EditorReevaluationOnlyShrinksExistingCutScenes", &testEditorReevaluationOnlyShrinksExistingCutScenes},
+        {"EditorReevaluationNoOpWithoutMarkers", &testEditorReevaluationNoOpWithoutMarkers},
+        {"EditorCommandsRapNudgeExpandScene", &testEditorCommandsRapNudgeExpandScene},
     };
 
     size_t failures{};

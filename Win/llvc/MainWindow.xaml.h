@@ -254,6 +254,7 @@ private:
     bool trySkipCurrentCutDuringPlayback();
     void stepByFrame(int delta);
     bool seekBySeconds(int deltaSeconds);
+    bool seekBySeconds(double deltaSeconds);
     bool jumpToTimelinePercent(uint32_t percent);
     bool moveCursorToMarker(int direction);
     void ensureTimelineCursorVisible(double cursorLeft);
