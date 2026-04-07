@@ -208,10 +208,22 @@ vector<TimelineMajorTick> Timeline::buildMajorTicks(double width, double duratio
     for(int i{}; i <= majorTickCount; ++i){
         const auto ratio{static_cast<double>(i) / majorTickCount};
         const auto totalSeconds{static_cast<int>(ratio * durationSeconds + 0.5)};
-        const auto minutes{totalSeconds / 60};
+        const auto hours{totalSeconds / 3600};
+        const auto minutes{(totalSeconds % 3600) / 60};
         const auto seconds{totalSeconds % 60};
 
-        auto label{to_wstring(minutes)};
+        auto label{wstring{}};
+        if(hours > 0){
+            label = to_wstring(hours);
+            label += L":";
+            if(minutes < 10){
+                label += L"0";
+            }
+            label += to_wstring(minutes);
+        }else{
+            label = to_wstring(minutes);
+        }
+
         label += L":";
         if(seconds < 10){
             label += L"0";
