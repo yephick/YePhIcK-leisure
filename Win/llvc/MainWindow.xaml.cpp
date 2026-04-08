@@ -1718,6 +1718,14 @@ void MainWindow::syncTimelineHorizontalScrollBar(){
     const auto scrollableWidth{max(0.0, extentWidth - viewportWidth)};
 
     auto bar{TimelineHorizontalScrollBar()};
+    const auto currentValue{bar.Value()};
+    const auto clampedCurrentValue{clamp(currentValue, 0.0, scrollableWidth)};
+    if(fabs(currentValue - clampedCurrentValue) > 0.5){
+        m_isSyncingTimelineScrollBar = true;
+        bar.Value(clampedCurrentValue);
+        m_isSyncingTimelineScrollBar = false;
+    }
+
     bar.Minimum(0.0);
     bar.Maximum(scrollableWidth);
     bar.LargeChange(max(32.0, viewportWidth * 0.8));
@@ -1725,9 +1733,8 @@ void MainWindow::syncTimelineHorizontalScrollBar(){
     bar.IsEnabled(scrollableWidth > 0.0);
     bar.Visibility(Visibility::Visible);
 
-    const auto currentValue{bar.Value()};
     const auto offset{clamp(scrollViewer.HorizontalOffset(), 0.0, scrollableWidth)};
-    if(fabs(currentValue - offset) > 0.5){
+    if(fabs(clampedCurrentValue - offset) > 0.5){
         m_isSyncingTimelineScrollBar = true;
         bar.Value(offset);
         m_isSyncingTimelineScrollBar = false;
