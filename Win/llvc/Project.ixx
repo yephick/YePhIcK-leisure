@@ -70,6 +70,7 @@ struct Project final{
     Project(): m_lastSavedProjectSnapshot{_buildProjectSnapshot()} {}
 
     void reset(){ new (this) Project; }
+    void setZoomWithoutDirty(double v);
     void clearTimeline();
     AAction open(const ::winrt::Windows::Storage::StorageFile& file);
     AAction save(const ::winrt::Windows::Storage::StorageFile& file);
@@ -417,6 +418,12 @@ void Project::videoFilePath(const ::winrt::hstring& path){
 void Project::setZoom(double v){
     m_isDirty = (m_isDirty || m_zoom != v);
     m_zoom = v;
+}
+
+void Project::setZoomWithoutDirty(double v){
+    m_zoom = v;
+    m_lastSavedProjectSnapshot = _buildProjectSnapshot();
+    m_isDirty = false;
 }
 
 void Project::keepAudio(bool v){

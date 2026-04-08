@@ -83,9 +83,22 @@ using TS = MainWindow::TS;
 
 namespace{
 constexpr array kPageJumpSecondsOptions{0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0, 15.0, 20.0};
+constexpr int kIntegerZoomStartIndex{4};
 
 double pageJumpSecondsFromSettings(const ::llvc::AppSettingsState& settings){
     return kPageJumpSecondsOptions[min<size_t>(settings.pageJumpDurationIndex, kPageJumpSecondsOptions.size() - 1)];
+}
+
+double clampTimelineZoomIndex(const Slider& slider, double value){
+    return clamp(static_cast<double>(lround(value)), slider.Minimum(), slider.Maximum());
+}
+
+double timelineZoomValueFromIndex(double index){
+    const auto zoomIndex{max(1, static_cast<int>(lround(index)))};
+    if(zoomIndex < kIntegerZoomStartIndex){
+        return 1.0 / static_cast<double>(kIntegerZoomStartIndex + 1 - zoomIndex);
+    }
+    return static_cast<double>(zoomIndex - (kIntegerZoomStartIndex - 1));
 }
 
 LRESULT CALLBACK MainWindowSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR refData){
@@ -1086,6 +1099,10 @@ MainWindow::MainWindow(const hstring& launchArguments){
     const auto hwnd{getWindowHandle()};
     SetWindowSubclass(hwnd, MainWindowSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
     loadAppSettings();
+    const auto initialZoomIndex{clampTimelineZoomIndex(TimelineZoomSlider(), m_appSettings.timelineZoom)};
+    m_appSettings.timelineZoom = initialZoomIndex;
+    m_prj.setZoomWithoutDirty(initialZoomIndex);
+    TimelineZoomSlider().Value(initialZoomIndex);
     m_mainWindowClosedRevoker = Closed(auto_revoke, {this, &MainWindow::onClosed});
     m_mainWindowActivatedRevoker = Activated(auto_revoke, {this, &MainWindow::onWindowActivated});
     refreshRecentVideosMenu();
@@ -1173,6 +1190,7 @@ void MainWindow::saveWindowPlacement() const{
 
 void MainWindow::onClosed(const Control&, const WEArgs&){
     m_isClosing = true;
+    m_appSettings.timelineZoom = clampTimelineZoomIndex(TimelineZoomSlider(), TimelineZoomSlider().Value());
 
     const auto hwnd{getWindowHandle()};
     RemoveWindowSubclass(hwnd, MainWindowSubclassProc, 1);
@@ -2555,7 +2573,7 @@ void MainWindow::adjustTimelineZoomBy(int delta){
     const auto bar{TimelineHorizontalScrollBar()};
     m_timelineInteraction.pendingScrollbarAnchor = ::llvc::TimelineScrollbarAnchor::capture(bar.Value(), max(0.0, bar.Maximum()));
 
-    const auto target{clamp(slider.Value() + delta, slider.Minimum(), slider.Maximum())};
+    const auto target{clampTimelineZoomIndex(slider, slider.Value() + delta)};
     slider.Value(target);
 }
 
@@ -3121,6 +3139,7 @@ void MainWindow::removeRecentPath(const hstring& path){
 }
 
 void MainWindow::resetProjectStateImpl(){
+    const auto preservedZoomIndex{clampTimelineZoomIndex(TimelineZoomSlider(), TimelineZoomSlider().Value())};
     if(m_player){
         m_player.Pause();
     }
@@ -3153,7 +3172,8 @@ void MainWindow::resetProjectStateImpl(){
     m_timelineInteraction.pendingScrollbarAnchor.reset();
     m_timelineInteraction.pendingWheelZoomAnchor.reset();
     m_timelineDurationSeconds = 0;
-    TimelineZoomSlider().Value(m_prj.zoom());
+    m_prj.setZoomWithoutDirty(preservedZoomIndex);
+    TimelineZoomSlider().Value(preservedZoomIndex);
     refreshVideoDetailsPanel();
     setVideoDetailsPanelExpanded(false);
     syncAudioCrossfadeComboSelection();
@@ -3233,8 +3253,9 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
 
     co_await m_prj.open(file);
 
-    m_prj.setZoom(clamp(m_prj.zoom(), TimelineZoomSlider().Minimum(), TimelineZoomSlider().Maximum()));
-    TimelineZoomSlider().Value(m_prj.zoom());
+    const auto projectZoomIndex{clampTimelineZoomIndex(TimelineZoomSlider(), m_prj.zoom())};
+    m_prj.setZoomWithoutDirty(projectZoomIndex);
+    TimelineZoomSlider().Value(projectZoomIndex);
 
     if(!m_prj.videoFilePath().empty()){
         try{
@@ -4436,7 +4457,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         }
 
         const auto renderVersion{++m_timelineRenderVersion};
-        const auto stripPlan{m_tl.buildThumbnailStripPlan(m_timelineDurationSeconds, TimelineZoomSlider().Value())};
+        const auto stripPlan{m_tl.buildThumbnailStripPlan(m_timelineDurationSeconds, timelineZoomValueFromIndex(TimelineZoomSlider().Value()))};
         constexpr auto thumbnailImageHeight{86.0};
         const auto totalWidth{stripPlan.totalWidth};
         const auto thumbnailCount{stripPlan.thumbnailCount};
