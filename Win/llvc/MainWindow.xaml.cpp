@@ -1748,7 +1748,11 @@ void MainWindow::updateTimelineCursorFromViewportOffset(double offset){
         return;
     }
 
-    const auto clampedCanvasX{clamp(offset + max(0.0, viewportWidth) / 2.0, 0.0, width)};
+    const auto safeViewportWidth{max(0.0, viewportWidth)};
+    const auto maxOffset{max(0.0, width - safeViewportWidth)};
+    const auto clampedOffset{clamp(offset, 0.0, maxOffset)};
+    const auto viewportRatio{maxOffset > 0.0 ? clamp(clampedOffset / maxOffset, 0.0, 1.0) : 0.5};
+    const auto clampedCanvasX{clamp(clampedOffset + (viewportRatio * safeViewportWidth), 0.0, width)};
     const auto target100nsOpt{timelinePointToTime100ns(clampedCanvasX, width)};
     if(!target100nsOpt){
         return;
