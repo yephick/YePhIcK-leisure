@@ -89,4 +89,7 @@
       <Filter>Meta</Filter>
     </Text>
   </ItemGroup>
+  <ItemGroup>
+    <AppxManifest Include="Package.appxmanifest" />
+  </ItemGroup>
 </Project>

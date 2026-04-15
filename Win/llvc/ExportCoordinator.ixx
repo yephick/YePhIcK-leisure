@@ -108,7 +108,7 @@ winrt::Windows::Foundation::IAsyncAction runExportAsync(const ExportCoordinatorR
 
     const auto exportOverallStartedAt{chrono::steady_clock::now()};
     const auto requestedCutRanges100ns{request.project->buildCutRanges100ns()};
-    const auto requestedOutputDuration100ns{request.project->outputDuration100ns()};
+    //const auto requestedOutputDuration100ns{request.project->outputDuration100ns()};
 
     if(request.onStatus){
         request.onStatus(request.needsRapReevaluation ? L"Reevaluating cut plan to RAP frames..." : L"Preparing export plan...");

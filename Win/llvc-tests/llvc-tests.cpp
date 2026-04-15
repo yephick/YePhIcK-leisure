@@ -6,6 +6,7 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#include <mfapi.h>
 
 import std;
 import llvc.Utils;
@@ -13,9 +14,10 @@ import llvc.Project;
 import llvc.Timeline;
 import llvc.EditorController;
 import llvc.EditorCommands;
+import llvc.Export;
+import llvc.Media;
 
 using namespace std;
-
 namespace{
 
 struct TestFailure: runtime_error{
@@ -78,6 +80,40 @@ void expectNear(double actual, double expected, double tolerance, const string& 
 
 [[noreturn]] void fail(const string& message){
     throw TestFailure(message);
+}
+
+vector<int64_t> parseSemicolonSeparatedInt64(const string& text){
+    vector<int64_t> values;
+    size_t start{};
+    while(start <= text.size()){
+        const auto end{text.find(';', start)};
+        const auto token{text.substr(start, end == string::npos ? string::npos : end - start)};
+        if(!token.empty()){
+            values.push_back(stoll(token));
+        }
+        if(end == string::npos){
+            break;
+        }
+        start = end + 1;
+    }
+    return values;
+}
+
+vector<uint32_t> parseSemicolonSeparatedUInt32(const string& text){
+    vector<uint32_t> values;
+    size_t start{};
+    while(start <= text.size()){
+        const auto end{text.find(',', start)};
+        const auto token{text.substr(start, end == string::npos ? string::npos : end - start)};
+        if(!token.empty()){
+            values.push_back(static_cast<uint32_t>(stoul(token)));
+        }
+        if(end == string::npos){
+            break;
+        }
+        start = end + 1;
+    }
+    return values;
 }
 
 llvc::IndexedFrameSample marker(int64_t time100ns, bool evaluated = false, bool cleanPoint = false, uint32_t sampleIndex = 0){
@@ -533,6 +569,83 @@ void testExportPreflightAndPlanSummary(){
     filesystem::remove(tempPath);
 }
 
+void testExportH264SampleNormalization(){
+    const vector<uint8_t> annexBWithLeadingBytes{0x47, 0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84};
+    const auto normalizedAnnexB{llvc::normalizeH264SampleForMpegTs(annexBWithLeadingBytes.data(), annexBWithLeadingBytes.size(), 4)};
+    expectEqual(normalizedAnnexB, vector<uint8_t>{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84}, "normalizeH264SampleForMpegTs should skip leading bytes before an Annex B start code");
+
+    const vector<uint8_t> lengthPrefixedWithPadding{0x00, 0x00, 0x00, 0x03, 0x65, 0x88, 0x84, 0x00, 0x00, 0x00};
+    const auto normalizedLengthPrefixed{llvc::normalizeH264SampleForMpegTs(lengthPrefixedWithPadding.data(), lengthPrefixedWithPadding.size(), 4)};
+    expectEqual(normalizedLengthPrefixed, vector<uint8_t>{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84}, "normalizeH264SampleForMpegTs should tolerate trailing zero padding in length-prefixed samples");
+
+    const vector<uint8_t> malformedLengthPrefixed{0x00, 0x00, 0x00, 0x04, 0x65, 0x88, 0x84};
+    const auto normalizedMalformed{llvc::normalizeH264SampleForMpegTs(malformedLengthPrefixed.data(), malformedLengthPrefixed.size(), 4)};
+    expect(normalizedMalformed.empty(), "normalizeH264SampleForMpegTs should reject malformed length-prefixed samples");
+
+    const vector<uint8_t> chunkedAccessUnit{
+        0x00, 0x00, 0x00, 0x02, 0x09, 0xF0,
+        0x00, 0x00, 0x00, 0x03, 0x06, 0x01, 0x80,
+        0x00, 0x00, 0x00, 0x04, 0x65, 0x88, 0x84, 0x21};
+    const auto normalizedChunkedAccessUnit{llvc::normalizeH264SampleForMpegTs(chunkedAccessUnit.data(), chunkedAccessUnit.size(), 4)};
+    expectEqual(normalizedChunkedAccessUnit, vector<uint8_t>{
+        0x00, 0x00, 0x00, 0x01, 0x09, 0xF0,
+        0x00, 0x00, 0x00, 0x01, 0x06, 0x01, 0x80,
+        0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x21}, "normalizeH264SampleForMpegTs should preserve all NAL units from a reassembled chunked access unit");
+}
+
+void testExportH264ParameterSetExtraction(){
+    const vector<uint8_t> avccSequenceHeader{
+        0x01, 0x64, 0x00, 0x1F, 0xFF,
+        0xE1,
+        0x00, 0x04, 0x67, 0x64, 0x00, 0x1F,
+        0x01,
+        0x00, 0x03, 0x68, 0xEE, 0x06};
+    const auto parameterSets{llvc::extractH264ParameterSetsAnnexBForMpegTs(avccSequenceHeader)};
+    expectEqual(parameterSets, vector<uint8_t>{0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F, 0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x06}, "extractH264ParameterSetsAnnexBForMpegTs should convert avcC SPS/PPS data into Annex B parameter sets");
+
+    const vector<uint8_t> annexBSequenceHeader{0x12, 0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F, 0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x06};
+    const auto normalizedAnnexB{llvc::extractH264ParameterSetsAnnexBForMpegTs(annexBSequenceHeader)};
+    expectEqual(normalizedAnnexB, vector<uint8_t>{0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F, 0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x06}, "extractH264ParameterSetsAnnexBForMpegTs should also accept Annex B sequence header data");
+}
+
+void testExportReaderSampleTimeResolution(){
+    expectEqual(llvc::resolveReaderSampleTime100ns(1'234, 5'678), int64_t{1'234}, "resolveReaderSampleTime100ns should keep a positive sample time");
+    expectEqual(llvc::resolveReaderSampleTime100ns(0, 5'678), int64_t{5'678}, "resolveReaderSampleTime100ns should fall back to the ReadSample timestamp when the sample time is zero");
+    expectEqual(llvc::resolveReaderSampleTime100ns(-1, 5'678), int64_t{5'678}, "resolveReaderSampleTime100ns should fall back to the ReadSample timestamp when the sample time is negative");
+    expectEqual(llvc::resolveReaderSampleTime100ns(0, 0), int64_t{0}, "resolveReaderSampleTime100ns should clamp missing timestamps to zero");
+}
+
+void testMpegTsKeyframeClassification(){
+    expect(llvc::shouldTreatMpegTsSampleAsKeyframe(false, true), "shouldTreatMpegTsSampleAsKeyframe should trust a bitstream RAP even when the container clean-point flag is not set");
+    expect(llvc::shouldTreatMpegTsSampleAsKeyframe(true, true), "shouldTreatMpegTsSampleAsKeyframe should accept a sample when both sources report RAP");
+    expect(!llvc::shouldTreatMpegTsSampleAsKeyframe(true, false), "shouldTreatMpegTsSampleAsKeyframe should reject non-RAP samples");
+}
+
+void testMpegTsBitstreamRapDetection(){
+    const vector<uint8_t> annexBIdrAccessUnit{
+        0x00, 0x00, 0x00, 0x01, 0x09, 0xF0,
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F,
+        0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x06,
+        0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84};
+    expect(llvc::bitstreamLooksLikeRandomAccessPoint(annexBIdrAccessUnit.data(), annexBIdrAccessUnit.size(), MFVideoFormat_H264, 0, false), "bitstreamLooksLikeRandomAccessPoint should recognize Annex B IDR access units as RAP");
+
+    const vector<uint8_t> lengthPrefixedNonRapAccessUnit{
+        0x00, 0x00, 0x00, 0x02, 0x09, 0xF0,
+        0x00, 0x00, 0x00, 0x03, 0x06, 0x01, 0x80,
+        0x00, 0x00, 0x00, 0x03, 0x61, 0x88, 0x84};
+    expect(!llvc::bitstreamLooksLikeRandomAccessPoint(lengthPrefixedNonRapAccessUnit.data(), lengthPrefixedNonRapAccessUnit.size(), MFVideoFormat_H264, 4, false), "bitstreamLooksLikeRandomAccessPoint should reject non-IDR H.264 access units");
+}
+
+void testMpegTsDecodeTimeInference(){
+    optional<int64_t> nextInferredDecodeTime100ns{};
+    expectEqual(llvc::resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, 333'333), optional<int64_t>{0}, "resolveMpegTsDecodeTime100ns should start inferred DTS at zero when the stream begins without decode timestamps");
+    expectEqual(nextInferredDecodeTime100ns, optional<int64_t>{333'333}, "resolveMpegTsDecodeTime100ns should advance the inferred DTS cursor by one frame");
+    expectEqual(llvc::resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, 333'333), optional<int64_t>{333'333}, "resolveMpegTsDecodeTime100ns should keep inferred DTS monotonic across reordered access units");
+    expectEqual(nextInferredDecodeTime100ns, optional<int64_t>{666'666}, "resolveMpegTsDecodeTime100ns should keep the next inferred DTS in frame-sized steps");
+    nextInferredDecodeTime100ns.reset();
+    expectEqual(llvc::resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, 0), optional<int64_t>{}, "resolveMpegTsDecodeTime100ns should return nullopt when no nominal frame duration is available");
+}
+
 void testEditorHistoryUndoRedo(){
     llvc::Project project{};
     project.timelineDuration100ns(100'000'000);
@@ -763,7 +876,7 @@ struct NamedTest{
 
 }
 
-int wmain(){
+int wmain(int argc, wchar_t* argv[]){
     const vector<NamedTest> tests{
         {"UtilsParsing", &testUtilsParsing},
         {"UtilsWorkflowPolicies", &testUtilsWorkflowPolicies},
@@ -788,6 +901,12 @@ int wmain(){
         {"ProjectEffectiveExportPreservesAlreadySafeTailCut", &testProjectEffectiveExportPreservesAlreadySafeTailCut},
         {"ProjectEstimateCoordinatorHelpers", &testProjectEstimateCoordinatorHelpers},
         {"ExportPreflightAndPlanSummary", &testExportPreflightAndPlanSummary},
+        {"ExportH264SampleNormalization", &testExportH264SampleNormalization},
+        {"ExportH264ParameterSetExtraction", &testExportH264ParameterSetExtraction},
+        {"ExportReaderSampleTimeResolution", &testExportReaderSampleTimeResolution},
+        {"MpegTsKeyframeClassification", &testMpegTsKeyframeClassification},
+        {"MpegTsBitstreamRapDetection", &testMpegTsBitstreamRapDetection},
+        {"MpegTsDecodeTimeInference", &testMpegTsDecodeTimeInference},
         {"EditorHistoryUndoRedo", &testEditorHistoryUndoRedo},
         {"EditorHistoryClearsRedoAfterNewEdit", &testEditorHistoryClearsRedoAfterNewEdit},
         {"EditorHistorySnapshotGuards", &testEditorHistorySnapshotGuards},

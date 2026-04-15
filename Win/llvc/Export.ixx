@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <winrt/base.h>
 
@@ -62,8 +62,15 @@ int64_t removedDurationBefore(const vector<pair<int64_t, int64_t>>& ranges, int6
 uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUID& subtype);
 bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID& subtype, uint32_t nalLengthFieldSize, bool allowInconclusive);
 bool isContainerSyncSample(const com_ptr<IMFSample>& sample);
+bool shouldTreatMpegTsSampleAsKeyframe(bool isContainerSync, bool isBitstreamRap);
+vector<uint8_t> normalizeH264SampleForMpegTs(const uint8_t* data, size_t size, uint32_t nalLengthFieldSize);
+vector<uint8_t> extractH264ParameterSetsAnnexBForMpegTs(const vector<uint8_t>& sequenceHeader);
+int64_t resolveReaderSampleTime100ns(int64_t sampleTime100ns, int64_t readSampleTimestamp100ns);
+bool bitstreamLooksLikeRandomAccessPoint(const uint8_t* data, size_t size, const GUID& subtype, uint32_t nalLengthFieldSize, bool allowInconclusive);
+optional<int64_t> resolveMpegTsDecodeTime100ns(optional<int64_t>& nextInferredDecodeTime100ns, int64_t nominalVideoFrameDuration100ns);
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex);
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaTypeForSubtypes(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex, const vector<GUID>& allowedSubtypes);
+com_ptr<IMFMediaType> chooseFirstNativeVideoMediaTypeForSubtypes(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex, const vector<GUID>& allowedSubtypes);
 com_ptr<IMFMediaType> createPcmFloatAudioType(uint32_t sampleRate, uint32_t channels);
 com_ptr<IMFMediaType> createAacOutputType(uint32_t sampleRate, uint32_t channels);
 vector<float> decodeAudioRangeToFloat(const com_ptr<IMFSourceReader>& reader, DWORD audioStreamIndex, int64_t rangeStart100ns, int64_t rangeEnd100ns, uint32_t channels, uint32_t sampleRate);
@@ -74,6 +81,7 @@ void writePcmAudioFramesToWriter(const com_ptr<IMFSinkWriter>& writer, DWORD wri
 void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, const com_ptr<IMFSinkWriter>& writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs, float gain, const function<void(double)>& progressCallback = {}, const function<bool()>& shouldCancel = {});
 VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFSinkWriter>& writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel = {});
 VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, int64_t outputDuration100ns, uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel = {});
+VideoWriteStats writeMpegTsH264VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, const com_ptr<IMFMediaType>& videoMediaType, int64_t sourceDuration100ns, const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const com_ptr<IMFMediaType>& audioMediaType, bool keepAudio, const function<void(double)>& progressCallback, const function<void(double)>& audioProgressCallback, const function<bool()>& shouldCancel = {});
 void applyExportFileMetadata(const std::wstring& sourcePath, const std::wstring& outputPath, const std::wstring& exportComment);
 
 }
@@ -574,6 +582,451 @@ private:
     bool m_finalized{};
 };
 
+uint32_t mpegTsCrc32(const uint8_t* data, size_t size){
+    uint32_t crc{0xFFFF'FFFFu};
+    for(size_t i{}; i < size; ++i){
+        crc ^= static_cast<uint32_t>(data[i]) << 24;
+        for(int bit{}; bit < 8; ++bit){
+            crc = (crc & 0x8000'0000u) ? ((crc << 1) ^ 0x04C1'1DB7u) : (crc << 1);
+        }
+    }
+    return crc;
+}
+
+void appendPts(vector<uint8_t>& out, uint8_t prefix, int64_t time100ns){
+    const auto pts{static_cast<uint64_t>(max<int64_t>(0, time100ns) * 9 / 1000) & 0x1FFFFFFFFULL};
+    out.push_back(static_cast<uint8_t>((prefix << 4) | (((pts >> 30) & 0x07) << 1) | 1));
+    out.push_back(static_cast<uint8_t>((pts >> 22) & 0xFF));
+    out.push_back(static_cast<uint8_t>((((pts >> 15) & 0x7F) << 1) | 1));
+    out.push_back(static_cast<uint8_t>((pts >> 7) & 0xFF));
+    out.push_back(static_cast<uint8_t>(((pts & 0x7F) << 1) | 1));
+}
+
+bool isH264VideoSubtype(const GUID& subtype){
+    return subtype == MFVideoFormat_H264 || subtype == MFVideoFormat_H264_ES;
+}
+
+bool aacSampleLooksAdts(const uint8_t* data, size_t size){
+    return data && size >= 2 && data[0] == 0xFF && (data[1] & 0xF0) == 0xF0;
+}
+
+optional<uint8_t> aacSamplingFrequencyIndex(uint32_t sampleRate){
+    switch(sampleRate){
+    case 96000: return uint8_t{0};
+    case 88200: return uint8_t{1};
+    case 64000: return uint8_t{2};
+    case 48000: return uint8_t{3};
+    case 44100: return uint8_t{4};
+    case 32000: return uint8_t{5};
+    case 24000: return uint8_t{6};
+    case 22050: return uint8_t{7};
+    case 16000: return uint8_t{8};
+    case 12000: return uint8_t{9};
+    case 11025: return uint8_t{10};
+    case 8000: return uint8_t{11};
+    case 7350: return uint8_t{12};
+    default: return nullopt;
+    }
+}
+
+vector<uint8_t> addAdtsHeaderToAacFrame(const uint8_t* data, size_t size, uint32_t sampleRate, uint32_t channels){
+    if(!data || size == 0){
+        return {};
+    }
+    const auto samplingIndex{aacSamplingFrequencyIndex(sampleRate)};
+    if(!samplingIndex || channels == 0 || channels > 7 || size + 7 > 0x1FFF){
+        return {};
+    }
+
+    const auto profile{uint8_t{1}}; // AAC LC, encoded as object_type - 1.
+    const auto channelConfig{static_cast<uint8_t>(channels)};
+    const auto frameLength{static_cast<uint16_t>(size + 7)};
+
+    vector<uint8_t> framed;
+    framed.reserve(size + 7);
+    framed.push_back(0xFF);
+    framed.push_back(0xF1);
+    framed.push_back(static_cast<uint8_t>((profile << 6) | ((*samplingIndex & 0x0F) << 2) | ((channelConfig >> 2) & 0x01)));
+    framed.push_back(static_cast<uint8_t>(((channelConfig & 0x03) << 6) | ((frameLength >> 11) & 0x03)));
+    framed.push_back(static_cast<uint8_t>((frameLength >> 3) & 0xFF));
+    framed.push_back(static_cast<uint8_t>(((frameLength & 0x07) << 5) | 0x1F));
+    framed.push_back(0xFC);
+    framed.insert(framed.end(), data, data + size);
+    return framed;
+}
+
+bool bytesAreZeroPadding(const uint8_t* data, size_t size){
+    if(!data){
+        return size == 0;
+    }
+    return all_of(data, data + size, [](const uint8_t value){ return value == 0; });
+}
+
+optional<size_t> findAnnexBStartCodeOffset(const uint8_t* data, size_t size){
+    if(!data || size < 3){
+        return nullopt;
+    }
+
+    for(size_t offset{}; offset + 3 <= size; ++offset){
+        if(data[offset] == 0 && data[offset + 1] == 0 && data[offset + 2] == 1){
+            return offset;
+        }
+        if(offset + 4 <= size && data[offset] == 0 && data[offset + 1] == 0 && data[offset + 2] == 0 && data[offset + 3] == 1){
+            return offset;
+        }
+    }
+    return nullopt;
+}
+
+vector<uint8_t> convertLengthPrefixedNalSampleToAnnexB(const uint8_t* data, size_t size, uint32_t nalLengthFieldSize){
+    vector<uint8_t> converted;
+    if(!data || size == 0){
+        return converted;
+    }
+
+    const auto nalSizeField{clamp<uint32_t>(nalLengthFieldSize, 1, 4)};
+    size_t offset{};
+    while(offset + nalSizeField <= size){
+        if(bytesAreZeroPadding(data + offset, size - offset)){
+            offset = size;
+            break;
+        }
+
+        uint32_t nalLength{};
+        for(uint32_t i{}; i < nalSizeField; ++i){
+            nalLength = (nalLength << 8) | data[offset + i];
+        }
+        offset += nalSizeField;
+        if(nalLength == 0 || offset + nalLength > size){
+            converted.clear();
+            return converted;
+        }
+
+        converted.insert(converted.end(), {0x00, 0x00, 0x00, 0x01});
+        converted.insert(converted.end(), data + offset, data + offset + nalLength);
+        offset += nalLength;
+    }
+
+    if(offset != size && !bytesAreZeroPadding(data + offset, size - offset)){
+        converted.clear();
+    }
+    return converted;
+}
+
+vector<uint8_t> normalizeH264SampleForMpegTsImpl(const uint8_t* data, size_t size, uint32_t nalLengthFieldSize){
+    if(const auto annexBOffset{findAnnexBStartCodeOffset(data, size)}){
+        return vector<uint8_t>{data + *annexBOffset, data + size};
+    }
+    return convertLengthPrefixedNalSampleToAnnexB(data, size, nalLengthFieldSize);
+}
+
+vector<uint8_t> extractH264ParameterSetsAnnexBFromSequenceHeader(const uint8_t* data, size_t size){
+    vector<uint8_t> parameterSets;
+    if(!data || size == 0){
+        return parameterSets;
+    }
+
+    if(const auto annexBOffset{findAnnexBStartCodeOffset(data, size)}){
+        return vector<uint8_t>{data + *annexBOffset, data + size};
+    }
+
+    if(size < 7 || data[0] != 0x01){
+        return parameterSets;
+    }
+
+    size_t offset{5};
+    const auto appendParameterSet = [&](uint16_t unitLength) -> bool{
+        if(unitLength == 0 || offset + unitLength > size){
+            return false;
+        }
+        parameterSets.insert(parameterSets.end(), {0x00, 0x00, 0x00, 0x01});
+        parameterSets.insert(parameterSets.end(), data + offset, data + offset + unitLength);
+        offset += unitLength;
+        return true;
+    };
+
+    const auto spsCount{static_cast<uint8_t>(data[offset++] & 0x1F)};
+    if(spsCount == 0){
+        return {};
+    }
+    for(uint8_t i{}; i < spsCount; ++i){
+        if(offset + 2 > size){
+            return {};
+        }
+        const auto unitLength{static_cast<uint16_t>((static_cast<uint16_t>(data[offset]) << 8) | data[offset + 1])};
+        offset += 2;
+        if(!appendParameterSet(unitLength)){
+            return {};
+        }
+    }
+
+    if(offset >= size){
+        return {};
+    }
+    const auto ppsCount{data[offset++]};
+    for(uint8_t i{}; i < ppsCount; ++i){
+        if(offset + 2 > size){
+            return {};
+        }
+        const auto unitLength{static_cast<uint16_t>((static_cast<uint16_t>(data[offset]) << 8) | data[offset + 1])};
+        offset += 2;
+        if(!appendParameterSet(unitLength)){
+            return {};
+        }
+    }
+
+    if(parameterSets.empty() || (offset != size && !bytesAreZeroPadding(data + offset, size - offset))){
+        return {};
+    }
+    return parameterSets;
+}
+
+bool h264AnnexBSampleContainsParameterSets(const uint8_t* data, size_t size){
+    if(!data || size < 5){
+        return false;
+    }
+
+    bool sawSps{};
+    bool sawPps{};
+    for(size_t i{}; i + 4 <= size; ++i){
+        size_t nalStart{};
+        if(data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1){
+            nalStart = i + 3;
+        }else if(i + 4 <= size && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1){
+            nalStart = i + 4;
+        }else{
+            continue;
+        }
+
+        if(nalStart >= size){
+            continue;
+        }
+
+        switch(data[nalStart] & 0x1F){
+        case 7:
+            sawSps = true;
+            break;
+        case 8:
+            sawPps = true;
+            break;
+        default:
+            break;
+        }
+
+        if(sawSps && sawPps){
+            return true;
+        }
+    }
+
+    return false;
+}
+
+class MpegTsWriter final{
+public:
+    explicit MpegTsWriter(const wstring& outputPath, bool includeAudio):
+        m_includeAudio{includeAudio},
+        m_stream{filesystem::path{outputPath}, ios::binary | ios::trunc}{
+        if(!m_stream){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_OPEN_FAILED), L"Failed to create MPEG-TS output file");
+        }
+        writeTables();
+    }
+
+    void writeVideoSample(const uint8_t* data, size_t size, int64_t pts100ns, optional<int64_t> dts100ns, bool keyframe){
+        if(!data || size == 0){
+            return;
+        }
+        writeTablesIfDue(pts100ns);
+        writePes(kVideoPid, 0xE0, data, size, pts100ns, dts100ns, true, m_videoContinuityCounter);
+    }
+
+    void writeAudioSample(const uint8_t* data, size_t size, int64_t pts100ns){
+        if(!m_includeAudio || !data || size == 0){
+            return;
+        }
+        writeTablesIfDue(pts100ns);
+        writePes(kAudioPid, 0xC0, data, size, pts100ns, nullopt, false, m_audioContinuityCounter);
+    }
+
+    void finalize(){
+        m_stream.flush();
+        if(!m_stream){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_WRITE_FAULT), L"Failed while finalizing MPEG-TS output");
+        }
+    }
+
+private:
+    static constexpr int64_t kTableRepeatInterval100ns{5'000'000};
+    static constexpr uint16_t kPatPid{0x0000};
+    static constexpr uint16_t kPmtPid{0x1000};
+    static constexpr uint16_t kAudioPid{0x0100};
+    static constexpr uint16_t kVideoPid{0x0101};
+
+    void writeBytes(const uint8_t* data, size_t size){
+        m_stream.write(reinterpret_cast<const char*>(data), static_cast<streamsize>(size));
+        if(!m_stream){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_WRITE_FAULT), L"Failed while writing MPEG-TS output");
+        }
+    }
+
+    void writeTables(){
+        vector<uint8_t> pat{
+            0x00,
+            0x00, 0xB0, 0x0D,
+            0x00, 0x01,
+            0xC1, 0x00, 0x00,
+            0x00, 0x01,
+            static_cast<uint8_t>(0xE0 | ((kPmtPid >> 8) & 0x1F)),
+            static_cast<uint8_t>(kPmtPid & 0xFF)};
+        appendCrc(pat, 1);
+        writePsiPacket(kPatPid, pat, m_patContinuityCounter);
+
+        const auto sectionLength{static_cast<uint16_t>(m_includeAudio ? 0x17 : 0x12)};
+        vector<uint8_t> pmt{
+            0x00,
+            0x02, static_cast<uint8_t>(0xB0 | ((sectionLength >> 8) & 0x0F)), static_cast<uint8_t>(sectionLength & 0xFF),
+            0x00, 0x01,
+            0xC1, 0x00, 0x00,
+            static_cast<uint8_t>(0xE0 | ((kVideoPid >> 8) & 0x1F)),
+            static_cast<uint8_t>(kVideoPid & 0xFF),
+            0xF0, 0x00,
+            0x1B,
+            static_cast<uint8_t>(0xE0 | ((kVideoPid >> 8) & 0x1F)),
+            static_cast<uint8_t>(kVideoPid & 0xFF),
+            0xF0, 0x00};
+        if(m_includeAudio){
+            pmt.push_back(0x0F);
+            pmt.push_back(static_cast<uint8_t>(0xE0 | ((kAudioPid >> 8) & 0x1F)));
+            pmt.push_back(static_cast<uint8_t>(kAudioPid & 0xFF));
+            pmt.push_back(0xF0);
+            pmt.push_back(0x00);
+        }
+        appendCrc(pmt, 1);
+        writePsiPacket(kPmtPid, pmt, m_pmtContinuityCounter);
+    }
+
+    void writeTablesIfDue(int64_t time100ns){
+        if(m_nextTableWriteTime100ns < 0 || time100ns >= m_nextTableWriteTime100ns){
+            writeTables();
+            m_nextTableWriteTime100ns = max<int64_t>(0, time100ns) + kTableRepeatInterval100ns;
+        }
+    }
+
+    void appendCrc(vector<uint8_t>& sectionWithPointer, size_t sectionOffset){
+        const auto crc{mpegTsCrc32(sectionWithPointer.data() + sectionOffset, sectionWithPointer.size() - sectionOffset)};
+        sectionWithPointer.push_back(static_cast<uint8_t>((crc >> 24) & 0xFF));
+        sectionWithPointer.push_back(static_cast<uint8_t>((crc >> 16) & 0xFF));
+        sectionWithPointer.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
+        sectionWithPointer.push_back(static_cast<uint8_t>(crc & 0xFF));
+    }
+
+    void writePsiPacket(uint16_t pid, const vector<uint8_t>& payload, uint8_t& continuityCounter){
+        array<uint8_t, 188> packet{};
+        packet.fill(0xFF);
+        packet[0] = 0x47;
+        packet[1] = static_cast<uint8_t>(0x40 | ((pid >> 8) & 0x1F));
+        packet[2] = static_cast<uint8_t>(pid & 0xFF);
+        packet[3] = static_cast<uint8_t>(0x10 | (continuityCounter++ & 0x0F));
+        const auto copySize{min<size_t>(payload.size(), packet.size() - 4)};
+        memcpy(packet.data() + 4, payload.data(), copySize);
+        writeBytes(packet.data(), packet.size());
+    }
+
+    void writePes(uint16_t pid, uint8_t streamId, const uint8_t* data, size_t size, int64_t pts100ns, optional<int64_t> dts100ns, bool keyframe, uint8_t& continuityCounter){
+        vector<uint8_t> pes;
+        pes.reserve(size + 32);
+        pes.insert(pes.end(), {0x00, 0x00, 0x01, streamId});
+        const auto pesHeaderDataLength{static_cast<size_t>(dts100ns && *dts100ns != pts100ns ? 10 : 5)};
+        const auto packetLength{size + 3 + pesHeaderDataLength};
+        if((streamId & 0xE0) == 0xC0 && packetLength <= 0xFFFF){
+            pes.push_back(static_cast<uint8_t>((packetLength >> 8) & 0xFF));
+            pes.push_back(static_cast<uint8_t>(packetLength & 0xFF));
+        }else{
+            pes.push_back(0x00);
+            pes.push_back(0x00);
+        }
+        pes.push_back(0x80);
+        if(dts100ns && *dts100ns != pts100ns){
+            pes.push_back(0xC0);
+            pes.push_back(10);
+            appendPts(pes, 0x03, pts100ns);
+            appendPts(pes, 0x01, *dts100ns);
+        }else{
+            pes.push_back(0x80);
+            pes.push_back(5);
+            appendPts(pes, 0x02, pts100ns);
+        }
+        pes.insert(pes.end(), data, data + size);
+
+        size_t offset{};
+        bool payloadStart{true};
+        while(offset < pes.size()){
+            array<uint8_t, 188> packet{};
+            packet.fill(0xFF);
+            packet[0] = 0x47;
+            packet[1] = static_cast<uint8_t>((payloadStart ? 0x40 : 0x00) | ((pid >> 8) & 0x1F));
+            packet[2] = static_cast<uint8_t>(pid & 0xFF);
+
+            const auto remaining{pes.size() - offset};
+            const auto includePcr{payloadStart && pid == kVideoPid};
+            size_t adaptationBytes{};
+            size_t payloadBytes{};
+            if(includePcr){
+                adaptationBytes = 8;
+                payloadBytes = min(remaining, packet.size() - 4 - adaptationBytes);
+            }else{
+                payloadBytes = min(remaining, packet.size() - 4);
+            }
+            if(payloadBytes == remaining){
+                const auto availableAdaptationBytes{packet.size() - 4 - payloadBytes};
+                adaptationBytes = includePcr ? max<size_t>(8, availableAdaptationBytes) : availableAdaptationBytes;
+                payloadBytes = packet.size() - 4 - adaptationBytes;
+            }
+
+            if(adaptationBytes > 0){
+                packet[3] = static_cast<uint8_t>(0x30 | (continuityCounter++ & 0x0F));
+                packet[4] = static_cast<uint8_t>(adaptationBytes - 1);
+                packet[5] = includePcr ? 0x10 : 0x00;
+                size_t payloadOffset{6};
+                if(includePcr){
+                    writePcr(packet.data() + payloadOffset, dts100ns.value_or(pts100ns));
+                    payloadOffset += 6;
+                }
+                while(payloadOffset < 4 + adaptationBytes){
+                    packet[payloadOffset++] = 0xFF;
+                }
+                memcpy(packet.data() + payloadOffset, pes.data() + offset, payloadBytes);
+            }else{
+                packet[3] = static_cast<uint8_t>(0x10 | (continuityCounter++ & 0x0F));
+                memcpy(packet.data() + 4, pes.data() + offset, payloadBytes);
+            }
+
+            writeBytes(packet.data(), packet.size());
+            offset += payloadBytes;
+            payloadStart = false;
+        }
+    }
+
+    void writePcr(uint8_t* out, int64_t time100ns){
+        const auto pcrBase{static_cast<uint64_t>(max<int64_t>(0, time100ns) * 9 / 1000) & 0x1FFFFFFFFULL};
+        out[0] = static_cast<uint8_t>((pcrBase >> 25) & 0xFF);
+        out[1] = static_cast<uint8_t>((pcrBase >> 17) & 0xFF);
+        out[2] = static_cast<uint8_t>((pcrBase >> 9) & 0xFF);
+        out[3] = static_cast<uint8_t>((pcrBase >> 1) & 0xFF);
+        out[4] = static_cast<uint8_t>(((pcrBase & 0x01) << 7) | 0x7E);
+        out[5] = 0x00;
+    }
+
+private:
+    ofstream m_stream;
+    bool m_includeAudio{};
+    int64_t m_nextTableWriteTime100ns{-1};
+    uint8_t m_patContinuityCounter{};
+    uint8_t m_pmtContinuityCounter{};
+    uint8_t m_audioContinuityCounter{};
+    uint8_t m_videoContinuityCounter{};
+};
+
 }
 
 MFLifetime::MFLifetime(){
@@ -607,6 +1060,34 @@ bool hasDecoderForSubtype(const GUID& subtype){
     }
 
     return SUCCEEDED(hr) && count > 0;
+}
+
+vector<uint8_t> normalizeH264SampleForMpegTs(const uint8_t* data, size_t size, uint32_t nalLengthFieldSize){
+    return normalizeH264SampleForMpegTsImpl(data, size, nalLengthFieldSize);
+}
+
+vector<uint8_t> extractH264ParameterSetsAnnexBForMpegTs(const vector<uint8_t>& sequenceHeader){
+    return extractH264ParameterSetsAnnexBFromSequenceHeader(sequenceHeader.data(), sequenceHeader.size());
+}
+
+int64_t resolveReaderSampleTime100ns(int64_t sampleTime100ns, int64_t readSampleTimestamp100ns){
+    if(sampleTime100ns > 0){
+        return sampleTime100ns;
+    }
+    if(readSampleTimestamp100ns > 0){
+        return readSampleTimestamp100ns;
+    }
+    return max<int64_t>(0, sampleTime100ns);
+}
+
+optional<int64_t> resolveMpegTsDecodeTime100ns(optional<int64_t>& nextInferredDecodeTime100ns, int64_t nominalVideoFrameDuration100ns){
+    if(nominalVideoFrameDuration100ns <= 0){
+        return nullopt;
+    }
+
+    const auto inferredDecodeTime100ns{max<int64_t>(0, nextInferredDecodeTime100ns.value_or(0))};
+    nextInferredDecodeTime100ns = inferredDecodeTime100ns + nominalVideoFrameDuration100ns;
+    return inferredDecodeTime100ns;
 }
 
 KeyFrameCadenceInfo analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uint32_t fpsNum, uint32_t fpsDen){
@@ -744,7 +1225,7 @@ uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUI
         return 4;
     }
 
-    if(subtype == MFVideoFormat_H264){
+    if(isH264VideoSubtype(subtype)){
         if(configSize >= 5){
             const auto result{(configData[4] & 0x03) + 1};
             CoTaskMemFree(configData);
@@ -763,7 +1244,7 @@ uint32_t getNalLengthFieldSize(const com_ptr<IMFMediaType>& mediaType, const GUI
 }
 
 bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID& subtype, uint32_t nalLengthFieldSize, bool allowInconclusive){
-    if(subtype != MFVideoFormat_H264 && subtype != MFVideoFormat_HEVC && subtype != MFVideoFormat_H265){
+    if(!isH264VideoSubtype(subtype) && subtype != MFVideoFormat_HEVC && subtype != MFVideoFormat_H265){
         return true;
     }
 
@@ -779,8 +1260,18 @@ bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID&
         return allowInconclusive;
     }
 
+    const auto result{bitstreamLooksLikeRandomAccessPoint(data, currentLength, subtype, nalLengthFieldSize, allowInconclusive)};
+    contiguousBuffer->Unlock();
+    return result;
+}
+
+bool bitstreamLooksLikeRandomAccessPoint(const uint8_t* data, size_t size, const GUID& subtype, uint32_t nalLengthFieldSize, bool allowInconclusive){
+    if(!data || size == 0){
+        return allowInconclusive;
+    }
+
     auto classifyNalType = [&](const uint8_t nalHeader) -> std::optional<bool>{
-        if(subtype == MFVideoFormat_H264){
+        if(isH264VideoSubtype(subtype)){
             const auto nalType = static_cast<uint8_t>(nalHeader & 0x1F);
             if(nalType >= 1 && nalType <= 5){
                 return nalType == 5;
@@ -797,55 +1288,54 @@ bool isTrueRandomAccessPointSample(const com_ptr<IMFSample>& sample, const GUID&
     {
         const auto nalSizeField{clamp<uint32_t>(nalLengthFieldSize, 1, 4)};
         size_t offset{};
-        while(offset + nalSizeField <= currentLength){
+        while(offset + nalSizeField <= size){
             uint32_t nalLength{};
             for(uint32_t i{0}; i < nalSizeField; ++i){
                 nalLength = (nalLength << 8) | data[offset + i];
             }
             offset += nalSizeField;
 
-            if(nalLength == 0 || offset + nalLength > currentLength){
+            if(nalLength == 0 || offset + nalLength > size){
                 break;
             }
 
             if(const auto maybeRap{classifyNalType(data[offset])}; maybeRap.has_value()){
-                const auto result{maybeRap.value()};
-                contiguousBuffer->Unlock();
-                return result;
+                return maybeRap.value();
             }
 
             offset += nalLength;
         }
     }
 
-    for(size_t i{0}; i + 4 < currentLength; ++i){
+    for(size_t i{0}; i + 4 < size; ++i){
         size_t nalStart{};
         if(data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1){
             nalStart = i + 3;
-        }else if(i + 4 < currentLength && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1){
+        }else if(i + 4 < size && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1){
             nalStart = i + 4;
         }else{
             continue;
         }
 
-        if(nalStart >= currentLength){
+        if(nalStart >= size){
             continue;
         }
 
         if(const auto maybeRap{classifyNalType(data[nalStart])}; maybeRap.has_value()){
-            const auto result{maybeRap.value()};
-            contiguousBuffer->Unlock();
-            return result;
+            return maybeRap.value();
         }
     }
 
-    contiguousBuffer->Unlock();
     return allowInconclusive;
 }
 
 bool isContainerSyncSample(const com_ptr<IMFSample>& sample){
     UINT32 cleanPoint{};
     return SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) && cleanPoint != 0;
+}
+
+bool shouldTreatMpegTsSampleAsKeyframe(bool, bool isBitstreamRap){
+    return isBitstreamRap;
 }
 
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex){
@@ -898,6 +1388,32 @@ com_ptr<IMFMediaType> chooseBestNativeVideoMediaTypeForSubtypes(const com_ptr<IM
     }
 
     return bestType;
+}
+
+com_ptr<IMFMediaType> chooseFirstNativeVideoMediaTypeForSubtypes(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex, const vector<GUID>& allowedSubtypes){
+    for(DWORD mediaTypeIndex{0};; ++mediaTypeIndex){
+        com_ptr<IMFMediaType> type;
+        const auto hr{reader->GetNativeMediaType(streamIndex, mediaTypeIndex, type.put())};
+        if(hr == MF_E_NO_MORE_TYPES){
+            break;
+        }
+        check_hresult(hr);
+
+        GUID major{GUID_NULL};
+        GUID subtype{GUID_NULL};
+        check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+        check_hresult(type->GetGUID(MF_MT_SUBTYPE, &subtype));
+        if(major != MFMediaType_Video){
+            continue;
+        }
+        if(!allowedSubtypes.empty() && ranges::find(allowedSubtypes, subtype) == allowedSubtypes.end()){
+            continue;
+        }
+
+        return type;
+    }
+
+    return nullptr;
 }
 
 com_ptr<IMFMediaType> createPcmFloatAudioType(uint32_t sampleRate, uint32_t channels){
@@ -1556,6 +2072,362 @@ VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>
 
     if(progressCallback){
         progressCallback(100.0);
+    }
+    return stats;
+}
+
+VideoWriteStats writeMpegTsH264VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, const com_ptr<IMFMediaType>& videoMediaType, int64_t sourceDuration100ns, const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const com_ptr<IMFMediaType>& audioMediaType, bool keepAudio, const function<void(double)>& progressCallback, const function<void(double)>& audioProgressCallback, const function<bool()>& shouldCancel){
+    if(!isH264VideoSubtype(videoSubtype)){
+        throw hresult_error(MF_E_INVALIDMEDIATYPE, L"MPEG-TS stream-copy export currently requires H.264 video");
+    }
+
+    vector<uint8_t> h264ParameterSetsAnnexB;
+    if(videoMediaType){
+        UINT8* sequenceHeaderBytes{};
+        UINT32 sequenceHeaderSize{};
+        if(SUCCEEDED(videoMediaType->GetAllocatedBlob(MF_MT_MPEG_SEQUENCE_HEADER, &sequenceHeaderBytes, &sequenceHeaderSize)) && sequenceHeaderBytes && sequenceHeaderSize > 0){
+            h264ParameterSetsAnnexB = extractH264ParameterSetsAnnexBFromSequenceHeader(sequenceHeaderBytes, sequenceHeaderSize);
+        }
+        CoTaskMemFree(sequenceHeaderBytes);
+    }
+
+    constexpr auto invalidStream{(numeric_limits<DWORD>::max)()};
+    auto includeAudio{keepAudio && audioReader && audioMediaType && audioStreamIndex != invalidStream};
+    uint32_t audioSampleRate{};
+    uint32_t audioChannels{};
+    if(includeAudio){
+        GUID audioSubtype{GUID_NULL};
+        check_hresult(audioMediaType->GetGUID(MF_MT_SUBTYPE, &audioSubtype));
+        if(audioSubtype != MFAudioFormat_AAC){
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"MPEG-TS audio passthrough currently requires AAC audio");
+        }
+        (void)audioMediaType->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &audioSampleRate);
+        (void)audioMediaType->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &audioChannels);
+        if(audioSampleRate == 0 || audioChannels == 0){
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"MPEG-TS audio passthrough requires AAC sample rate and channel metadata");
+        }
+    }
+
+    MpegTsWriter writer{outputPath, includeAudio};
+    auto waitingForCleanPoint{false};
+    auto dtsPtsShift100ns{static_cast<int64_t>(0)};
+    auto dtsPtsShiftInitialized{false};
+    VideoWriteStats stats{};
+    uint64_t audioReadSampleCount{};
+    uint32_t videoFpsNum{};
+    uint32_t videoFpsDen{};
+    (void)MFGetAttributeRatio(videoMediaType.get(), MF_MT_FRAME_RATE, &videoFpsNum, &videoFpsDen);
+    const auto nominalVideoFrameDuration100ns{
+        (videoFpsNum > 0 && videoFpsDen > 0) ? max<int64_t>(1, static_cast<int64_t>((10'000'000LL * static_cast<int64_t>(videoFpsDen)) / videoFpsNum)) : int64_t{}};
+    optional<int64_t> nextInferredDecodeTime100ns{};
+
+    if(progressCallback){
+        progressCallback(0.0);
+    }
+    if(includeAudio && audioProgressCallback){
+        audioProgressCallback(0.0);
+    }
+
+    struct PendingVideoSample final{
+        vector<uint8_t> data{};
+        int64_t inTime100ns{};
+        int64_t outTime100ns{};
+        int64_t writeOrderTime100ns{};
+        optional<int64_t> outDecodeTime100ns{};
+        bool keyframe{};
+    };
+
+    struct PendingVideoAccessUnit final{
+        vector<uint8_t> rawData{};
+        int64_t inTime100ns{};
+        optional<int64_t> decodeTime100ns{};
+    };
+
+    struct PendingAudioSample final{
+        vector<uint8_t> data{};
+        int64_t inTime100ns{};
+        int64_t outTime100ns{};
+    };
+
+    optional<PendingVideoAccessUnit> pendingVideoAccessUnit{};
+
+    auto finalizePendingVideoAccessUnit = [&](PendingVideoAccessUnit&& accessUnit) -> optional<PendingVideoSample>{
+        if(accessUnit.rawData.empty()){
+            return nullopt;
+        }
+
+        auto dropped{false};
+        for(const auto& [start, end] : effectiveCutRanges100ns){
+            if(accessUnit.inTime100ns < start){
+                break;
+            }
+            if(accessUnit.inTime100ns < end){
+                dropped = true;
+                break;
+            }
+        }
+        if(dropped){
+            ++stats.droppedByCutCount;
+            waitingForCleanPoint = true;
+            return nullopt;
+        }
+
+        auto outputData{normalizeH264SampleForMpegTs(accessUnit.rawData.data(), accessUnit.rawData.size(), nalLengthFieldSize)};
+        if(outputData.empty()){
+            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"H.264 sample is neither Annex B nor a valid length-prefixed sample");
+        }
+
+        const auto isBitstreamRap{bitstreamLooksLikeRandomAccessPoint(outputData.data(), outputData.size(), videoSubtype, 0, true)};
+        const auto isKeyframe{shouldTreatMpegTsSampleAsKeyframe(false, isBitstreamRap)};
+        if(waitingForCleanPoint){
+            if(!isKeyframe){
+                ++stats.droppedWaitingRapCount;
+                return nullopt;
+            }
+            waitingForCleanPoint = false;
+        }
+
+        const auto removedAtPresentationTime{removedDurationBefore(effectiveCutRanges100ns, accessUnit.inTime100ns)};
+        auto outTime100ns{accessUnit.inTime100ns - removedAtPresentationTime};
+        optional<int64_t> outDecodeTime100ns{};
+        auto decodeTimeForOutput100ns{resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, nominalVideoFrameDuration100ns)};
+
+        if(decodeTimeForOutput100ns.has_value()){
+            if(!dtsPtsShiftInitialized){
+                dtsPtsShift100ns = max<int64_t>(0, -*decodeTimeForOutput100ns);
+                dtsPtsShiftInitialized = true;
+            }
+            outTime100ns += dtsPtsShift100ns;
+            outDecodeTime100ns = max<int64_t>(0, *decodeTimeForOutput100ns + dtsPtsShift100ns);
+        }else if(!dtsPtsShiftInitialized){
+            dtsPtsShiftInitialized = true;
+        }
+
+        if(isKeyframe && !h264ParameterSetsAnnexB.empty() && !h264AnnexBSampleContainsParameterSets(outputData.data(), outputData.size())){
+            vector<uint8_t> prefixedData;
+            prefixedData.reserve(h264ParameterSetsAnnexB.size() + outputData.size());
+            prefixedData.insert(prefixedData.end(), h264ParameterSetsAnnexB.begin(), h264ParameterSetsAnnexB.end());
+            prefixedData.insert(prefixedData.end(), outputData.begin(), outputData.end());
+            outputData = move(prefixedData);
+        }
+
+        return PendingVideoSample{
+            .data = move(outputData),
+            .inTime100ns = accessUnit.inTime100ns,
+            .outTime100ns = outTime100ns,
+            .writeOrderTime100ns = outTime100ns,
+            .outDecodeTime100ns = outDecodeTime100ns,
+            .keyframe = isKeyframe};
+    };
+
+    auto readNextVideoSample = [&]() -> optional<PendingVideoSample>{
+        for(;;){
+            if(shouldCancel && shouldCancel()){
+                throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+            }
+
+            DWORD actualStream{};
+            DWORD flags{};
+            LONGLONG timestamp{};
+            com_ptr<IMFSample> sample;
+            const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+            if(FAILED(hr)){
+                check_hresult(hr);
+            }
+            if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+                if(pendingVideoAccessUnit.has_value()){
+                    auto completedAccessUnit{move(*pendingVideoAccessUnit)};
+                    pendingVideoAccessUnit.reset();
+                    if(auto completedSample{finalizePendingVideoAccessUnit(move(completedAccessUnit))}){
+                        return completedSample;
+                    }
+                }
+                return nullopt;
+            }
+            if(!sample){
+                continue;
+            }
+
+            ++stats.readSampleCount;
+
+            LONGLONG sampleTime100ns{};
+            const auto hasSampleTime{SUCCEEDED(sample->GetSampleTime(&sampleTime100ns))};
+            const auto startsNewAccessUnit{hasSampleTime || timestamp > 0};
+            const auto inTime100ns{resolveReaderSampleTime100ns(hasSampleTime ? sampleTime100ns : 0, timestamp)};
+            optional<int64_t> decodeTime100ns{};
+            UINT64 decodeTimestamp100ns{};
+            if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
+                decodeTime100ns = static_cast<int64_t>(decodeTimestamp100ns);
+            }
+
+            com_ptr<IMFMediaBuffer> contiguousBuffer;
+            check_hresult(sample->ConvertToContiguousBuffer(contiguousBuffer.put()));
+
+            BYTE* data{};
+            DWORD maxLength{};
+            DWORD currentLength{};
+            check_hresult(contiguousBuffer->Lock(&data, &maxLength, &currentLength));
+            vector<uint8_t> rawChunkData{data, data + currentLength};
+            contiguousBuffer->Unlock();
+
+            if(startsNewAccessUnit){
+                if(pendingVideoAccessUnit.has_value()){
+                    auto completedAccessUnit{move(*pendingVideoAccessUnit)};
+                    pendingVideoAccessUnit = PendingVideoAccessUnit{
+                        .rawData = move(rawChunkData),
+                        .inTime100ns = inTime100ns,
+                        .decodeTime100ns = decodeTime100ns};
+                    if(auto completedSample{finalizePendingVideoAccessUnit(move(completedAccessUnit))}){
+                        return completedSample;
+                    }
+                    continue;
+                }
+
+                pendingVideoAccessUnit = PendingVideoAccessUnit{
+                    .rawData = move(rawChunkData),
+                    .inTime100ns = inTime100ns,
+                    .decodeTime100ns = decodeTime100ns};
+                continue;
+            }
+
+            if(!pendingVideoAccessUnit.has_value()){
+                continue;
+            }
+            auto& accessUnit{*pendingVideoAccessUnit};
+            accessUnit.rawData.insert(accessUnit.rawData.end(), rawChunkData.begin(), rawChunkData.end());
+        }
+    };
+
+    auto readNextAudioSample = [&]() -> optional<PendingAudioSample>{
+        if(!includeAudio){
+            return nullopt;
+        }
+
+        for(;;){
+            if(shouldCancel && shouldCancel()){
+                throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+            }
+
+            DWORD actualStream{};
+            DWORD flags{};
+            LONGLONG timestamp{};
+            com_ptr<IMFSample> sample;
+            const auto hr{audioReader->ReadSample(audioStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+            if(FAILED(hr)){
+                check_hresult(hr);
+            }
+            if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+                return nullopt;
+            }
+            if(!sample){
+                continue;
+            }
+
+            ++audioReadSampleCount;
+
+            LONGLONG sampleTime100ns{};
+            if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
+                sampleTime100ns = timestamp;
+            }
+            const auto inTime100ns{max<int64_t>(0, sampleTime100ns)};
+
+            auto dropped{false};
+            for(const auto& [start, end] : effectiveCutRanges100ns){
+                if(inTime100ns < start){
+                    break;
+                }
+                if(inTime100ns < end){
+                    dropped = true;
+                    break;
+                }
+            }
+            if(dropped){
+                continue;
+            }
+
+            const auto removedAtPresentationTime{removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
+            const auto outTime100ns{max<int64_t>(0, inTime100ns - removedAtPresentationTime + dtsPtsShift100ns)};
+
+            com_ptr<IMFMediaBuffer> contiguousBuffer;
+            check_hresult(sample->ConvertToContiguousBuffer(contiguousBuffer.put()));
+
+            BYTE* data{};
+            DWORD maxLength{};
+            DWORD currentLength{};
+            check_hresult(contiguousBuffer->Lock(&data, &maxLength, &currentLength));
+
+            vector<uint8_t> outputData;
+            if(aacSampleLooksAdts(data, currentLength)){
+                outputData.assign(data, data + currentLength);
+            }else{
+                outputData = addAdtsHeaderToAacFrame(data, currentLength, audioSampleRate, audioChannels);
+                if(outputData.empty()){
+                    contiguousBuffer->Unlock();
+                    throw hresult_error(MF_E_INVALIDMEDIATYPE, L"MPEG-TS AAC audio sample cannot be written as ADTS");
+                }
+            }
+            contiguousBuffer->Unlock();
+
+            if(audioProgressCallback && sourceDuration100ns > 0 && (audioReadSampleCount % 256 == 0)){
+                audioProgressCallback((100.0 * inTime100ns) / sourceDuration100ns);
+            }
+
+            return PendingAudioSample{
+                .data = move(outputData),
+                .inTime100ns = inTime100ns,
+                .outTime100ns = outTime100ns};
+        }
+    };
+
+    auto nextVideo{readNextVideoSample()};
+    auto nextAudio{readNextAudioSample()};
+    optional<int64_t> outputTimelineBase100ns{};
+    optional<int64_t> outputDecodeTimelineBase100ns{};
+
+    while(nextVideo || nextAudio){
+        if(shouldCancel && shouldCancel()){
+            throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+        }
+
+        if(!outputTimelineBase100ns.has_value()){
+            if(nextVideo){
+                outputTimelineBase100ns = nextVideo->outTime100ns;
+                outputDecodeTimelineBase100ns = nextVideo->outDecodeTime100ns.value_or(nextVideo->outTime100ns);
+            }else if(nextAudio){
+                outputTimelineBase100ns = nextAudio->outTime100ns;
+            }
+        }
+
+        while(outputTimelineBase100ns.has_value() && nextAudio && nextAudio->outTime100ns < *outputTimelineBase100ns){
+            nextAudio = readNextAudioSample();
+        }
+
+        const auto writeAudioNext{nextAudio && (!nextVideo || nextAudio->outTime100ns <= nextVideo->writeOrderTime100ns)};
+        if(writeAudioNext){
+            const auto rebasedOutTime100ns{max<int64_t>(0, nextAudio->outTime100ns - outputTimelineBase100ns.value_or(0))};
+            writer.writeAudioSample(nextAudio->data.data(), nextAudio->data.size(), rebasedOutTime100ns);
+            nextAudio = readNextAudioSample();
+        }else if(nextVideo){
+            const auto rebasedOutTime100ns{max<int64_t>(0, nextVideo->outTime100ns - outputTimelineBase100ns.value_or(0))};
+            optional<int64_t> rebasedDecodeTime100ns{};
+            if(nextVideo->outDecodeTime100ns.has_value()){
+                rebasedDecodeTime100ns = max<int64_t>(0, *nextVideo->outDecodeTime100ns - outputDecodeTimelineBase100ns.value_or(0));
+            }
+            writer.writeVideoSample(nextVideo->data.data(), nextVideo->data.size(), rebasedOutTime100ns, rebasedDecodeTime100ns, nextVideo->keyframe);
+            ++stats.writtenSampleCount;
+            if(progressCallback && sourceDuration100ns > 0 && (stats.readSampleCount % 24 == 0)){
+                progressCallback((100.0 * nextVideo->inTime100ns) / sourceDuration100ns);
+            }
+            nextVideo = readNextVideoSample();
+        }
+    }
+
+    writer.finalize();
+    if(progressCallback){
+        progressCallback(100.0);
+    }
+    if(includeAudio && audioProgressCallback){
+        audioProgressCallback(100.0);
     }
     return stats;
 }

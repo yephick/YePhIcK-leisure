@@ -19,6 +19,7 @@
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <shobjidl_core.h>
+#include <robuffer.h>
 #include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
@@ -50,17 +51,17 @@ import llvc.ExportCoordinator;
 using namespace std;
 using namespace winrt;
 using namespace ::llvc;
-using namespace Microsoft::UI::Xaml;
-using namespace Microsoft::UI::Input;
-using namespace Microsoft::UI::Xaml::Controls;
-using namespace Microsoft::UI::Xaml::Input;
-using namespace Windows::Foundation;
-using namespace Windows::ApplicationModel;
-using namespace Windows::Media::Playback;
-using namespace Windows::Storage;
-using namespace Windows::Storage::Pickers;
-using namespace Windows::System;
-using namespace Windows::UI::Core;
+using namespace winrt::Microsoft::UI::Xaml;
+using namespace winrt::Microsoft::UI::Input;
+using namespace winrt::Microsoft::UI::Xaml::Controls;
+using namespace winrt::Microsoft::UI::Xaml::Input;
+using namespace winrt::Windows::Foundation;
+using namespace winrt::Windows::ApplicationModel;
+using namespace winrt::Windows::Media::Playback;
+using namespace winrt::Windows::Storage;
+using namespace winrt::Windows::Storage::Pickers;
+using namespace winrt::Windows::System;
+using namespace winrt::Windows::UI::Core;
 
 namespace winrt::llvc::implementation{
 
@@ -175,6 +176,185 @@ bool pathsMatchInsensitive(const std::wstring& left, const std::wstring& right){
     const auto normalizedLeft{filesystem::path(left).lexically_normal().wstring()};
     const auto normalizedRight{filesystem::path(right).lexically_normal().wstring()};
     return _wcsicmp(normalizedLeft.c_str(), normalizedRight.c_str()) == 0;
+}
+
+struct DecodedThumbnail final{
+    int32_t width{};
+    int32_t height{};
+    vector<uint8_t> bgraPixels{};
+};
+
+std::optional<DecodedThumbnail> tryDecodeThumbnailWithSourceReader(const wstring& filePath, int64_t time100ns, uint32_t targetWidth, uint32_t targetHeight){
+    if(filePath.empty() || targetWidth == 0 || targetHeight == 0){
+        return nullopt;
+    }
+
+    const auto coinitHr{CoInitializeEx(nullptr, COINIT_MULTITHREADED)};
+    const auto shouldCoUninitialize{SUCCEEDED(coinitHr)};
+    if(FAILED(coinitHr) && coinitHr != RPC_E_CHANGED_MODE){
+        return nullopt;
+    }
+
+    struct CoUninitGuard final{
+        bool active{};
+        ~CoUninitGuard(){
+            if(active){
+                CoUninitialize();
+            }
+        }
+    } coGuard{shouldCoUninitialize};
+
+    try{
+        ::llvc::MFLifetime mf{};
+
+        com_ptr<IMFAttributes> attributes;
+        check_hresult(MFCreateAttributes(attributes.put(), 2));
+        check_hresult(attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE));
+        check_hresult(attributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE));
+
+        com_ptr<IMFSourceReader> reader;
+        check_hresult(MFCreateSourceReaderFromURL(filePath.c_str(), attributes.get(), reader.put()));
+
+        constexpr auto invalidStream{(numeric_limits<DWORD>::max)()};
+        auto videoStreamIndex{invalidStream};
+        for(DWORD streamIndex{};; ++streamIndex){
+            com_ptr<IMFMediaType> nativeType;
+            const auto hr{reader->GetNativeMediaType(streamIndex, 0, nativeType.put())};
+            if(hr == MF_E_INVALIDSTREAMNUMBER || hr == MF_E_NO_MORE_TYPES){
+                break;
+            }
+            if(FAILED(hr) || !nativeType){
+                continue;
+            }
+
+            GUID major{};
+            if(SUCCEEDED(nativeType->GetGUID(MF_MT_MAJOR_TYPE, &major)) && major == MFMediaType_Video){
+                videoStreamIndex = streamIndex;
+                break;
+            }
+        }
+        if(videoStreamIndex == invalidStream){
+            return nullopt;
+        }
+
+        check_hresult(reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+        check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
+
+        com_ptr<IMFMediaType> outputType;
+        check_hresult(MFCreateMediaType(outputType.put()));
+        check_hresult(outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
+        check_hresult(outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32));
+        check_hresult(outputType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive));
+        check_hresult(reader->SetCurrentMediaType(videoStreamIndex, nullptr, outputType.get()));
+
+        com_ptr<IMFMediaType> currentType;
+        check_hresult(reader->GetCurrentMediaType(videoStreamIndex, currentType.put()));
+        uint32_t actualWidth{targetWidth};
+        uint32_t actualHeight{targetHeight};
+        (void)MFGetAttributeSize(currentType.get(), MF_MT_FRAME_SIZE, &actualWidth, &actualHeight);
+        if(actualWidth == 0 || actualHeight == 0 || actualWidth > 4096 || actualHeight > 4096){
+            return nullopt;
+        }
+
+        PROPVARIANT startPosition{};
+        startPosition.vt = VT_I8;
+        startPosition.hVal.QuadPart = max<int64_t>(0, time100ns);
+        check_hresult(reader->SetCurrentPosition(GUID_NULL, startPosition));
+        PropVariantClear(&startPosition);
+
+        com_ptr<IMFSample> selectedSample;
+        LONGLONG selectedTime{};
+        constexpr uint32_t maxSamplesToRead{120};
+        for(uint32_t attempt{}; attempt < maxSamplesToRead; ++attempt){
+            DWORD actualStream{};
+            DWORD flags{};
+            LONGLONG timestamp{};
+            com_ptr<IMFSample> sample;
+            const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+            if(FAILED(hr) || (flags & MF_SOURCE_READERF_ENDOFSTREAM)){
+                break;
+            }
+            if(!sample){
+                continue;
+            }
+
+            LONGLONG sampleTime{};
+            if(FAILED(sample->GetSampleTime(&sampleTime))){
+                sampleTime = timestamp;
+            }
+            selectedSample = sample;
+            selectedTime = sampleTime;
+            if(sampleTime >= time100ns){
+                break;
+            }
+        }
+        (void)selectedTime;
+        if(!selectedSample){
+            return nullopt;
+        }
+
+        com_ptr<IMFMediaBuffer> contiguousBuffer;
+        check_hresult(selectedSample->ConvertToContiguousBuffer(contiguousBuffer.put()));
+
+        BYTE* sourceBytes{};
+        DWORD maxLength{};
+        DWORD currentLength{};
+        check_hresult(contiguousBuffer->Lock(&sourceBytes, &maxLength, &currentLength));
+
+        LONG sourceStride{};
+        if(FAILED(currentType->GetUINT32(MF_MT_DEFAULT_STRIDE, reinterpret_cast<UINT32*>(&sourceStride))) || sourceStride == 0){
+            sourceStride = static_cast<LONG>(actualWidth * 4);
+        }
+        const auto absStride{static_cast<size_t>(sourceStride < 0 ? -sourceStride : sourceStride)};
+        if(absStride < static_cast<size_t>(actualWidth) * 4){
+            contiguousBuffer->Unlock();
+            return nullopt;
+        }
+        const auto requiredBytes{absStride * static_cast<size_t>(actualHeight)};
+        if(!sourceBytes || currentLength < requiredBytes){
+            contiguousBuffer->Unlock();
+            return nullopt;
+        }
+
+        DecodedThumbnail thumbnail{
+            .width = static_cast<int32_t>(targetWidth),
+            .height = static_cast<int32_t>(targetHeight),
+            .bgraPixels = vector<uint8_t>(static_cast<size_t>(targetWidth) * targetHeight * 4)};
+
+        for(uint32_t y{}; y < targetHeight; ++y){
+            const auto scaledY{static_cast<uint32_t>((static_cast<uint64_t>(y) * actualHeight) / targetHeight)};
+            const auto sourceY{sourceStride < 0 ? (actualHeight - 1 - scaledY) : scaledY};
+            const auto* sourceRow{sourceBytes + (static_cast<size_t>(sourceY) * absStride)};
+            auto* destRow{thumbnail.bgraPixels.data() + (static_cast<size_t>(y) * targetWidth * 4)};
+            for(uint32_t x{}; x < targetWidth; ++x){
+                const auto sourceX{static_cast<uint32_t>((static_cast<uint64_t>(x) * actualWidth) / targetWidth)};
+                const auto* sourcePixel{sourceRow + (static_cast<size_t>(sourceX) * 4)};
+                auto* destPixel{destRow + (static_cast<size_t>(x) * 4)};
+                destPixel[0] = sourcePixel[0];
+                destPixel[1] = sourcePixel[1];
+                destPixel[2] = sourcePixel[2];
+                destPixel[3] = 0xFF;
+            }
+        }
+
+        contiguousBuffer->Unlock();
+        return thumbnail;
+    }catch(...){
+        return nullopt;
+    }
+}
+
+Media::Imaging::WriteableBitmap createWriteableBitmapFromDecodedThumbnail(const DecodedThumbnail& thumbnail){
+    Media::Imaging::WriteableBitmap bitmap{thumbnail.width, thumbnail.height};
+    const auto pixelBuffer{bitmap.PixelBuffer()};
+    auto byteAccess{pixelBuffer.as<::Windows::Storage::Streams::IBufferByteAccess>()};
+    uint8_t* dest{};
+    check_hresult(byteAccess->Buffer(&dest));
+    if(dest && !thumbnail.bgraPixels.empty()){
+        memcpy(dest, thumbnail.bgraPixels.data(), thumbnail.bgraPixels.size());
+    }
+    bitmap.Invalidate();
+    return bitmap;
 }
 
 std::wstring buildTemporaryExportPath(const std::wstring& targetPath){
@@ -1112,7 +1292,7 @@ MainWindow::MainWindow(const hstring& launchArguments){
     m_isUiReadyForEvents = true;
 
     if(m_appSettings.restorePreviewDetachedOnStartup){
-        (void)setSeparatePreviewWindowOpen(true);
+        m_pendingSeparatePreviewRestoreOnStartup = true;
     }
 
     if(!launchArguments.empty()){
@@ -1254,9 +1434,15 @@ void MainWindow::onWindowActivated(const Control&, const WAVArgs& args){
         return;
     }
 
+    const auto restoreSeparatePreviewOnStartup{exchange(m_pendingSeparatePreviewRestoreOnStartup, false)};
     const auto weakThis{get_weak()};
-    DispatcherQueue().TryEnqueue([weakThis]{
+    DispatcherQueue().TryEnqueue([weakThis, restoreSeparatePreviewOnStartup]{
         if(const auto self{weakThis.get()}){
+            if(restoreSeparatePreviewOnStartup && !self->setSeparatePreviewWindowOpen(true)){
+                self->m_appSettings.restorePreviewDetachedOnStartup = false;
+                self->m_appSettings.restorePreviewFullscreenOnStartup = false;
+                self->saveAppSettings();
+            }
             self->tryFocusTimelineCanvas(FocusState::Programmatic);
         }
     });
@@ -1681,7 +1867,9 @@ void MainWindow::onPositionTimerTick(const Control&, const Control&){
     }
 
     (void)trySkipCurrentCutDuringPlayback();
-    updateTimelineCursorFromPlayback();
+    if(m_player && m_player.PlaybackSession().PlaybackState() == MediaPlaybackState::Playing){
+        updateTimelineCursorFromPlayback();
+    }
 }
 
 void MainWindow::updateTimelineCursorFromPlayback(){
@@ -1707,6 +1895,16 @@ void MainWindow::updateTimelineCursorFromPosition(int64_t position100ns){
     }
 
     syncTimelineHorizontalScrollBar();
+}
+
+int64_t MainWindow::currentNavigationTime100ns(){
+    if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
+        return max<int64_t>(0, *cursor100ns);
+    }
+    if(m_player){
+        return max<int64_t>(0, m_player.PlaybackSession().Position().count());
+    }
+    return 0;
 }
 
 void MainWindow::syncTimelineHorizontalScrollBar(){
@@ -1946,12 +2144,7 @@ void MainWindow::stepByFrame(int delta){
         return;
     }
 
-    int64_t current{};
-    if(m_player){
-        current = max<int64_t>(0, m_player.PlaybackSession().Position().count());
-    }else if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
-        current = *cursor100ns;
-    }
+    const auto current{currentNavigationTime100ns()};
 
     const auto frameStep100ns{m_tl.frameStep100ns(m_mediaInfo.frameRate.num, m_mediaInfo.frameRate.den)};
     const auto target{m_tl.applyFrameStep(current, delta, duration100ns, frameStep100ns)};
@@ -1986,12 +2179,7 @@ bool MainWindow::seekBySeconds(int deltaSeconds){
         return false;
     }
 
-    int64_t current100ns{};
-    if(m_player){
-        current100ns = max<int64_t>(0, m_player.PlaybackSession().Position().count());
-    }else if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
-        current100ns = *cursor100ns;
-    }
+    const auto current100ns{currentNavigationTime100ns()};
 
     const auto delta100ns{static_cast<int64_t>(deltaSeconds) * HNS_PER_SECOND};
     const auto target100ns{clamp(current100ns + delta100ns, int64_t{0}, duration100ns)};
@@ -2027,12 +2215,7 @@ bool MainWindow::seekBySeconds(double deltaSeconds){
         return false;
     }
 
-    int64_t current100ns{};
-    if(m_player){
-        current100ns = max<int64_t>(0, m_player.PlaybackSession().Position().count());
-    }else if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
-        current100ns = *cursor100ns;
-    }
+    const auto current100ns{currentNavigationTime100ns()};
 
     const auto delta100ns{static_cast<int64_t>(llround(deltaSeconds * static_cast<double>(HNS_PER_SECOND)))};
     const auto target100ns{clamp(current100ns + delta100ns, int64_t{0}, duration100ns)};
@@ -2105,12 +2288,7 @@ bool MainWindow::moveCursorToMarker(int direction){
         return false;
     }
 
-    int64_t current100ns{};
-    if(m_player){
-        current100ns = max<int64_t>(0, m_player.PlaybackSession().Position().count());
-    }else if(const auto cursor100ns{timelinePointToTime100ns(Controls::Canvas::GetLeft(TimelineCursor()), TimelineCanvas().Width())}){
-        current100ns = *cursor100ns;
-    }
+    const auto current100ns{currentNavigationTime100ns()};
 
     const auto target100ns{m_tl.markerNavigationTarget100ns(markers, current100ns, direction)};
     if(!target100ns){
@@ -2599,7 +2777,7 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         previewWindow.Title(L"ClipRazor: Lossless Video Cutter - video preview");
 
         Controls::Grid root{};
-        root.Background(Media::SolidColorBrush(Windows::UI::ColorHelper::FromArgb(0xFF, 0x08, 0x08, 0x08)));
+        root.Background(Media::SolidColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(0xFF, 0x08, 0x08, 0x08)));
 
         Controls::Image detachedSplash{};
         detachedSplash.Source(Media::Imaging::BitmapImage(Uri{L"ms-appx:///Assets/SplashScreen.png"}));
@@ -3681,6 +3859,9 @@ void MainWindow::setExportOverlayStageState(ExportOverlayStage stage, const wstr
         return;
     }
 
+    m_exportStageActive[static_cast<size_t>(stage)] = active;
+    m_exportStageProgress[static_cast<size_t>(stage)] = progressPercent;
+
     if(active){
         if(!m_activeExportStage || *m_activeExportStage != stage){
             m_activeExportStage = stage;
@@ -3901,10 +4082,14 @@ void MainWindow::updateExportStageEta(){
     }
 
     m_lastExportEtaRefreshAt = now;
-    m_exportEtaText = std::wstring(exportStageDisplayName(*m_activeExportStage))
-        + L" stage: about "
-        + formatRemainingDurationText(remaining)
-        + L" remaining";
+    wstring stageSummary{exportStageDisplayName(*m_activeExportStage)};
+    const auto videoActive{m_exportStageActive[static_cast<size_t>(ExportOverlayStage::Video)]};
+    const auto audioActive{m_exportStageActive[static_cast<size_t>(ExportOverlayStage::Audio)]};
+    if(videoActive && audioActive){
+        stageSummary = L"Video + audio";
+    }
+
+    m_exportEtaText = stageSummary + L" stage: about " + formatRemainingDurationText(remaining) + L" remaining";
 }
 
 AAction MainWindow::deleteExportArtifactsAsync(bool deleteSource, bool deleteProject){
@@ -4004,6 +4189,8 @@ void MainWindow::setOperationInProgress(bool active, bool indeterminate){
         stopExportEtaTimer();
         m_activeExportStage.reset();
         m_activeExportStageProgress.reset();
+        m_exportStageActive.fill(false);
+        m_exportStageProgress.fill(std::nullopt);
         m_exportEtaText.clear();
         m_lastExportEtaProgress.reset();
     }
@@ -4229,12 +4416,12 @@ MediaInspectionResult MainWindow::inspectMediaFile(const wstring& filePath){
 }
 
 void MainWindow::window_DragOver(const Control&, const DEArgs& e){
-    e.AcceptedOperation(Windows::ApplicationModel::DataTransfer::DataPackageOperation::Copy);
+    e.AcceptedOperation(winrt::Windows::ApplicationModel::DataTransfer::DataPackageOperation::Copy);
 }
 
 AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
     const auto view{e.DataView()};
-    if(!view.Contains(Windows::ApplicationModel::DataTransfer::StandardDataFormats::StorageItems())){
+    if(!view.Contains(winrt::Windows::ApplicationModel::DataTransfer::StandardDataFormats::StorageItems())){
         setStatusMessage(L"Dropped content is not a file");
         co_return;
     }
@@ -4332,7 +4519,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     setStatusMessage(::llvc::buildTimelineLoadingStatus(file.Name().c_str()));
     clearErrorMessage();
 
-    const auto source{Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
+    const auto source{winrt::Windows::Media::Core::MediaSource::CreateFromStorageFile(file)};
     m_player.Source(source);
     updatePreviewPlaceholderVisibility();
     m_player.IsMuted(false);
@@ -4502,10 +4689,13 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
             m_timelineInteraction.pendingScrollbarAnchor.reset();
         }
 
-        const auto clipFile{co_await StorageFile::GetFileFromPathAsync(m_prj.videoFilePath())};
-        const auto clip{co_await Windows::Media::Editing::MediaClip::CreateFromFileAsync(clipFile)};
-        Windows::Media::Editing::MediaComposition composition{};
-        composition.Clips().Append(clip);
+        const auto useSourceReaderThumbnails{m_mediaInfo.container == L"MPEG-TS"};
+        winrt::Windows::Media::Editing::MediaComposition composition{};
+        if(!useSourceReaderThumbnails){
+            const auto clipFile{co_await StorageFile::GetFileFromPathAsync(m_prj.videoFilePath())};
+            const auto clip{co_await winrt::Windows::Media::Editing::MediaClip::CreateFromFileAsync(clipFile)};
+            composition.Clips().Append(clip);
+        }
 
         if(renderVersion != m_timelineRenderVersion){
             co_return;
@@ -4532,31 +4722,54 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
             }
 
             const auto t{(nextIndex + 0.5) / thumbnailCount};
-            const auto stream{co_await composition.GetThumbnailAsync(secondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
-            if(renderVersion != m_timelineRenderVersion || m_isClosing){
-                if(m_isClosing){
-                    setOperationInProgress(false);
-                }
-                co_return;
-            }
-
             Controls::Image image{};
             image.Width(thumbnailWidth);
             image.Height(thumbnailImageHeight);
             image.Stretch(Media::Stretch::UniformToFill);
 
-            Media::Imaging::BitmapImage bitmap{};
-            co_await bitmap.SetSourceAsync(stream);
-            image.Source(bitmap);
+            auto thumbnailCreated{false};
+            if(useSourceReaderThumbnails){
+                const wstring sourcePath{m_prj.videoFilePath().c_str()};
+                const auto thumbnailTime100ns{static_cast<int64_t>(max(0.0, t * m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
+                const apartment_context uiThread{};
+                co_await resume_background();
+                const auto decodedThumbnail{tryDecodeThumbnailWithSourceReader(sourcePath, thumbnailTime100ns, 180, 96)};
+                co_await uiThread;
+                if(renderVersion != m_timelineRenderVersion || m_isClosing){
+                    if(m_isClosing){
+                        setOperationInProgress(false);
+                    }
+                    co_return;
+                }
+                if(decodedThumbnail){
+                    image.Source(createWriteableBitmapFromDecodedThumbnail(*decodedThumbnail));
+                    thumbnailCreated = true;
+                }
+            }else{
+                const auto stream{co_await composition.GetThumbnailAsync(secondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, winrt::Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
+                if(renderVersion != m_timelineRenderVersion || m_isClosing){
+                    if(m_isClosing){
+                        setOperationInProgress(false);
+                    }
+                    co_return;
+                }
 
-            Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
-            ThumbnailLayer().Children().Append(image);
+                Media::Imaging::BitmapImage bitmap{};
+                co_await bitmap.SetSourceAsync(stream);
+                image.Source(bitmap);
+                thumbnailCreated = true;
+            }
+
             thumbnailBuilt[nextIndex] = true;
-            renderCutOverlays();
+            if(thumbnailCreated){
+                Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
+                ThumbnailLayer().Children().Append(image);
+                renderCutOverlays();
+            }
         }
 
-        updateTimelineCursorFromPlayback();
         if(!renderDuringExport && m_player && m_player.PlaybackSession().PlaybackState() == MediaPlaybackState::Playing){
+            updateTimelineCursorFromPlayback();
             ensureTimelineCursorVisible(Controls::Canvas::GetLeft(TimelineCursor()));
         }
         syncTimelineHorizontalScrollBar();
@@ -4604,7 +4817,6 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export video", hstring{preflight.blockMessage});
         co_return;
     }
-
     const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
     const filesystem::path sourceFsPath{sourcePath};
     std::error_code sourceSizeEc;
@@ -4794,7 +5006,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         .sourceSizeBytes = sourceSizeEc ? 0 : sourceSizeBytes,
         .sourceHasAudio = sourceHasAudio(),
         .needsRapReevaluation = needsRapReevaluation,
-        .ensureRapMarkersAvailableAsync = [this](const wstring& statusMessage, const function<void(double)>& progressCallback) -> Windows::Foundation::IAsyncOperation<bool>{
+        .ensureRapMarkersAvailableAsync = [this](const wstring& statusMessage, const function<void(double)>& progressCallback) -> winrt::Windows::Foundation::IAsyncOperation<bool>{
             co_return co_await ensureRapMarkersAvailableAsync(statusMessage, progressCallback);
         },
         .reevaluateCutMarkers = [this](bool pushUndoState){
@@ -4984,10 +5196,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             formatMs(finalizeStageDurationMs),
             formatMs(std::optional<chrono::milliseconds>{totalDurationMs}))};
 
-        Windows::ApplicationModel::DataTransfer::DataPackage package{};
+        winrt::Windows::ApplicationModel::DataTransfer::DataPackage package{};
         package.SetText(report);
-        Windows::ApplicationModel::DataTransfer::Clipboard::SetContent(package);
-        Windows::ApplicationModel::DataTransfer::Clipboard::Flush();
+        winrt::Windows::ApplicationModel::DataTransfer::Clipboard::SetContent(package);
+        winrt::Windows::ApplicationModel::DataTransfer::Clipboard::Flush();
         setStatusMessage(exportSucceeded ? L"Export completed and timing report copied to clipboard" : L"Export timing report copied to clipboard");
     }
 

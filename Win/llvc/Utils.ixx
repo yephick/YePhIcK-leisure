@@ -130,6 +130,8 @@ constexpr auto S_SEPARATE_PREVIEW_W{L"SeparatePreviewWidth"};
 constexpr auto S_SEPARATE_PREVIEW_H{L"SeparatePreviewHeight"};
 constexpr auto S_SEPARATE_PREVIEW_DPI{L"SeparatePreviewDpi"};
 constexpr auto S_SEPARATE_PREVIEW_FULLSCREEN{L"SeparatePreviewFullscreen"};
+constexpr int32_t MAIN_WINDOW_MIN_WIDTH_DIPS{960};
+constexpr int32_t MAIN_WINDOW_MIN_HEIGHT_DIPS{640};
 }
 
 wstring formatGuid(const _GUID& guid){
@@ -422,8 +424,8 @@ bool restoreWindowPlacementFromSettings(HWND hwnd, HWND fallbackWindow, bool res
     WindowPlacementState state{};
     state.left = unbox_value<int32_t>(values.Lookup(W_POS_L));
     state.top = unbox_value<int32_t>(values.Lookup(W_POS_T));
-    state.widthDips = unbox_value<int32_t>(values.Lookup(W_POS_W));
-    state.heightDips = unbox_value<int32_t>(values.Lookup(W_POS_H));
+    state.widthDips = max<int32_t>(MAIN_WINDOW_MIN_WIDTH_DIPS, unbox_value<int32_t>(values.Lookup(W_POS_W)));
+    state.heightDips = max<int32_t>(MAIN_WINDOW_MIN_HEIGHT_DIPS, unbox_value<int32_t>(values.Lookup(W_POS_H)));
     state.dpi = values.HasKey(W_POS_DPI) ? unbox_value<int32_t>(values.Lookup(W_POS_DPI)) : 96;
 
     if(applyWindowPlacement(hwnd, state, fallbackWindow, restoreMaximized)){

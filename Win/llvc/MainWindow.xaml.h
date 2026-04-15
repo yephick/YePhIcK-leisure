@@ -162,6 +162,7 @@ private:
     bool m_hasTimelineRenderCompleted{false};
     bool m_isUiReadyForEvents{false};
     bool m_isSyncingTimelineScrollBar{false};
+    bool m_pendingSeparatePreviewRestoreOnStartup{false};
     bool m_pendingReevaluateAfterRapLookup{false};
     bool m_pendingReevaluateWithoutUndoAfterRapLookup{false};
     std::vector<int64_t> m_pendingAutoEvaluateMarkerTimes100ns{};
@@ -210,6 +211,8 @@ private:
     std::optional<ExportOverlayStage> m_activeExportStage{};
     std::optional<double> m_activeExportStageProgress{};
     std::chrono::steady_clock::time_point m_activeExportStageStartedAt{};
+    std::array<bool, 4> m_exportStageActive{};
+    std::array<std::optional<double>, 4> m_exportStageProgress{};
 
     HWND getWindowHandle() const;
     void restoreWindowPlacement();
@@ -236,6 +239,7 @@ private:
     fire_and_forget renderTimelineAsync();
     void updateTimelineCursorFromPlayback();
     void updateTimelineCursorFromPosition(int64_t position100ns);
+    int64_t currentNavigationTime100ns();
     void syncTimelineHorizontalScrollBar();
     void updateTimelineCursorFromViewportOffset(double offset);
     void renderTimelineTicks();

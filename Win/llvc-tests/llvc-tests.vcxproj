@@ -16,7 +16,7 @@
     <ProjectGuid>{3B66E901-290E-45A1-A9C6-54FE5B9F8A4D}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>llvctests</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.19041.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
     <WindowsTargetPlatformMinVersion>10.0.17763.0</WindowsTargetPlatformMinVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -62,6 +62,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
+      <AdditionalDependencies>mfplat.lib;mfreadwrite.lib;mfuuid.lib;propsys.lib;shell32.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -85,6 +86,8 @@
     <ClCompile Include="..\llvc\Timeline.ixx" />
     <ClCompile Include="..\llvc\EditorController.ixx" />
     <ClCompile Include="..\llvc\EditorCommands.ixx" />
+    <ClCompile Include="..\llvc\Export.ixx" />
+    <ClCompile Include="..\llvc\Media.ixx" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
