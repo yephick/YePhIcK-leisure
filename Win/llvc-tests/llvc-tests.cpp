@@ -638,12 +638,12 @@ void testMpegTsBitstreamRapDetection(){
 
 void testMpegTsDecodeTimeInference(){
     optional<int64_t> nextInferredDecodeTime100ns{};
-    expectEqual(llvc::resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, 333'333), optional<int64_t>{0}, "resolveMpegTsDecodeTime100ns should start inferred DTS at zero when the stream begins without decode timestamps");
-    expectEqual(nextInferredDecodeTime100ns, optional<int64_t>{333'333}, "resolveMpegTsDecodeTime100ns should advance the inferred DTS cursor by one frame");
-    expectEqual(llvc::resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, 333'333), optional<int64_t>{333'333}, "resolveMpegTsDecodeTime100ns should keep inferred DTS monotonic across reordered access units");
-    expectEqual(nextInferredDecodeTime100ns, optional<int64_t>{666'666}, "resolveMpegTsDecodeTime100ns should keep the next inferred DTS in frame-sized steps");
+    expectEqual(llvc::resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, 500'000, 333'333), optional<int64_t>{0}, "resolveMpegTsDecodeTime100ns should start inferred DTS at zero when the stream begins without decode timestamps");
+    expectEqual(nextInferredDecodeTime100ns, optional<int64_t>{500'000}, "resolveMpegTsDecodeTime100ns should prefer the access-unit duration when advancing inferred DTS");
+    expectEqual(llvc::resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, 0, 333'333), optional<int64_t>{500'000}, "resolveMpegTsDecodeTime100ns should fall back to the nominal frame duration when a sample duration is unavailable");
+    expectEqual(nextInferredDecodeTime100ns, optional<int64_t>{833'333}, "resolveMpegTsDecodeTime100ns should keep the next inferred DTS monotonic when falling back to the nominal cadence");
     nextInferredDecodeTime100ns.reset();
-    expectEqual(llvc::resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, 0), optional<int64_t>{}, "resolveMpegTsDecodeTime100ns should return nullopt when no nominal frame duration is available");
+    expectEqual(llvc::resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, 0, 0), optional<int64_t>{}, "resolveMpegTsDecodeTime100ns should return nullopt when neither the sample duration nor the nominal frame duration is available");
 }
 
 void testEditorHistoryUndoRedo(){

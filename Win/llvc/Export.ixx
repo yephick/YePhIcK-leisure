@@ -67,7 +67,7 @@ vector<uint8_t> normalizeH264SampleForMpegTs(const uint8_t* data, size_t size, u
 vector<uint8_t> extractH264ParameterSetsAnnexBForMpegTs(const vector<uint8_t>& sequenceHeader);
 int64_t resolveReaderSampleTime100ns(int64_t sampleTime100ns, int64_t readSampleTimestamp100ns);
 bool bitstreamLooksLikeRandomAccessPoint(const uint8_t* data, size_t size, const GUID& subtype, uint32_t nalLengthFieldSize, bool allowInconclusive);
-optional<int64_t> resolveMpegTsDecodeTime100ns(optional<int64_t>& nextInferredDecodeTime100ns, int64_t nominalVideoFrameDuration100ns);
+optional<int64_t> resolveMpegTsDecodeTime100ns(optional<int64_t>& nextInferredDecodeTime100ns, int64_t sampleDuration100ns, int64_t nominalVideoFrameDuration100ns);
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex);
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaTypeForSubtypes(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex, const vector<GUID>& allowedSubtypes);
 com_ptr<IMFMediaType> chooseFirstNativeVideoMediaTypeForSubtypes(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex, const vector<GUID>& allowedSubtypes);
@@ -837,7 +837,12 @@ public:
             return;
         }
         writeTablesIfDue(pts100ns);
-        writePes(kVideoPid, 0xE0, data, size, pts100ns, dts100ns, true, m_videoContinuityCounter);
+        constexpr int64_t maxReasonableReorderDelay100ns{20'000'000};
+        optional<int64_t> trustedDts100ns{};
+        if(dts100ns.has_value() && *dts100ns > 0 && *dts100ns <= pts100ns && (pts100ns - *dts100ns) <= maxReasonableReorderDelay100ns){
+            trustedDts100ns = dts100ns;
+        }
+        writePes(kVideoPid, 0xE0, data, size, pts100ns, trustedDts100ns, true, m_videoContinuityCounter);
     }
 
     void writeAudioSample(const uint8_t* data, size_t size, int64_t pts100ns){
@@ -989,7 +994,7 @@ private:
                 packet[5] = includePcr ? 0x10 : 0x00;
                 size_t payloadOffset{6};
                 if(includePcr){
-                    writePcr(packet.data() + payloadOffset, dts100ns.value_or(pts100ns));
+                    writePcr(packet.data() + payloadOffset, pts100ns);
                     payloadOffset += 6;
                 }
                 while(payloadOffset < 4 + adaptationBytes){
@@ -1080,13 +1085,14 @@ int64_t resolveReaderSampleTime100ns(int64_t sampleTime100ns, int64_t readSample
     return max<int64_t>(0, sampleTime100ns);
 }
 
-optional<int64_t> resolveMpegTsDecodeTime100ns(optional<int64_t>& nextInferredDecodeTime100ns, int64_t nominalVideoFrameDuration100ns){
-    if(nominalVideoFrameDuration100ns <= 0){
+optional<int64_t> resolveMpegTsDecodeTime100ns(optional<int64_t>& nextInferredDecodeTime100ns, int64_t sampleDuration100ns, int64_t nominalVideoFrameDuration100ns){
+    const auto decodeStep100ns{sampleDuration100ns > 0 ? sampleDuration100ns : nominalVideoFrameDuration100ns};
+    if(decodeStep100ns <= 0){
         return nullopt;
     }
 
     const auto inferredDecodeTime100ns{max<int64_t>(0, nextInferredDecodeTime100ns.value_or(0))};
-    nextInferredDecodeTime100ns = inferredDecodeTime100ns + nominalVideoFrameDuration100ns;
+    nextInferredDecodeTime100ns = inferredDecodeTime100ns + decodeStep100ns;
     return inferredDecodeTime100ns;
 }
 
@@ -2141,6 +2147,7 @@ VideoWriteStats writeMpegTsH264VideoSamplesForExport(const com_ptr<IMFSourceRead
         vector<uint8_t> rawData{};
         int64_t inTime100ns{};
         optional<int64_t> decodeTime100ns{};
+        int64_t duration100ns{};
     };
 
     struct PendingAudioSample final{
@@ -2190,7 +2197,7 @@ VideoWriteStats writeMpegTsH264VideoSamplesForExport(const com_ptr<IMFSourceRead
         const auto removedAtPresentationTime{removedDurationBefore(effectiveCutRanges100ns, accessUnit.inTime100ns)};
         auto outTime100ns{accessUnit.inTime100ns - removedAtPresentationTime};
         optional<int64_t> outDecodeTime100ns{};
-        auto decodeTimeForOutput100ns{resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, nominalVideoFrameDuration100ns)};
+        auto decodeTimeForOutput100ns{resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, accessUnit.duration100ns, nominalVideoFrameDuration100ns)};
 
         if(decodeTimeForOutput100ns.has_value()){
             if(!dtsPtsShiftInitialized){
@@ -2259,6 +2266,10 @@ VideoWriteStats writeMpegTsH264VideoSamplesForExport(const com_ptr<IMFSourceRead
             if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
                 decodeTime100ns = static_cast<int64_t>(decodeTimestamp100ns);
             }
+            LONGLONG sampleDuration100ns{};
+            if(FAILED(sample->GetSampleDuration(&sampleDuration100ns)) || sampleDuration100ns < 0){
+                sampleDuration100ns = 0;
+            }
 
             com_ptr<IMFMediaBuffer> contiguousBuffer;
             check_hresult(sample->ConvertToContiguousBuffer(contiguousBuffer.put()));
@@ -2276,7 +2287,8 @@ VideoWriteStats writeMpegTsH264VideoSamplesForExport(const com_ptr<IMFSourceRead
                     pendingVideoAccessUnit = PendingVideoAccessUnit{
                         .rawData = move(rawChunkData),
                         .inTime100ns = inTime100ns,
-                        .decodeTime100ns = decodeTime100ns};
+                        .decodeTime100ns = decodeTime100ns,
+                        .duration100ns = sampleDuration100ns};
                     if(auto completedSample{finalizePendingVideoAccessUnit(move(completedAccessUnit))}){
                         return completedSample;
                     }
@@ -2286,7 +2298,8 @@ VideoWriteStats writeMpegTsH264VideoSamplesForExport(const com_ptr<IMFSourceRead
                 pendingVideoAccessUnit = PendingVideoAccessUnit{
                     .rawData = move(rawChunkData),
                     .inTime100ns = inTime100ns,
-                    .decodeTime100ns = decodeTime100ns};
+                    .decodeTime100ns = decodeTime100ns,
+                    .duration100ns = sampleDuration100ns};
                 continue;
             }
 
