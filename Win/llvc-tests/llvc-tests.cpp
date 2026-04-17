@@ -646,6 +646,54 @@ void testMpegTsDecodeTimeInference(){
     expectEqual(llvc::resolveMpegTsDecodeTime100ns(nextInferredDecodeTime100ns, 0, 0), optional<int64_t>{}, "resolveMpegTsDecodeTime100ns should return nullopt when neither the sample duration nor the nominal frame duration is available");
 }
 
+void testMpegTsDecodeTimeSanitization(){
+    expectEqual(llvc::sanitizeMpegTsVideoDecodeTime100ns(optional<int64_t>{}, 10'000'000), optional<int64_t>{}, "sanitizeMpegTsVideoDecodeTime100ns should omit DTS when no decode time is available");
+    expectEqual(llvc::sanitizeMpegTsVideoDecodeTime100ns(optional<int64_t>{0}, 10'000'000), optional<int64_t>{}, "sanitizeMpegTsVideoDecodeTime100ns should omit zero DTS values");
+    expectEqual(llvc::sanitizeMpegTsVideoDecodeTime100ns(optional<int64_t>{12'000'000}, 10'000'000), optional<int64_t>{}, "sanitizeMpegTsVideoDecodeTime100ns should reject DTS values that lead presentation time");
+    expectEqual(llvc::sanitizeMpegTsVideoDecodeTime100ns(optional<int64_t>{5'000'000}, 30'000'001), optional<int64_t>{}, "sanitizeMpegTsVideoDecodeTime100ns should reject DTS values that lag presentation time by more than the TS reorder tolerance");
+    expectEqual(llvc::sanitizeMpegTsVideoDecodeTime100ns(optional<int64_t>{8'000'000}, 10'000'000), optional<int64_t>{8'000'000}, "sanitizeMpegTsVideoDecodeTime100ns should preserve plausible reordered DTS values");
+}
+
+void testMpegTsPesHeaderSanitization(){
+    const auto appendPtsForTest{[](vector<uint8_t>& out, uint8_t prefix, int64_t time100ns){
+        const auto pts{static_cast<uint64_t>(max<int64_t>(0, time100ns) * 9 / 1000) & 0x1FFFFFFFFULL};
+        out.push_back(static_cast<uint8_t>((prefix << 4) | (((pts >> 30) & 0x07) << 1) | 1));
+        out.push_back(static_cast<uint8_t>((pts >> 22) & 0xFF));
+        out.push_back(static_cast<uint8_t>((((pts >> 15) & 0x7F) << 1) | 1));
+        out.push_back(static_cast<uint8_t>((pts >> 7) & 0xFF));
+        out.push_back(static_cast<uint8_t>(((pts & 0x7F) << 1) | 1));
+    }};
+    const auto buildVideoPesHeaderForTest{[&](int64_t presentationTime100ns, optional<int64_t> decodeTime100ns){
+        vector<uint8_t> pes;
+        pes.reserve(19);
+        pes.insert(pes.end(), {0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80});
+        const auto trustedDts100ns{llvc::sanitizeMpegTsVideoDecodeTime100ns(decodeTime100ns, presentationTime100ns)};
+        if(trustedDts100ns.has_value() && *trustedDts100ns != presentationTime100ns){
+            pes.push_back(0xC0);
+            pes.push_back(10);
+            appendPtsForTest(pes, 0x03, presentationTime100ns);
+            appendPtsForTest(pes, 0x01, *trustedDts100ns);
+        }else{
+            pes.push_back(0x80);
+            pes.push_back(5);
+            appendPtsForTest(pes, 0x02, presentationTime100ns);
+        }
+        return pes;
+    }};
+
+    const auto ptsOnlyHeader{buildVideoPesHeaderForTest(10'000'000, optional<int64_t>{0})};
+    expectEqual(ptsOnlyHeader[7], uint8_t{0x80}, "buildMpegTsVideoPesHeaderForTest should emit a PTS-only PES header when DTS is zero");
+    expectEqual(ptsOnlyHeader[8], uint8_t{5}, "buildMpegTsVideoPesHeaderForTest should encode a five-byte timestamp payload when DTS is omitted");
+
+    const auto invalidLagHeader{buildVideoPesHeaderForTest(30'000'001, optional<int64_t>{5'000'000})};
+    expectEqual(invalidLagHeader[7], uint8_t{0x80}, "buildMpegTsVideoPesHeaderForTest should omit DTS when it lags far behind PTS");
+    expectEqual(invalidLagHeader[8], uint8_t{5}, "buildMpegTsVideoPesHeaderForTest should keep invalid DTS out of the PES header");
+
+    const auto reorderedHeader{buildVideoPesHeaderForTest(10'000'000, optional<int64_t>{8'000'000})};
+    expectEqual(reorderedHeader[7], uint8_t{0xC0}, "buildMpegTsVideoPesHeaderForTest should emit both PTS and DTS when the decode timestamp is plausible");
+    expectEqual(reorderedHeader[8], uint8_t{10}, "buildMpegTsVideoPesHeaderForTest should encode ten bytes of timestamp payload when DTS is preserved");
+}
+
 void testEditorHistoryUndoRedo(){
     llvc::Project project{};
     project.timelineDuration100ns(100'000'000);
@@ -904,10 +952,12 @@ int wmain(int argc, wchar_t* argv[]){
         {"ExportH264SampleNormalization", &testExportH264SampleNormalization},
         {"ExportH264ParameterSetExtraction", &testExportH264ParameterSetExtraction},
         {"ExportReaderSampleTimeResolution", &testExportReaderSampleTimeResolution},
-        {"MpegTsKeyframeClassification", &testMpegTsKeyframeClassification},
-        {"MpegTsBitstreamRapDetection", &testMpegTsBitstreamRapDetection},
-        {"MpegTsDecodeTimeInference", &testMpegTsDecodeTimeInference},
-        {"EditorHistoryUndoRedo", &testEditorHistoryUndoRedo},
+    {"MpegTsKeyframeClassification", &testMpegTsKeyframeClassification},
+    {"MpegTsBitstreamRapDetection", &testMpegTsBitstreamRapDetection},
+    {"MpegTsDecodeTimeInference", &testMpegTsDecodeTimeInference},
+    {"MpegTsDecodeTimeSanitization", &testMpegTsDecodeTimeSanitization},
+    {"MpegTsPesHeaderSanitization", &testMpegTsPesHeaderSanitization},
+    {"EditorHistoryUndoRedo", &testEditorHistoryUndoRedo},
         {"EditorHistoryClearsRedoAfterNewEdit", &testEditorHistoryClearsRedoAfterNewEdit},
         {"EditorHistorySnapshotGuards", &testEditorHistorySnapshotGuards},
         {"EditorCommands", &testEditorCommands},

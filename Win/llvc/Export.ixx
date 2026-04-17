@@ -68,6 +68,7 @@ vector<uint8_t> extractH264ParameterSetsAnnexBForMpegTs(const vector<uint8_t>& s
 int64_t resolveReaderSampleTime100ns(int64_t sampleTime100ns, int64_t readSampleTimestamp100ns);
 bool bitstreamLooksLikeRandomAccessPoint(const uint8_t* data, size_t size, const GUID& subtype, uint32_t nalLengthFieldSize, bool allowInconclusive);
 optional<int64_t> resolveMpegTsDecodeTime100ns(optional<int64_t>& nextInferredDecodeTime100ns, int64_t sampleDuration100ns, int64_t nominalVideoFrameDuration100ns);
+optional<int64_t> sanitizeMpegTsVideoDecodeTime100ns(optional<int64_t> decodeTime100ns, int64_t presentationTime100ns);
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaType(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex);
 com_ptr<IMFMediaType> chooseBestNativeVideoMediaTypeForSubtypes(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex, const vector<GUID>& allowedSubtypes);
 com_ptr<IMFMediaType> chooseFirstNativeVideoMediaTypeForSubtypes(const com_ptr<IMFSourceReader>& reader, DWORD streamIndex, const vector<GUID>& allowedSubtypes);
@@ -837,11 +838,7 @@ public:
             return;
         }
         writeTablesIfDue(pts100ns);
-        constexpr int64_t maxReasonableReorderDelay100ns{20'000'000};
-        optional<int64_t> trustedDts100ns{};
-        if(dts100ns.has_value() && *dts100ns > 0 && *dts100ns <= pts100ns && (pts100ns - *dts100ns) <= maxReasonableReorderDelay100ns){
-            trustedDts100ns = dts100ns;
-        }
+        const auto trustedDts100ns{sanitizeMpegTsVideoDecodeTime100ns(dts100ns, pts100ns)};
         writePes(kVideoPid, 0xE0, data, size, pts100ns, trustedDts100ns, true, m_videoContinuityCounter);
     }
 
@@ -1094,6 +1091,20 @@ optional<int64_t> resolveMpegTsDecodeTime100ns(optional<int64_t>& nextInferredDe
     const auto inferredDecodeTime100ns{max<int64_t>(0, nextInferredDecodeTime100ns.value_or(0))};
     nextInferredDecodeTime100ns = inferredDecodeTime100ns + decodeStep100ns;
     return inferredDecodeTime100ns;
+}
+
+optional<int64_t> sanitizeMpegTsVideoDecodeTime100ns(optional<int64_t> decodeTime100ns, int64_t presentationTime100ns){
+    constexpr int64_t maxReasonableReorderDelay100ns{20'000'000};
+    if(!decodeTime100ns.has_value() || *decodeTime100ns <= 0){
+        return nullopt;
+    }
+    if(*decodeTime100ns > presentationTime100ns){
+        return nullopt;
+    }
+    if((presentationTime100ns - *decodeTime100ns) > maxReasonableReorderDelay100ns){
+        return nullopt;
+    }
+    return decodeTime100ns;
 }
 
 KeyFrameCadenceInfo analyzeKeyFrameCadence(IMFSourceReader* reader, DWORD videoStreamIndex, uint32_t fpsNum, uint32_t fpsDen){
