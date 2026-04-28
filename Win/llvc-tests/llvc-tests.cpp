@@ -569,6 +569,48 @@ void testExportPreflightAndPlanSummary(){
     filesystem::remove(tempPath);
 }
 
+void testExportCutTimelineMapping(){
+    const vector<pair<int64_t, int64_t>> cutRanges{
+        {0, 100},
+        {300, 500},
+        {500, 600},
+        {900, 1'000},
+    };
+
+    const auto keepRanges{llvc::invertCutRanges100ns(cutRanges, 1'000)};
+    expectEqual(keepRanges, vector<pair<int64_t, int64_t>>{{100, 300}, {600, 900}}, "invertCutRanges100ns should produce keep ranges between normalized cuts");
+
+    expectEqual(llvc::removedDurationBefore(cutRanges, 0), int64_t{0}, "removedDurationBefore should report no removed duration at the start");
+    expectEqual(llvc::removedDurationBefore(cutRanges, 50), int64_t{50}, "removedDurationBefore should count partial removal inside the first cut");
+    expectEqual(llvc::removedDurationBefore(cutRanges, 100), int64_t{100}, "removedDurationBefore should include cuts ending exactly at the sample time");
+    expectEqual(llvc::removedDurationBefore(cutRanges, 250), int64_t{100}, "removedDurationBefore should not count kept timeline spans");
+    expectEqual(llvc::removedDurationBefore(cutRanges, 550), int64_t{350}, "removedDurationBefore should count partial removal inside a later cut");
+    expectEqual(llvc::removedDurationBefore(cutRanges, 1'000), int64_t{500}, "removedDurationBefore should count all removed duration at the end");
+
+    expectEqual(250 - llvc::removedDurationBefore(cutRanges, 250), int64_t{150}, "timeline mapping should preserve samples before later cuts");
+    expectEqual(700 - llvc::removedDurationBefore(cutRanges, 700), int64_t{300}, "timeline mapping should collapse removed spans before later samples");
+}
+
+void testExportAudioCrossfade(){
+    vector<float> firstSegment{1.0f, 1.0f, 1.0f, 1.0f};
+    const vector<float> secondSegment{0.0f, 0.0f, 2.0f, 2.0f};
+    llvc::appendCrossfadedAudioSegment(firstSegment, secondSegment, 2, 2);
+
+    expectEqual(firstSegment.size(), size_t{4}, "appendCrossfadedAudioSegment should overlap, not duplicate, faded frames");
+    expectNear(firstSegment[0], 1.0, 0.0001, "appendCrossfadedAudioSegment should keep the start of a two-frame equal-power fade on the first segment");
+    expectNear(firstSegment[1], 1.0, 0.0001, "appendCrossfadedAudioSegment should apply the fade to every channel");
+    expectNear(firstSegment[2], 2.0, 0.0001, "appendCrossfadedAudioSegment should end a two-frame equal-power fade on the second segment");
+    expectNear(firstSegment[3], 2.0, 0.0001, "appendCrossfadedAudioSegment should apply the fade-in to every channel");
+
+    vector<float> oneFrameFade{4.0f, 4.0f};
+    llvc::appendCrossfadedAudioSegment(oneFrameFade, vector<float>{7.0f, 8.0f, 9.0f, 10.0f}, 2, 1);
+    expectEqual(oneFrameFade, vector<float>{7.0f, 8.0f, 9.0f, 10.0f}, "appendCrossfadedAudioSegment should replace the overlapped frame for a one-frame fade and append the remainder");
+
+    vector<float> noFade{1.0f, 2.0f};
+    llvc::appendCrossfadedAudioSegment(noFade, vector<float>{3.0f, 4.0f}, 2, 0);
+    expectEqual(noFade, vector<float>{1.0f, 2.0f, 3.0f, 4.0f}, "appendCrossfadedAudioSegment should append directly when fade duration is zero");
+}
+
 void testExportH264SampleNormalization(){
     const vector<uint8_t> annexBWithLeadingBytes{0x47, 0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84};
     const auto normalizedAnnexB{llvc::normalizeH264SampleForMpegTs(annexBWithLeadingBytes.data(), annexBWithLeadingBytes.size(), 4)};
@@ -634,6 +676,17 @@ void testMpegTsBitstreamRapDetection(){
         0x00, 0x00, 0x00, 0x03, 0x06, 0x01, 0x80,
         0x00, 0x00, 0x00, 0x03, 0x61, 0x88, 0x84};
     expect(!llvc::bitstreamLooksLikeRandomAccessPoint(lengthPrefixedNonRapAccessUnit.data(), lengthPrefixedNonRapAccessUnit.size(), MFVideoFormat_H264, 4, false), "bitstreamLooksLikeRandomAccessPoint should reject non-IDR H.264 access units");
+
+    const vector<uint8_t> annexBHevcRapAccessUnit{
+        0x00, 0x00, 0x00, 0x01, 0x40, 0x01,
+        0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0x88, 0x84};
+    expect(llvc::bitstreamLooksLikeRandomAccessPoint(annexBHevcRapAccessUnit.data(), annexBHevcRapAccessUnit.size(), MFVideoFormat_HEVC, 0, false), "bitstreamLooksLikeRandomAccessPoint should recognize HEVC IDR access units as RAP");
+
+    const vector<uint8_t> inconclusiveAccessUnit{
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F,
+        0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x06};
+    expect(llvc::bitstreamLooksLikeRandomAccessPoint(inconclusiveAccessUnit.data(), inconclusiveAccessUnit.size(), MFVideoFormat_H264, 0, true), "bitstreamLooksLikeRandomAccessPoint should honor allowInconclusive when no slice NAL is present");
+    expect(!llvc::bitstreamLooksLikeRandomAccessPoint(inconclusiveAccessUnit.data(), inconclusiveAccessUnit.size(), MFVideoFormat_H264, 0, false), "bitstreamLooksLikeRandomAccessPoint should reject inconclusive access units when strict RAP proof is required");
 }
 
 void testMpegTsDecodeTimeInference(){
@@ -949,15 +1002,17 @@ int wmain(int argc, wchar_t* argv[]){
         {"ProjectEffectiveExportPreservesAlreadySafeTailCut", &testProjectEffectiveExportPreservesAlreadySafeTailCut},
         {"ProjectEstimateCoordinatorHelpers", &testProjectEstimateCoordinatorHelpers},
         {"ExportPreflightAndPlanSummary", &testExportPreflightAndPlanSummary},
+        {"ExportCutTimelineMapping", &testExportCutTimelineMapping},
+        {"ExportAudioCrossfade", &testExportAudioCrossfade},
         {"ExportH264SampleNormalization", &testExportH264SampleNormalization},
         {"ExportH264ParameterSetExtraction", &testExportH264ParameterSetExtraction},
         {"ExportReaderSampleTimeResolution", &testExportReaderSampleTimeResolution},
-    {"MpegTsKeyframeClassification", &testMpegTsKeyframeClassification},
-    {"MpegTsBitstreamRapDetection", &testMpegTsBitstreamRapDetection},
-    {"MpegTsDecodeTimeInference", &testMpegTsDecodeTimeInference},
-    {"MpegTsDecodeTimeSanitization", &testMpegTsDecodeTimeSanitization},
-    {"MpegTsPesHeaderSanitization", &testMpegTsPesHeaderSanitization},
-    {"EditorHistoryUndoRedo", &testEditorHistoryUndoRedo},
+        {"MpegTsKeyframeClassification", &testMpegTsKeyframeClassification},
+        {"MpegTsBitstreamRapDetection", &testMpegTsBitstreamRapDetection},
+        {"MpegTsDecodeTimeInference", &testMpegTsDecodeTimeInference},
+        {"MpegTsDecodeTimeSanitization", &testMpegTsDecodeTimeSanitization},
+        {"MpegTsPesHeaderSanitization", &testMpegTsPesHeaderSanitization},
+        {"EditorHistoryUndoRedo", &testEditorHistoryUndoRedo},
         {"EditorHistoryClearsRedoAfterNewEdit", &testEditorHistoryClearsRedoAfterNewEdit},
         {"EditorHistorySnapshotGuards", &testEditorHistorySnapshotGuards},
         {"EditorCommands", &testEditorCommands},
