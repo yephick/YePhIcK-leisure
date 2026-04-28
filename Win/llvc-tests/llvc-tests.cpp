@@ -7,6 +7,7 @@
 #endif
 #include <Windows.h>
 #include <mfapi.h>
+#include <mferror.h>
 #include <mfobjects.h>
 #include <winrt/base.h>
 
@@ -18,6 +19,7 @@ import llvc.EditorController;
 import llvc.EditorCommands;
 import llvc.Export;
 import llvc.VideoStream;
+import llvc.VideoContainer;
 import llvc.Media;
 
 using namespace std;
@@ -79,6 +81,19 @@ void expectNear(double actual, double expected, double tolerance, const string& 
     if(abs(actual - expected) > tolerance){
         throw TestFailure(message);
     }
+}
+
+template<typename Fn>
+void expectHresult(Fn&& fn, HRESULT expected, const string& message){
+    try{
+        fn();
+    }catch(const winrt::hresult_error& ex){
+        if(ex.code() != expected){
+            throw TestFailure(message + " (unexpected HRESULT)");
+        }
+        return;
+    }
+    throw TestFailure(message);
 }
 
 [[noreturn]] void fail(const string& message){
@@ -862,6 +877,53 @@ void testMpegTsPesHeaderSanitization(){
     expectEqual(reorderedHeader[8], uint8_t{10}, "buildMpegTsVideoPesHeaderForTest should encode ten bytes of timestamp payload when DTS is preserved");
 }
 
+void testVideoContainerWriterCodecGuards(){
+    llvc::MFLifetime mf{};
+
+    expectHresult(
+        []{
+            llvc::writeWebmVp9VideoSamplesForExport(nullptr, 0, L"", {}, MFVideoFormat_H264, 4, 0, 0, 0, 0, 0, 0, {}, {});
+        },
+        MF_E_INVALIDMEDIATYPE,
+        "writeWebmVp9VideoSamplesForExport should reject non-VP9 video before touching the reader");
+
+    expectHresult(
+        []{
+            llvc::writeMpegTsH264VideoSamplesForExport(nullptr, 0, L"", {}, MFVideoFormat_VP90, 0, nullptr, 0, nullptr, 0, nullptr, false, {}, {}, {});
+        },
+        MF_E_INVALIDMEDIATYPE,
+        "writeMpegTsH264VideoSamplesForExport should reject non-H.264 video before touching the reader");
+}
+
+void testVideoContainerDelegationCodecGuards(){
+    llvc::MFLifetime mf{};
+    auto vp9VideoType{makeVideoTypeWithSequenceHeader(MFVideoFormat_VP90, {})};
+    auto h264VideoType{makeVideoTypeWithSequenceHeader(MFVideoFormat_H264, {})};
+    const llvc::VideoContainerExportRequest request{
+        .sourcePath = L"",
+        .temporaryOutputPath = L"",
+        .effectiveCutRanges100ns = {},
+        .sourceDuration100ns = 0,
+        .outputDuration100ns = 0,
+        .keepAudio = false,
+        .allowAudio = false,
+    };
+
+    expectHresult(
+        [&]{
+            llvc::writeVideoContainerForExport(llvc::VideoContainerExportKind::WebmVp9, nullptr, 0, h264VideoType, MFVideoFormat_H264, 4, request);
+        },
+        MF_E_INVALIDMEDIATYPE,
+        "writeVideoContainerForExport should route WebM exports through the VP9 writer guard");
+
+    expectHresult(
+        [&]{
+            llvc::writeVideoContainerForExport(llvc::VideoContainerExportKind::MpegTs, nullptr, 0, vp9VideoType, MFVideoFormat_VP90, 0, request);
+        },
+        MF_E_INVALIDMEDIATYPE,
+        "writeVideoContainerForExport should route MPEG-TS exports through the H.264 writer guard");
+}
+
 void testEditorHistoryUndoRedo(){
     llvc::Project project{};
     project.timelineDuration100ns(100'000'000);
@@ -1131,6 +1193,8 @@ int wmain(int argc, wchar_t* argv[]){
         {"MpegTsDecodeTimeInference", &testMpegTsDecodeTimeInference},
         {"MpegTsDecodeTimeSanitization", &testMpegTsDecodeTimeSanitization},
         {"MpegTsPesHeaderSanitization", &testMpegTsPesHeaderSanitization},
+        {"VideoContainerWriterCodecGuards", &testVideoContainerWriterCodecGuards},
+        {"VideoContainerDelegationCodecGuards", &testVideoContainerDelegationCodecGuards},
         {"EditorHistoryUndoRedo", &testEditorHistoryUndoRedo},
         {"EditorHistoryClearsRedoAfterNewEdit", &testEditorHistoryClearsRedoAfterNewEdit},
         {"EditorHistorySnapshotGuards", &testEditorHistorySnapshotGuards},

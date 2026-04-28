@@ -62,7 +62,6 @@ wstring pickExportOutputPath(const std::filesystem::path& sourceFsPath, const ve
 void appendCrossfadedAudioSegment(vector<float>& mixedAudio, const vector<float>& segmentAudio, uint32_t audioChannels, size_t fadeFrames);
 void writePcmAudioFramesToWriter(IMFSinkWriter* writer, DWORD writerAudioStreamIndex, const vector<float>& audioFrames, uint32_t audioChannels, uint32_t audioSampleRate, uint64_t& writtenFrames);
 void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const vector<pair<int64_t, int64_t>>& keepRanges100ns, IMFSinkWriter* writer, DWORD writerAudioStreamIndex, uint32_t audioChannels, uint32_t audioSampleRate, int crossfadeMs, float gain, const function<void(double)>& progressCallback = {}, const function<bool()>& shouldCancel = {});
-VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, IMFSinkWriter* writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel = {});
 void applyExportFileMetadata(const std::wstring& sourcePath, const std::wstring& outputPath, const std::wstring& exportComment);
 
 }
@@ -717,129 +716,6 @@ void writeMixedAudioForKeepRanges(const com_ptr<IMFSourceReader>& audioReader, D
     if(progressCallback){
         progressCallback(100.0);
     }
-}
-
-VideoWriteStats writeVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, IMFSinkWriter* writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel){
-    auto waitingForCleanPoint{false};
-    auto markDiscontinuityOnNextWrittenSample{false};
-    auto dtsPtsShift100ns{static_cast<int64_t>(0)};
-    auto dtsPtsShiftInitialized{false};
-    int64_t lastInTime100ns{-1};
-    VideoWriteStats stats{};
-
-    if(progressCallback){
-        progressCallback(0.0);
-    }
-
-    for(;;){
-        if(shouldCancel && shouldCancel()){
-            throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
-        }
-        DWORD actualStream{};
-        DWORD flags{};
-        LONGLONG timestamp{};
-        com_ptr<IMFSample> sample;
-        const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
-        if(FAILED(hr)){
-            check_hresult(hr);
-        }
-        if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
-            break;
-        }
-        if(!sample){
-            continue;
-        }
-
-        ++stats.readSampleCount;
-
-        LONGLONG sampleTime100ns{};
-        if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
-            sampleTime100ns = timestamp;
-        }
-        const auto inTime100ns{max<int64_t>(0, sampleTime100ns)};
-        if(inTime100ns > lastInTime100ns){
-            lastInTime100ns = inTime100ns;
-        }
-
-        auto dropped{false};
-        for(const auto& [start, end] : effectiveCutRanges100ns){
-            if(inTime100ns < start){
-                break;
-            }
-            if(inTime100ns < end){
-                dropped = true;
-                break;
-            }
-        }
-        if(dropped){
-            ++stats.droppedByCutCount;
-            waitingForCleanPoint = true;
-            markDiscontinuityOnNextWrittenSample = true;
-            continue;
-        }
-
-        if(waitingForCleanPoint){
-            const auto isContainerSync{isContainerSyncSample(sample)};
-            const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
-            if(!(isContainerSync && isBitstreamRap)){
-                ++stats.droppedWaitingRapCount;
-                continue;
-            }
-            waitingForCleanPoint = false;
-        }
-
-        const auto outTimeRaw100ns{inTime100ns - removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
-        auto outTime100ns{outTimeRaw100ns};
-
-        UINT64 decodeTimestamp100ns{};
-        auto hasDecodeTimestamp{false};
-        if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
-            hasDecodeTimestamp = true;
-            const auto decodeTimeSigned{static_cast<int64_t>(decodeTimestamp100ns)};
-            const auto removedAtPresentationTime{removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
-            auto outDecodeTime100ns{decodeTimeSigned - removedAtPresentationTime};
-            if(!dtsPtsShiftInitialized){
-                dtsPtsShift100ns = max<int64_t>(0, -outDecodeTime100ns);
-                dtsPtsShiftInitialized = true;
-            }
-            outTime100ns += dtsPtsShift100ns;
-            outDecodeTime100ns += dtsPtsShift100ns;
-            check_hresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(max<int64_t>(0, outDecodeTime100ns))));
-        }
-
-        if(!dtsPtsShiftInitialized && !hasDecodeTimestamp){
-            dtsPtsShiftInitialized = true;
-        }
-
-        if(!hasDecodeTimestamp && dtsPtsShiftInitialized && dtsPtsShift100ns > 0){
-            outTime100ns += dtsPtsShift100ns;
-        }
-
-        check_hresult(sample->SetSampleTime(outTime100ns));
-
-        LONGLONG duration100ns{};
-        if(SUCCEEDED(sample->GetSampleDuration(&duration100ns)) && duration100ns > 0){
-            check_hresult(sample->SetSampleDuration(duration100ns));
-        }
-
-        if(markDiscontinuityOnNextWrittenSample){
-            check_hresult(sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE));
-            markDiscontinuityOnNextWrittenSample = false;
-        }
-
-        check_hresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
-        ++stats.writtenSampleCount;
-
-        if(progressCallback && sourceDuration100ns > 0 && (stats.readSampleCount % 24 == 0)) {
-            const auto pct{(100.0 * inTime100ns) / sourceDuration100ns};
-            progressCallback(pct);
-        }
-    }
-
-    if(progressCallback){
-        progressCallback(100.0);
-    }
-    return stats;
 }
 
 void applyExportFileMetadata(const std::wstring& sourcePath, const std::wstring& outputPath, const std::wstring& exportComment){

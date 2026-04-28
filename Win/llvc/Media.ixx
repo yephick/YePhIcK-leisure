@@ -897,177 +897,35 @@ void ProfileMedia::exportLossless(const ExportRequest& request) const{
     const auto nalLengthFieldSize{getNalLengthFieldSize(sourceVideoType, videoSubtype)};
     validateExportVideoType(sourceVideoType, videoSubtype);
 
-    uint32_t width{};
-    uint32_t height{};
-    uint32_t fpsNum{};
-    uint32_t fpsDen{};
-    (void)MFGetAttributeSize(sourceVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
-    (void)MFGetAttributeRatio(sourceVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
-
-    auto hasAudioForExport{false};
-    DWORD writerAudioStreamIndex{};
-    uint32_t audioChannels{};
-    uint32_t audioSampleRate{};
-    com_ptr<IMFMediaType> audioPcmType;
-    com_ptr<IMFMediaType> audioNativeType;
-    GUID audioSubtype{GUID_NULL};
-    DWORD audioStreamIndex{invalidStream};
-
-    if(m_profile.audioExportPolicy == AudioExportPolicy::Allowed && request.keepAudio){
-        com_ptr<IMFSourceReader> audioProbeReader;
-        check_hresult(MFCreateSourceReaderFromURL(m_sourcePath.c_str(), nullptr, audioProbeReader.put()));
-        for(DWORD streamIndex{};; ++streamIndex){
-            com_ptr<IMFMediaType> type;
-            const auto hr{audioProbeReader->GetNativeMediaType(streamIndex, 0, type.put())};
-            if(hr == MF_E_INVALIDSTREAMNUMBER){
-                break;
-            }
-            check_hresult(hr);
-            GUID major{GUID_NULL};
-            check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
-            if(major == MFMediaType_Audio){
-                check_hresult(type->GetGUID(MF_MT_SUBTYPE, &audioSubtype));
-                audioStreamIndex = streamIndex;
-                audioNativeType = type;
-                (void)type->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &audioChannels);
-                (void)type->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &audioSampleRate);
-                if(audioChannels == 0){ audioChannels = 2; }
-                if(audioSampleRate == 0){ audioSampleRate = 48000; }
-                audioPcmType = createPcmFloatAudioType(audioSampleRate, audioChannels);
-                hasAudioForExport = true;
-                break;
-            }
+    const auto exportKind{[&]{
+        switch(m_profile.id){
+        case SourceFormatId::Webm: return VideoContainerExportKind::WebmVp9;
+        case SourceFormatId::MpegTs: return VideoContainerExportKind::MpegTs;
+        case SourceFormatId::Wmv: return VideoContainerExportKind::Wmv;
+        default: return VideoContainerExportKind::MediaFoundation;
         }
-    }
+    }()};
 
-    if(m_profile.id == SourceFormatId::Webm){
-        if(request.keepAudio && hasAudioForExport){
-            throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WebM export currently keeps VP9 video only; disable audio first.");
-        }
-        (void)writeWebmVp9VideoSamplesForExport(reader, videoStreamIndex, request.temporaryOutputPath, request.effectiveCutRanges100ns, videoSubtype, nalLengthFieldSize, request.sourceDuration100ns, request.outputDuration100ns, width, height, fpsNum, fpsDen, request.onVideoProgress, request.shouldCancel);
-        return;
-    }
-
-    if(m_profile.id == SourceFormatId::MpegTs){
-        struct TemporaryFileCleanup final{
-            wstring path{};
-            ~TemporaryFileCleanup(){
-                if(!path.empty()){
-                    std::error_code ec;
-                    filesystem::remove(path, ec);
-                }
-            }
-        } audioTempCleanup{};
-
-        com_ptr<IMFSourceReader> audioReader;
-        auto tsAudioStreamIndex{audioStreamIndex};
-        auto tsAudioType{audioNativeType};
-        auto audioWasRenderedToTemp{false};
-
-        if(request.keepAudio && hasAudioForExport){
-            const auto canPassThroughAudio{audioSubtype == MFAudioFormat_AAC && request.audioCrossfadeMs == 0 && request.audioVolumePct == 100};
-            if(canPassThroughAudio){
-                check_hresult(MFCreateSourceReaderFromURL(m_sourcePath.c_str(), nullptr, audioReader.put()));
-                check_hresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
-                check_hresult(audioReader->SetStreamSelection(tsAudioStreamIndex, TRUE));
-                check_hresult(audioReader->SetCurrentMediaType(tsAudioStreamIndex, nullptr, tsAudioType.get()));
-            }else{
-                const filesystem::path audioTempPath{request.temporaryOutputPath + L".audio.mp4"};
-                audioTempCleanup.path = audioTempPath.wstring();
-
-                {
-                    MediaFoundationSinkWriter audioWriter{audioTempCleanup.path};
-                    DWORD renderedAudioStreamIndex{};
-                    const auto aacOutputType{createAacOutputType(audioSampleRate, audioChannels)};
-                    check_hresult(audioWriter.addStream(aacOutputType, audioPcmType, renderedAudioStreamIndex));
-                    audioWriter.beginWriting();
-
-                    com_ptr<IMFSourceReader> pcmAudioReader;
-                    check_hresult(MFCreateSourceReaderFromURL(m_sourcePath.c_str(), nullptr, pcmAudioReader.put()));
-                    check_hresult(pcmAudioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
-                    check_hresult(pcmAudioReader->SetStreamSelection(audioStreamIndex, TRUE));
-                    check_hresult(pcmAudioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
-                    const auto keepRanges100ns{invertCutRanges100ns(request.effectiveCutRanges100ns, request.sourceDuration100ns)};
-                    writeMixedAudioForKeepRanges(pcmAudioReader, audioStreamIndex, keepRanges100ns, audioWriter.writer(), renderedAudioStreamIndex, audioChannels, audioSampleRate, request.audioCrossfadeMs, request.audioVolumePct / 100.0f, request.onAudioProgress, request.shouldCancel);
-                    audioWriter.finalize();
-                }
-
-                check_hresult(MFCreateSourceReaderFromURL(audioTempCleanup.path.c_str(), nullptr, audioReader.put()));
-                tsAudioStreamIndex = invalidStream;
-                tsAudioType = nullptr;
-                for(DWORD streamIndex{};; ++streamIndex){
-                    com_ptr<IMFMediaType> type;
-                    const auto hr{audioReader->GetNativeMediaType(streamIndex, 0, type.put())};
-                    if(hr == MF_E_INVALIDSTREAMNUMBER){
-                        break;
-                    }
-                    check_hresult(hr);
-                    GUID major{GUID_NULL};
-                    check_hresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
-                    if(major == MFMediaType_Audio){
-                        tsAudioStreamIndex = streamIndex;
-                        tsAudioType = type;
-                        break;
-                    }
-                }
-                if(tsAudioStreamIndex == invalidStream || !tsAudioType){
-                    throw hresult_error(MF_E_INVALIDMEDIATYPE, L"Could not read re-encoded MPEG-TS audio");
-                }
-                check_hresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
-                check_hresult(audioReader->SetStreamSelection(tsAudioStreamIndex, TRUE));
-                check_hresult(audioReader->SetCurrentMediaType(tsAudioStreamIndex, nullptr, tsAudioType.get()));
-                audioWasRenderedToTemp = true;
-            }
-        }
-        (void)writeMpegTsH264VideoSamplesForExport(reader, videoStreamIndex, request.temporaryOutputPath, request.effectiveCutRanges100ns, videoSubtype, nalLengthFieldSize, sourceVideoType, request.sourceDuration100ns, audioReader, tsAudioStreamIndex, tsAudioType, request.keepAudio && hasAudioForExport, request.onVideoProgress, audioWasRenderedToTemp ? function<void(double)>{} : request.onAudioProgress, request.shouldCancel);
-        return;
-    }
-
-    if(m_profile.id == SourceFormatId::Wmv && request.keepAudio && hasAudioForExport){
-        throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WMV export currently keeps VC-1 video only; disable audio first.");
-    }
-
-    MediaFoundationSinkWriter writer{request.temporaryOutputPath};
-    DWORD writerVideoStreamIndex{};
-    auto configureWriter = [&]() -> HRESULT{
-        writerVideoStreamIndex = 0;
-        writerAudioStreamIndex = 0;
-        check_hresult(writer.addStream(sourceVideoType, sourceVideoType, writerVideoStreamIndex));
-        if(!hasAudioForExport){
-            return S_OK;
-        }
-        const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
-        return writer.addStream(aacType, audioPcmType, writerAudioStreamIndex);
-    };
-
-    const auto writerConfigHr{configureWriter()};
-    if(FAILED(writerConfigHr)){
-        if(m_profile.id == SourceFormatId::Avi){
-            throw hresult_error(writerConfigHr, L"System cannot mux H.264 into MP4 via Media Foundation.");
-        }
-        if(m_profile.id == SourceFormatId::Wmv){
-            throw hresult_error(writerConfigHr, L"System cannot mux VC-1 into WMV via Media Foundation on this machine.");
-        }
-        check_hresult(writerConfigHr);
-    }
-
-    writer.beginWriting();
-    (void)writeVideoSamplesForExport(reader, videoStreamIndex, writer.writer(), writerVideoStreamIndex, request.effectiveCutRanges100ns, videoSubtype, nalLengthFieldSize, request.sourceDuration100ns, request.onVideoProgress, request.shouldCancel);
-
-    if(hasAudioForExport && audioStreamIndex != invalidStream){
-        com_ptr<IMFSourceReader> audioReader;
-        check_hresult(MFCreateSourceReaderFromURL(m_sourcePath.c_str(), nullptr, audioReader.put()));
-        check_hresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
-        check_hresult(audioReader->SetStreamSelection(audioStreamIndex, TRUE));
-        check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
-        const auto keepRanges100ns{invertCutRanges100ns(request.effectiveCutRanges100ns, request.sourceDuration100ns)};
-        writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer.writer(), writerAudioStreamIndex, audioChannels, audioSampleRate, request.audioCrossfadeMs, request.audioVolumePct / 100.0f, request.onAudioProgress, request.shouldCancel);
-    }
-
-    if(request.shouldCancel && request.shouldCancel()){
-        throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
-    }
-    writer.finalize();
+    writeVideoContainerForExport(
+        exportKind,
+        reader,
+        videoStreamIndex,
+        sourceVideoType,
+        videoSubtype,
+        nalLengthFieldSize,
+        VideoContainerExportRequest{
+            .sourcePath = m_sourcePath,
+            .temporaryOutputPath = request.temporaryOutputPath,
+            .effectiveCutRanges100ns = request.effectiveCutRanges100ns,
+            .sourceDuration100ns = request.sourceDuration100ns,
+            .outputDuration100ns = request.outputDuration100ns,
+            .keepAudio = request.keepAudio,
+            .allowAudio = m_profile.audioExportPolicy == AudioExportPolicy::Allowed,
+            .audioCrossfadeMs = request.audioCrossfadeMs,
+            .audioVolumePct = request.audioVolumePct,
+            .onVideoProgress = request.onVideoProgress,
+            .onAudioProgress = request.onAudioProgress,
+            .shouldCancel = request.shouldCancel});
 }
 
 class Mp4Media final : public ProfileMedia{

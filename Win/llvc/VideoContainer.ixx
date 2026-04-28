@@ -24,6 +24,7 @@ module;
 export module llvc.VideoContainer;
 
 import std;
+import llvc.Export;
 import llvc.VideoStream;
 import llvc.Utils;
 
@@ -48,8 +49,32 @@ private:
     IMFSinkWriter* m_writer{};
 };
 
+enum class VideoContainerExportKind : uint8_t{
+    MediaFoundation,
+    WebmVp9,
+    MpegTs,
+    Wmv
+};
+
+struct VideoContainerExportRequest final{
+    wstring sourcePath{};
+    wstring temporaryOutputPath{};
+    vector<pair<int64_t, int64_t>> effectiveCutRanges100ns{};
+    int64_t sourceDuration100ns{};
+    int64_t outputDuration100ns{};
+    bool keepAudio{};
+    bool allowAudio{};
+    int audioCrossfadeMs{};
+    int audioVolumePct{100};
+    function<void(double)> onVideoProgress{};
+    function<void(double)> onAudioProgress{};
+    function<bool()> shouldCancel{};
+};
+
 VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, int64_t outputDuration100ns, uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel);
 VideoWriteStats writeMpegTsH264VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, const com_ptr<IMFMediaType>& videoMediaType, int64_t sourceDuration100ns, const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const com_ptr<IMFMediaType>& audioMediaType, bool keepAudio, const function<void(double)>& progressCallback, const function<void(double)>& audioProgressCallback, const function<bool()>& shouldCancel);
+VideoWriteStats writeMediaFoundationVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, IMFSinkWriter* writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel);
+void writeVideoContainerForExport(VideoContainerExportKind exportKind, const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFMediaType>& sourceVideoType, GUID videoSubtype, uint32_t nalLengthFieldSize, const VideoContainerExportRequest& request);
 
 }
 
@@ -863,15 +888,11 @@ private:
     uint8_t m_audioContinuityCounter{};
     uint8_t m_videoContinuityCounter{};
 };
-VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, int64_t outputDuration100ns, uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel){
-    if(videoSubtype != MFVideoFormat_VP90){
-        throwHresult(MF_E_INVALIDMEDIATYPE, L"WebM stream-copy export currently requires VP9 video");
-    }
 
+VideoWriteStats processVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(const com_ptr<IMFSample>&, int64_t, int64_t, bool)>& writeSample, const function<void()>& onDroppedByCut, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel){
     auto waitingForCleanPoint{false};
     int64_t lastInTime100ns{-1};
     VideoWriteStats stats{};
-    WebmVp9Writer writer(outputPath, outputDuration100ns, width, height, fpsNum, fpsDen);
 
     if(progressCallback){
         progressCallback(0.0);
@@ -921,13 +942,17 @@ VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>
         if(dropped){
             ++stats.droppedByCutCount;
             waitingForCleanPoint = true;
+            if(onDroppedByCut){
+                onDroppedByCut();
+            }
             continue;
         }
 
+        const auto isContainerSync{isContainerSyncSample(sample)};
+        const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
+        const auto keyframe{isContainerSync && isBitstreamRap};
         if(waitingForCleanPoint){
-            const auto isContainerSync{isContainerSyncSample(sample)};
-            const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
-            if(!(isContainerSync && isBitstreamRap)){
+            if(!keyframe){
                 ++stats.droppedWaitingRapCount;
                 continue;
             }
@@ -935,18 +960,7 @@ VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>
         }
 
         const auto outTime100ns{inTime100ns - removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
-        const auto keyframe{isContainerSyncSample(sample) && isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
-
-        com_ptr<IMFMediaBuffer> contiguousBuffer;
-        checkHresult(sample->ConvertToContiguousBuffer(contiguousBuffer.put()));
-
-        BYTE* data{};
-        DWORD maxLength{};
-        DWORD currentLength{};
-        checkHresult(contiguousBuffer->Lock(&data, &maxLength, &currentLength));
-        writer.writeSample(data, currentLength, outTime100ns, keyframe);
-        checkHresult(contiguousBuffer->Unlock());
-
+        writeSample(sample, inTime100ns, outTime100ns, keyframe);
         ++stats.writtenSampleCount;
 
         if(progressCallback && sourceDuration100ns > 0 && (stats.readSampleCount % 24 == 0)){
@@ -955,11 +969,102 @@ VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>
         }
     }
 
-    writer.finalize();
-
     if(progressCallback){
         progressCallback(100.0);
     }
+    return stats;
+}
+
+VideoWriteStats writeMediaFoundationVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, IMFSinkWriter* writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel){
+    auto markDiscontinuityOnNextWrittenSample{false};
+    auto dtsPtsShift100ns{static_cast<int64_t>(0)};
+    auto dtsPtsShiftInitialized{false};
+
+    return processVideoSamplesForExport(
+        reader,
+        videoStreamIndex,
+        effectiveCutRanges100ns,
+        videoSubtype,
+        nalLengthFieldSize,
+        sourceDuration100ns,
+        [&](const com_ptr<IMFSample>& sample, int64_t inTime100ns, int64_t outTimeRaw100ns, bool){
+            auto outTime100ns{outTimeRaw100ns};
+
+            UINT64 decodeTimestamp100ns{};
+            auto hasDecodeTimestamp{false};
+            if(SUCCEEDED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &decodeTimestamp100ns))){
+                hasDecodeTimestamp = true;
+                const auto decodeTimeSigned{static_cast<int64_t>(decodeTimestamp100ns)};
+                const auto removedAtPresentationTime{inTime100ns - outTimeRaw100ns};
+                auto outDecodeTime100ns{decodeTimeSigned - removedAtPresentationTime};
+                if(!dtsPtsShiftInitialized){
+                    dtsPtsShift100ns = max<int64_t>(0, -outDecodeTime100ns);
+                    dtsPtsShiftInitialized = true;
+                }
+                outTime100ns += dtsPtsShift100ns;
+                outDecodeTime100ns += dtsPtsShift100ns;
+                checkHresult(sample->SetUINT64(MFSampleExtension_DecodeTimestamp, static_cast<UINT64>(max<int64_t>(0, outDecodeTime100ns))));
+            }
+
+            if(!dtsPtsShiftInitialized && !hasDecodeTimestamp){
+                dtsPtsShiftInitialized = true;
+            }
+
+            if(!hasDecodeTimestamp && dtsPtsShiftInitialized && dtsPtsShift100ns > 0){
+                outTime100ns += dtsPtsShift100ns;
+            }
+
+            checkHresult(sample->SetSampleTime(outTime100ns));
+
+            LONGLONG duration100ns{};
+            if(SUCCEEDED(sample->GetSampleDuration(&duration100ns)) && duration100ns > 0){
+                checkHresult(sample->SetSampleDuration(duration100ns));
+            }
+
+            if(markDiscontinuityOnNextWrittenSample){
+                checkHresult(sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE));
+                markDiscontinuityOnNextWrittenSample = false;
+            }
+
+            checkHresult(writer->WriteSample(writerVideoStreamIndex, sample.get()));
+        },
+        [&](){
+            markDiscontinuityOnNextWrittenSample = true;
+        },
+        progressCallback,
+        shouldCancel);
+}
+
+VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, int64_t outputDuration100ns, uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel){
+    if(videoSubtype != MFVideoFormat_VP90){
+        throwHresult(MF_E_INVALIDMEDIATYPE, L"WebM stream-copy export currently requires VP9 video");
+    }
+
+    WebmVp9Writer writer(outputPath, outputDuration100ns, width, height, fpsNum, fpsDen);
+
+    auto stats{processVideoSamplesForExport(
+        reader,
+        videoStreamIndex,
+        effectiveCutRanges100ns,
+        videoSubtype,
+        nalLengthFieldSize,
+        sourceDuration100ns,
+        [&](const com_ptr<IMFSample>& sample, int64_t, int64_t outTime100ns, bool keyframe){
+            com_ptr<IMFMediaBuffer> contiguousBuffer;
+            checkHresult(sample->ConvertToContiguousBuffer(contiguousBuffer.put()));
+
+            BYTE* data{};
+            DWORD maxLength{};
+            DWORD currentLength{};
+            checkHresult(contiguousBuffer->Lock(&data, &maxLength, &currentLength));
+            writer.writeSample(data, currentLength, outTime100ns, keyframe);
+            checkHresult(contiguousBuffer->Unlock());
+        },
+        {},
+        progressCallback,
+        shouldCancel)};
+
+    writer.finalize();
     return stats;
 }
 
@@ -1326,5 +1431,180 @@ VideoWriteStats writeMpegTsH264VideoSamplesForExport(const com_ptr<IMFSourceRead
     return stats;
 }
 
+void writeVideoContainerForExport(VideoContainerExportKind exportKind, const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFMediaType>& sourceVideoType, GUID videoSubtype, uint32_t nalLengthFieldSize, const VideoContainerExportRequest& request){
+    uint32_t width{};
+    uint32_t height{};
+    uint32_t fpsNum{};
+    uint32_t fpsDen{};
+    (void)MFGetAttributeSize(sourceVideoType.get(), MF_MT_FRAME_SIZE, &width, &height);
+    (void)MFGetAttributeRatio(sourceVideoType.get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
+
+    constexpr auto invalidStream{(numeric_limits<DWORD>::max)()};
+    auto hasAudioForExport{false};
+    DWORD writerAudioStreamIndex{};
+    uint32_t audioChannels{};
+    uint32_t audioSampleRate{};
+    com_ptr<IMFMediaType> audioPcmType;
+    com_ptr<IMFMediaType> audioNativeType;
+    GUID audioSubtype{GUID_NULL};
+    DWORD audioStreamIndex{invalidStream};
+
+    if(request.allowAudio && request.keepAudio){
+        com_ptr<IMFSourceReader> audioProbeReader;
+        checkHresult(MFCreateSourceReaderFromURL(request.sourcePath.c_str(), nullptr, audioProbeReader.put()));
+        for(DWORD streamIndex{};; ++streamIndex){
+            com_ptr<IMFMediaType> type;
+            const auto hr{audioProbeReader->GetNativeMediaType(streamIndex, 0, type.put())};
+            if(hr == MF_E_INVALIDSTREAMNUMBER){
+                break;
+            }
+            checkHresult(hr);
+            GUID major{GUID_NULL};
+            checkHresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+            if(major == MFMediaType_Audio){
+                checkHresult(type->GetGUID(MF_MT_SUBTYPE, &audioSubtype));
+                audioStreamIndex = streamIndex;
+                audioNativeType = type;
+                (void)type->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &audioChannels);
+                (void)type->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &audioSampleRate);
+                if(audioChannels == 0){ audioChannels = 2; }
+                if(audioSampleRate == 0){ audioSampleRate = 48000; }
+                audioPcmType = createPcmFloatAudioType(audioSampleRate, audioChannels);
+                hasAudioForExport = true;
+                break;
+            }
+        }
+    }
+
+    if(exportKind == VideoContainerExportKind::WebmVp9){
+        if(request.keepAudio && hasAudioForExport){
+            throwHresult(MF_E_INVALIDMEDIATYPE, L"WebM export currently keeps VP9 video only; disable audio first.");
+        }
+        (void)writeWebmVp9VideoSamplesForExport(reader, videoStreamIndex, request.temporaryOutputPath, request.effectiveCutRanges100ns, videoSubtype, nalLengthFieldSize, request.sourceDuration100ns, request.outputDuration100ns, width, height, fpsNum, fpsDen, request.onVideoProgress, request.shouldCancel);
+        return;
+    }
+
+    if(exportKind == VideoContainerExportKind::MpegTs){
+        struct TemporaryFileCleanup final{
+            wstring path{};
+            ~TemporaryFileCleanup(){
+                if(!path.empty()){
+                    std::error_code ec;
+                    filesystem::remove(path, ec);
+                }
+            }
+        } audioTempCleanup{};
+
+        com_ptr<IMFSourceReader> audioReader;
+        auto tsAudioStreamIndex{audioStreamIndex};
+        auto tsAudioType{audioNativeType};
+        auto audioWasRenderedToTemp{false};
+
+        if(request.keepAudio && hasAudioForExport){
+            const auto canPassThroughAudio{audioSubtype == MFAudioFormat_AAC && request.audioCrossfadeMs == 0 && request.audioVolumePct == 100};
+            if(canPassThroughAudio){
+                checkHresult(MFCreateSourceReaderFromURL(request.sourcePath.c_str(), nullptr, audioReader.put()));
+                checkHresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+                checkHresult(audioReader->SetStreamSelection(tsAudioStreamIndex, TRUE));
+                checkHresult(audioReader->SetCurrentMediaType(tsAudioStreamIndex, nullptr, tsAudioType.get()));
+            }else{
+                const filesystem::path audioTempPath{request.temporaryOutputPath + L".audio.mp4"};
+                audioTempCleanup.path = audioTempPath.wstring();
+
+                {
+                    MediaFoundationSinkWriter audioWriter{audioTempCleanup.path};
+                    DWORD renderedAudioStreamIndex{};
+                    const auto aacOutputType{createAacOutputType(audioSampleRate, audioChannels)};
+                    checkHresult(audioWriter.addStream(aacOutputType, audioPcmType, renderedAudioStreamIndex));
+                    audioWriter.beginWriting();
+
+                    com_ptr<IMFSourceReader> pcmAudioReader;
+                    checkHresult(MFCreateSourceReaderFromURL(request.sourcePath.c_str(), nullptr, pcmAudioReader.put()));
+                    checkHresult(pcmAudioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+                    checkHresult(pcmAudioReader->SetStreamSelection(audioStreamIndex, TRUE));
+                    checkHresult(pcmAudioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
+                    const auto keepRanges100ns{invertCutRanges100ns(request.effectiveCutRanges100ns, request.sourceDuration100ns)};
+                    writeMixedAudioForKeepRanges(pcmAudioReader, audioStreamIndex, keepRanges100ns, audioWriter.writer(), renderedAudioStreamIndex, audioChannels, audioSampleRate, request.audioCrossfadeMs, request.audioVolumePct / 100.0f, request.onAudioProgress, request.shouldCancel);
+                    audioWriter.finalize();
+                }
+
+                checkHresult(MFCreateSourceReaderFromURL(audioTempCleanup.path.c_str(), nullptr, audioReader.put()));
+                tsAudioStreamIndex = invalidStream;
+                tsAudioType = nullptr;
+                for(DWORD streamIndex{};; ++streamIndex){
+                    com_ptr<IMFMediaType> type;
+                    const auto hr{audioReader->GetNativeMediaType(streamIndex, 0, type.put())};
+                    if(hr == MF_E_INVALIDSTREAMNUMBER){
+                        break;
+                    }
+                    checkHresult(hr);
+                    GUID major{GUID_NULL};
+                    checkHresult(type->GetGUID(MF_MT_MAJOR_TYPE, &major));
+                    if(major == MFMediaType_Audio){
+                        tsAudioStreamIndex = streamIndex;
+                        tsAudioType = type;
+                        break;
+                    }
+                }
+                if(tsAudioStreamIndex == invalidStream || !tsAudioType){
+                    throwHresult(MF_E_INVALIDMEDIATYPE, L"Could not read re-encoded MPEG-TS audio");
+                }
+                checkHresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+                checkHresult(audioReader->SetStreamSelection(tsAudioStreamIndex, TRUE));
+                checkHresult(audioReader->SetCurrentMediaType(tsAudioStreamIndex, nullptr, tsAudioType.get()));
+                audioWasRenderedToTemp = true;
+            }
+        }
+
+        (void)writeMpegTsH264VideoSamplesForExport(reader, videoStreamIndex, request.temporaryOutputPath, request.effectiveCutRanges100ns, videoSubtype, nalLengthFieldSize, sourceVideoType, request.sourceDuration100ns, audioReader, tsAudioStreamIndex, tsAudioType, request.keepAudio && hasAudioForExport, request.onVideoProgress, audioWasRenderedToTemp ? function<void(double)>{} : request.onAudioProgress, request.shouldCancel);
+        return;
+    }
+
+    if(exportKind == VideoContainerExportKind::Wmv && request.keepAudio && hasAudioForExport){
+        throwHresult(MF_E_INVALIDMEDIATYPE, L"WMV export currently keeps VC-1 video only; disable audio first.");
+    }
+
+    MediaFoundationSinkWriter writer{request.temporaryOutputPath};
+    DWORD writerVideoStreamIndex{};
+    auto configureWriter = [&]() -> HRESULT{
+        writerVideoStreamIndex = 0;
+        writerAudioStreamIndex = 0;
+        checkHresult(writer.addStream(sourceVideoType, sourceVideoType, writerVideoStreamIndex));
+        if(!hasAudioForExport){
+            return S_OK;
+        }
+        const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
+        return writer.addStream(aacType, audioPcmType, writerAudioStreamIndex);
+    };
+
+    const auto writerConfigHr{configureWriter()};
+    if(FAILED(writerConfigHr)){
+        if(exportKind == VideoContainerExportKind::MediaFoundation){
+            throwHresult(writerConfigHr, L"System cannot mux H.264 into MP4 via Media Foundation.");
+        }
+        if(exportKind == VideoContainerExportKind::Wmv){
+            throwHresult(writerConfigHr, L"System cannot mux VC-1 into WMV via Media Foundation on this machine.");
+        }
+        checkHresult(writerConfigHr);
+    }
+
+    writer.beginWriting();
+    (void)writeMediaFoundationVideoSamplesForExport(reader, videoStreamIndex, writer.writer(), writerVideoStreamIndex, request.effectiveCutRanges100ns, videoSubtype, nalLengthFieldSize, request.sourceDuration100ns, request.onVideoProgress, request.shouldCancel);
+
+    if(hasAudioForExport && audioStreamIndex != invalidStream){
+        com_ptr<IMFSourceReader> audioReader;
+        checkHresult(MFCreateSourceReaderFromURL(request.sourcePath.c_str(), nullptr, audioReader.put()));
+        checkHresult(audioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+        checkHresult(audioReader->SetStreamSelection(audioStreamIndex, TRUE));
+        checkHresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
+        const auto keepRanges100ns{invertCutRanges100ns(request.effectiveCutRanges100ns, request.sourceDuration100ns)};
+        writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer.writer(), writerAudioStreamIndex, audioChannels, audioSampleRate, request.audioCrossfadeMs, request.audioVolumePct / 100.0f, request.onAudioProgress, request.shouldCancel);
+    }
+
+    if(request.shouldCancel && request.shouldCancel()){
+        throwHresult(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+    }
+    writer.finalize();
+}
 
 }
