@@ -23,6 +23,9 @@ wstring formatFileSize(uint64_t bytes);
 wstring formatRatio(uint32_t num, uint32_t den, const wstring& suffix);
 wstring joinRecentItems(const vector<winrt::hstring>& values);
 vector<winrt::hstring> splitRecentItems(const wstring& source);
+void checkHresult(HRESULT hr);
+[[noreturn]] void throwHresult(HRESULT hr, const wchar_t* message);
+[[noreturn]] void throwHresult(HRESULT hr, const winrt::hstring& message);
 
 struct WindowPlacementState final{
     int32_t left{};
@@ -189,6 +192,18 @@ vector<winrt::hstring> splitRecentItems(const wstring& source){
         start = pos + 1;
     }
     return items;
+}
+
+void checkHresult(HRESULT hr){
+    winrt::check_hresult(hr);
+}
+
+[[noreturn]] void throwHresult(HRESULT hr, const wchar_t* message){
+    throw winrt::hresult_error{hr, message};
+}
+
+[[noreturn]] void throwHresult(HRESULT hr, const winrt::hstring& message){
+    throw winrt::hresult_error{hr, message};
 }
 
 wstring trim(wstring value){

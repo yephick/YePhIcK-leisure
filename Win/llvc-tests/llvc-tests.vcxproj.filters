@@ -28,6 +28,12 @@
     <ClCompile Include="..\llvc\VideoStream.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\llvc\VideoContainer.ixx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\llvc\VideoContainer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natvis" />

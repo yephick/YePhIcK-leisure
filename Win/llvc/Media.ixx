@@ -25,6 +25,7 @@ export module llvc.Media;
 import std;
 import llvc.Export;
 import llvc.Utils;
+import llvc.VideoContainer;
 import llvc.VideoStream;
 
 export namespace llvc{
@@ -331,16 +332,9 @@ bool probeMediaFoundationVideoSinkSupport(const com_ptr<IMFMediaType>& sourceVid
     };
 
     try{
-        com_ptr<IMFAttributes> writerAttributes;
-        check_hresult(MFCreateAttributes(writerAttributes.put(), 1));
-        check_hresult(writerAttributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
-
-        com_ptr<IMFSinkWriter> writer;
-        check_hresult(MFCreateSinkWriterFromURL(probeOutputPath.c_str(), nullptr, writerAttributes.get(), writer.put()));
-
+        MediaFoundationSinkWriter writer{probeOutputPath};
         DWORD writerVideoStreamIndex{};
-        check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
-        check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
+        check_hresult(writer.addStream(sourceVideoType, sourceVideoType, writerVideoStreamIndex));
         cleanupProbeOutput();
         return true;
     }catch(...){
@@ -981,27 +975,22 @@ void ProfileMedia::exportLossless(const ExportRequest& request) const{
                 const filesystem::path audioTempPath{request.temporaryOutputPath + L".audio.mp4"};
                 audioTempCleanup.path = audioTempPath.wstring();
 
-                com_ptr<IMFSinkWriter> audioWriter;
-                DWORD renderedAudioStreamIndex{};
-                com_ptr<IMFAttributes> writerAttributes;
-                check_hresult(MFCreateAttributes(writerAttributes.put(), 1));
-                check_hresult(writerAttributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
-                check_hresult(MFCreateSinkWriterFromURL(audioTempCleanup.path.c_str(), nullptr, writerAttributes.get(), audioWriter.put()));
-                const auto aacOutputType{createAacOutputType(audioSampleRate, audioChannels)};
-                check_hresult(audioWriter->AddStream(aacOutputType.get(), &renderedAudioStreamIndex));
-                check_hresult(audioWriter->SetInputMediaType(renderedAudioStreamIndex, audioPcmType.get(), nullptr));
-                check_hresult(audioWriter->BeginWriting());
+                {
+                    MediaFoundationSinkWriter audioWriter{audioTempCleanup.path};
+                    DWORD renderedAudioStreamIndex{};
+                    const auto aacOutputType{createAacOutputType(audioSampleRate, audioChannels)};
+                    check_hresult(audioWriter.addStream(aacOutputType, audioPcmType, renderedAudioStreamIndex));
+                    audioWriter.beginWriting();
 
-                com_ptr<IMFSourceReader> pcmAudioReader;
-                check_hresult(MFCreateSourceReaderFromURL(m_sourcePath.c_str(), nullptr, pcmAudioReader.put()));
-                check_hresult(pcmAudioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
-                check_hresult(pcmAudioReader->SetStreamSelection(audioStreamIndex, TRUE));
-                check_hresult(pcmAudioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
-                const auto keepRanges100ns{invertCutRanges100ns(request.effectiveCutRanges100ns, request.sourceDuration100ns)};
-                writeMixedAudioForKeepRanges(pcmAudioReader, audioStreamIndex, keepRanges100ns, audioWriter, renderedAudioStreamIndex, audioChannels, audioSampleRate, request.audioCrossfadeMs, request.audioVolumePct / 100.0f, request.onAudioProgress, request.shouldCancel);
-                check_hresult(audioWriter->Finalize());
-                audioWriter = nullptr;
-                pcmAudioReader = nullptr;
+                    com_ptr<IMFSourceReader> pcmAudioReader;
+                    check_hresult(MFCreateSourceReaderFromURL(m_sourcePath.c_str(), nullptr, pcmAudioReader.put()));
+                    check_hresult(pcmAudioReader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+                    check_hresult(pcmAudioReader->SetStreamSelection(audioStreamIndex, TRUE));
+                    check_hresult(pcmAudioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
+                    const auto keepRanges100ns{invertCutRanges100ns(request.effectiveCutRanges100ns, request.sourceDuration100ns)};
+                    writeMixedAudioForKeepRanges(pcmAudioReader, audioStreamIndex, keepRanges100ns, audioWriter.writer(), renderedAudioStreamIndex, audioChannels, audioSampleRate, request.audioCrossfadeMs, request.audioVolumePct / 100.0f, request.onAudioProgress, request.shouldCancel);
+                    audioWriter.finalize();
+                }
 
                 check_hresult(MFCreateSourceReaderFromURL(audioTempCleanup.path.c_str(), nullptr, audioReader.put()));
                 tsAudioStreamIndex = invalidStream;
@@ -1038,27 +1027,17 @@ void ProfileMedia::exportLossless(const ExportRequest& request) const{
         throw hresult_error(MF_E_INVALIDMEDIATYPE, L"WMV export currently keeps VC-1 video only; disable audio first.");
     }
 
-    com_ptr<IMFSinkWriter> writer;
+    MediaFoundationSinkWriter writer{request.temporaryOutputPath};
     DWORD writerVideoStreamIndex{};
     auto configureWriter = [&]() -> HRESULT{
-        writer = nullptr;
         writerVideoStreamIndex = 0;
         writerAudioStreamIndex = 0;
-        com_ptr<IMFAttributes> writerAttributes;
-        check_hresult(MFCreateAttributes(writerAttributes.put(), 1));
-        check_hresult(writerAttributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
-        check_hresult(MFCreateSinkWriterFromURL(request.temporaryOutputPath.c_str(), nullptr, writerAttributes.get(), writer.put()));
-        check_hresult(writer->AddStream(sourceVideoType.get(), &writerVideoStreamIndex));
-        check_hresult(writer->SetInputMediaType(writerVideoStreamIndex, sourceVideoType.get(), nullptr));
+        check_hresult(writer.addStream(sourceVideoType, sourceVideoType, writerVideoStreamIndex));
         if(!hasAudioForExport){
             return S_OK;
         }
         const auto aacType{createAacOutputType(audioSampleRate, audioChannels)};
-        auto hr = writer->AddStream(aacType.get(), &writerAudioStreamIndex);
-        if(SUCCEEDED(hr)){
-            hr = writer->SetInputMediaType(writerAudioStreamIndex, audioPcmType.get(), nullptr);
-        }
-        return hr;
+        return writer.addStream(aacType, audioPcmType, writerAudioStreamIndex);
     };
 
     const auto writerConfigHr{configureWriter()};
@@ -1072,8 +1051,8 @@ void ProfileMedia::exportLossless(const ExportRequest& request) const{
         check_hresult(writerConfigHr);
     }
 
-    check_hresult(writer->BeginWriting());
-    (void)writeVideoSamplesForExport(reader, videoStreamIndex, writer, writerVideoStreamIndex, request.effectiveCutRanges100ns, videoSubtype, nalLengthFieldSize, request.sourceDuration100ns, request.onVideoProgress, request.shouldCancel);
+    writer.beginWriting();
+    (void)writeVideoSamplesForExport(reader, videoStreamIndex, writer.writer(), writerVideoStreamIndex, request.effectiveCutRanges100ns, videoSubtype, nalLengthFieldSize, request.sourceDuration100ns, request.onVideoProgress, request.shouldCancel);
 
     if(hasAudioForExport && audioStreamIndex != invalidStream){
         com_ptr<IMFSourceReader> audioReader;
@@ -1082,13 +1061,13 @@ void ProfileMedia::exportLossless(const ExportRequest& request) const{
         check_hresult(audioReader->SetStreamSelection(audioStreamIndex, TRUE));
         check_hresult(audioReader->SetCurrentMediaType(audioStreamIndex, nullptr, audioPcmType.get()));
         const auto keepRanges100ns{invertCutRanges100ns(request.effectiveCutRanges100ns, request.sourceDuration100ns)};
-        writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer, writerAudioStreamIndex, audioChannels, audioSampleRate, request.audioCrossfadeMs, request.audioVolumePct / 100.0f, request.onAudioProgress, request.shouldCancel);
+        writeMixedAudioForKeepRanges(audioReader, audioStreamIndex, keepRanges100ns, writer.writer(), writerAudioStreamIndex, audioChannels, audioSampleRate, request.audioCrossfadeMs, request.audioVolumePct / 100.0f, request.onAudioProgress, request.shouldCancel);
     }
 
     if(request.shouldCancel && request.shouldCancel()){
         throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
     }
-    check_hresult(writer->Finalize());
+    writer.finalize();
 }
 
 class Mp4Media final : public ProfileMedia{

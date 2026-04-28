@@ -23,6 +23,13 @@ export namespace llvc{
 using namespace ::std;
 using namespace ::winrt;
 
+struct VideoWriteStats{
+    uint64_t readSampleCount{};
+    uint64_t droppedByCutCount{};
+    uint64_t droppedWaitingRapCount{};
+    uint64_t writtenSampleCount{};
+};
+
 bool isH264VideoSubtype(const GUID& subtype){
     return subtype == MFVideoFormat_H264 || subtype == MFVideoFormat_H264_ES;
 }
