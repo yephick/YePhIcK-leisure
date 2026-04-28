@@ -31,7 +31,10 @@
     <ClCompile Include="..\llvc\VideoContainer.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\llvc\VideoContainer.cpp">
+    <ClCompile Include="..\llvc\Export.ixx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\llvc\Media.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
