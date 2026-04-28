@@ -86,6 +86,7 @@
     <ClCompile Include="..\llvc\Timeline.ixx" />
     <ClCompile Include="..\llvc\EditorController.ixx" />
     <ClCompile Include="..\llvc\EditorCommands.ixx" />
+    <ClCompile Include="..\llvc\VideoStream.ixx" />
     <ClCompile Include="..\llvc\Export.ixx" />
     <ClCompile Include="..\llvc\Media.ixx" />
   </ItemGroup>

@@ -18,6 +18,7 @@
     <ClCompile Include="Timeline.ixx" />
     <ClCompile Include="TimelineRenderer.ixx" />
     <ClCompile Include="Utils.ixx" />
+    <ClCompile Include="VideoStream.ixx" />
     <ClCompile Include="Export.ixx" />
     <ClCompile Include="Media.ixx" />
     <ClCompile Include="Generated Files\module.g.cpp">

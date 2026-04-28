@@ -66,6 +66,7 @@ vector<uint32_t> parseIndexList(const wstring& text);
 vector<pair<uint32_t, uint32_t>> parseIndexPairs(const wstring& text);
 wstring serializeInt64List(const vector<int64_t>& values);
 vector<int64_t> parseInt64List(const wstring& text);
+bool bytesAreZeroPadding(const uint8_t* data, size_t size);
 int32_t pixelsToDips(int32_t pixelValue, uint32_t dpi);
 int32_t dipsToPixels(int32_t dipValue, uint32_t dpi);
 bool isRectVisibleOnAnyMonitor(const RECT& rect);
@@ -278,6 +279,13 @@ vector<int64_t> parseInt64List(const wstring& text){
     sort(values.begin(), values.end());
     values.erase(unique(values.begin(), values.end()), values.end());
     return values;
+}
+
+bool bytesAreZeroPadding(const uint8_t* data, size_t size){
+    if(!data){
+        return size == 0;
+    }
+    return all_of(data, data + size, [](const uint8_t value){ return value == 0; });
 }
 
 void applySeparatePreviewOpened(AppSettingsState& settings){

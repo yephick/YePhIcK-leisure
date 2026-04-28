@@ -7,6 +7,8 @@
 #endif
 #include <Windows.h>
 #include <mfapi.h>
+#include <mfobjects.h>
+#include <winrt/base.h>
 
 import std;
 import llvc.Utils;
@@ -15,6 +17,7 @@ import llvc.Timeline;
 import llvc.EditorController;
 import llvc.EditorCommands;
 import llvc.Export;
+import llvc.VideoStream;
 import llvc.Media;
 
 using namespace std;
@@ -80,6 +83,36 @@ void expectNear(double actual, double expected, double tolerance, const string& 
 
 [[noreturn]] void fail(const string& message){
     throw TestFailure(message);
+}
+
+winrt::com_ptr<IMFMediaType> makeVideoTypeWithSequenceHeader(const GUID& subtype, const vector<uint8_t>& sequenceHeader){
+    winrt::com_ptr<IMFMediaType> mediaType;
+    winrt::check_hresult(MFCreateMediaType(mediaType.put()));
+    winrt::check_hresult(mediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
+    winrt::check_hresult(mediaType->SetGUID(MF_MT_SUBTYPE, subtype));
+    if(!sequenceHeader.empty()){
+        winrt::check_hresult(mediaType->SetBlob(MF_MT_MPEG_SEQUENCE_HEADER, sequenceHeader.data(), static_cast<UINT32>(sequenceHeader.size())));
+    }
+    return mediaType;
+}
+
+winrt::com_ptr<IMFSample> makeSampleWithBytes(const vector<uint8_t>& bytes){
+    winrt::com_ptr<IMFSample> sample;
+    winrt::check_hresult(MFCreateSample(sample.put()));
+
+    winrt::com_ptr<IMFMediaBuffer> buffer;
+    winrt::check_hresult(MFCreateMemoryBuffer(static_cast<DWORD>(bytes.size()), buffer.put()));
+    if(!bytes.empty()){
+        BYTE* data{};
+        DWORD maxLength{};
+        DWORD currentLength{};
+        winrt::check_hresult(buffer->Lock(&data, &maxLength, &currentLength));
+        memcpy(data, bytes.data(), bytes.size());
+        winrt::check_hresult(buffer->Unlock());
+    }
+    winrt::check_hresult(buffer->SetCurrentLength(static_cast<DWORD>(bytes.size())));
+    winrt::check_hresult(sample->AddBuffer(buffer.get()));
+    return sample;
 }
 
 vector<int64_t> parseSemicolonSeparatedInt64(const string& text){
@@ -648,6 +681,88 @@ void testExportH264ParameterSetExtraction(){
     const vector<uint8_t> annexBSequenceHeader{0x12, 0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F, 0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x06};
     const auto normalizedAnnexB{llvc::extractH264ParameterSetsAnnexBForMpegTs(annexBSequenceHeader)};
     expectEqual(normalizedAnnexB, vector<uint8_t>{0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F, 0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x06}, "extractH264ParameterSetsAnnexBForMpegTs should also accept Annex B sequence header data");
+
+    const vector<uint8_t> zeroSpsCount{0x01, 0x64, 0x00, 0x1F, 0xFF, 0xE0};
+    expect(llvc::extractH264ParameterSetsAnnexBForMpegTs(zeroSpsCount).empty(), "extractH264ParameterSetsAnnexBForMpegTs should reject avcC data without SPS entries");
+
+    const vector<uint8_t> truncatedSps{0x01, 0x64, 0x00, 0x1F, 0xFF, 0xE1, 0x00, 0x04, 0x67, 0x64};
+    expect(llvc::extractH264ParameterSetsAnnexBForMpegTs(truncatedSps).empty(), "extractH264ParameterSetsAnnexBForMpegTs should reject truncated SPS data");
+
+    const vector<uint8_t> trailingJunk{
+        0x01, 0x64, 0x00, 0x1F, 0xFF,
+        0xE1,
+        0x00, 0x04, 0x67, 0x64, 0x00, 0x1F,
+        0x01,
+        0x00, 0x03, 0x68, 0xEE, 0x06,
+        0x7F};
+    expect(llvc::extractH264ParameterSetsAnnexBForMpegTs(trailingJunk).empty(), "extractH264ParameterSetsAnnexBForMpegTs should reject non-zero trailing avcC data");
+}
+
+void testVideoStreamNalLengthFieldDetection(){
+    llvc::MFLifetime mf{};
+
+    expectEqual(llvc::getNalLengthFieldSize(nullptr, MFVideoFormat_H264), uint32_t{4}, "getNalLengthFieldSize should default null media types to four-byte NAL lengths");
+    expectEqual(llvc::getNalLengthFieldSize(makeVideoTypeWithSequenceHeader(MFVideoFormat_H264, {}), MFVideoFormat_H264), uint32_t{4}, "getNalLengthFieldSize should default missing codec headers to four-byte NAL lengths");
+
+    auto h264OneByte{makeVideoTypeWithSequenceHeader(MFVideoFormat_H264, vector<uint8_t>{0x01, 0x64, 0x00, 0x1F, 0xFC})};
+    expectEqual(llvc::getNalLengthFieldSize(h264OneByte, MFVideoFormat_H264), uint32_t{1}, "getNalLengthFieldSize should read one-byte H.264 NAL length fields from avcC");
+
+    auto h264FourByte{makeVideoTypeWithSequenceHeader(MFVideoFormat_H264, vector<uint8_t>{0x01, 0x64, 0x00, 0x1F, 0xFF})};
+    expectEqual(llvc::getNalLengthFieldSize(h264FourByte, MFVideoFormat_H264), uint32_t{4}, "getNalLengthFieldSize should read four-byte H.264 NAL length fields from avcC");
+
+    vector<uint8_t> hevcConfig(22, 0);
+    hevcConfig[21] = 0xFD;
+    auto hevcTwoByte{makeVideoTypeWithSequenceHeader(MFVideoFormat_HEVC, hevcConfig)};
+    expectEqual(llvc::getNalLengthFieldSize(hevcTwoByte, MFVideoFormat_HEVC), uint32_t{2}, "getNalLengthFieldSize should read HEVC NAL length fields from hvcC");
+
+    hevcConfig[21] = 0xFF;
+    auto hevcFourByte{makeVideoTypeWithSequenceHeader(MFVideoFormat_HEVC, hevcConfig)};
+    expectEqual(llvc::getNalLengthFieldSize(hevcFourByte, MFVideoFormat_HEVC), uint32_t{4}, "getNalLengthFieldSize should read four-byte HEVC NAL length fields from hvcC");
+}
+
+void testVideoStreamContainerSyncSampleDetection(){
+    llvc::MFLifetime mf{};
+
+    auto sample{makeSampleWithBytes(vector<uint8_t>{0x01})};
+    expect(!llvc::isContainerSyncSample(sample), "isContainerSyncSample should be false when the clean-point flag is absent");
+
+    winrt::check_hresult(sample->SetUINT32(MFSampleExtension_CleanPoint, TRUE));
+    expect(llvc::isContainerSyncSample(sample), "isContainerSyncSample should be true when the clean-point flag is set");
+}
+
+void testVideoStreamSampleRapDetection(){
+    llvc::MFLifetime mf{};
+
+    const vector<uint8_t> h264IdrAccessUnit{0x00, 0x00, 0x00, 0x03, 0x65, 0x88, 0x84};
+    expect(llvc::isTrueRandomAccessPointSample(makeSampleWithBytes(h264IdrAccessUnit), MFVideoFormat_H264, 4, false), "isTrueRandomAccessPointSample should recognize H.264 IDR samples");
+
+    const vector<uint8_t> h264NonRapAccessUnit{0x00, 0x00, 0x00, 0x03, 0x61, 0x88, 0x84};
+    expect(!llvc::isTrueRandomAccessPointSample(makeSampleWithBytes(h264NonRapAccessUnit), MFVideoFormat_H264, 4, false), "isTrueRandomAccessPointSample should reject H.264 non-IDR samples");
+
+    const vector<uint8_t> hevcRapAccessUnit{0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0x88, 0x84};
+    expect(llvc::isTrueRandomAccessPointSample(makeSampleWithBytes(hevcRapAccessUnit), MFVideoFormat_HEVC, 0, false), "isTrueRandomAccessPointSample should recognize HEVC RAP samples");
+
+    const vector<uint8_t> h264InconclusiveAccessUnit{
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F,
+        0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x06};
+    expect(llvc::isTrueRandomAccessPointSample(makeSampleWithBytes(h264InconclusiveAccessUnit), MFVideoFormat_H264, 0, true), "isTrueRandomAccessPointSample should honor allowInconclusive when no slice NAL is present");
+    expect(!llvc::isTrueRandomAccessPointSample(makeSampleWithBytes(h264InconclusiveAccessUnit), MFVideoFormat_H264, 0, false), "isTrueRandomAccessPointSample should reject inconclusive samples when strict RAP proof is required");
+}
+
+void testVideoStreamH264ParameterSetDetection(){
+    const vector<uint8_t> spsAndPps{
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F,
+        0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x06};
+    expect(llvc::h264AnnexBSampleContainsParameterSets(spsAndPps.data(), spsAndPps.size()), "h264AnnexBSampleContainsParameterSets should require both SPS and PPS");
+
+    const vector<uint8_t> spsOnly{0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F};
+    expect(!llvc::h264AnnexBSampleContainsParameterSets(spsOnly.data(), spsOnly.size()), "h264AnnexBSampleContainsParameterSets should reject SPS-only samples");
+
+    const vector<uint8_t> ppsOnly{0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x06};
+    expect(!llvc::h264AnnexBSampleContainsParameterSets(ppsOnly.data(), ppsOnly.size()), "h264AnnexBSampleContainsParameterSets should reject PPS-only samples");
+
+    const vector<uint8_t> noParameterSets{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84};
+    expect(!llvc::h264AnnexBSampleContainsParameterSets(noParameterSets.data(), noParameterSets.size()), "h264AnnexBSampleContainsParameterSets should reject samples without parameter sets");
 }
 
 void testExportReaderSampleTimeResolution(){
@@ -1006,6 +1121,10 @@ int wmain(int argc, wchar_t* argv[]){
         {"ExportAudioCrossfade", &testExportAudioCrossfade},
         {"ExportH264SampleNormalization", &testExportH264SampleNormalization},
         {"ExportH264ParameterSetExtraction", &testExportH264ParameterSetExtraction},
+        {"VideoStreamNalLengthFieldDetection", &testVideoStreamNalLengthFieldDetection},
+        {"VideoStreamContainerSyncSampleDetection", &testVideoStreamContainerSyncSampleDetection},
+        {"VideoStreamSampleRapDetection", &testVideoStreamSampleRapDetection},
+        {"VideoStreamH264ParameterSetDetection", &testVideoStreamH264ParameterSetDetection},
         {"ExportReaderSampleTimeResolution", &testExportReaderSampleTimeResolution},
         {"MpegTsKeyframeClassification", &testMpegTsKeyframeClassification},
         {"MpegTsBitstreamRapDetection", &testMpegTsBitstreamRapDetection},

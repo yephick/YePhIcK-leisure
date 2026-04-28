@@ -25,6 +25,7 @@ export module llvc.Media;
 import std;
 import llvc.Export;
 import llvc.Utils;
+import llvc.VideoStream;
 
 export namespace llvc{
 
@@ -251,10 +252,6 @@ const FormatProfile* tryGetFormatProfileById(SourceFormatId id){
 
 bool formatAllowsVideoSubtype(const FormatProfile& profile, const GUID& subtype){
     return ranges::find(profile.allowedVideoSubtypes, subtype) != profile.allowedVideoSubtypes.end();
-}
-
-bool isH264VideoSubtype(const GUID& subtype){
-    return subtype == MFVideoFormat_H264 || subtype == MFVideoFormat_H264_ES;
 }
 
 vector<GUID> getAllowedVideoSubtypeVector(const FormatProfile& profile){
