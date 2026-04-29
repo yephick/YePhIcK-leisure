@@ -69,6 +69,14 @@
 
                 <CheckBox x:Name="MergeLineEndingsCheckBox" Content="Merge CR/LF" Foreground="#d6d6d6" IsChecked="True" Margin="0,0,6,0" VerticalAlignment="Center" FontSize="11"/>
                 <CheckBox x:Name="AutoScrollCheckBox" Content="Auto-scroll" Foreground="#d6d6d6" IsChecked="True" Margin="0,0,6,0" VerticalAlignment="Center" FontSize="11"/>
+                <CheckBox x:Name="PanelSyncCheckBox"
+                          Content="Panel sync"
+                          Foreground="#d6d6d6"
+                          IsChecked="False"
+                          Margin="0,0,6,0"
+                          VerticalAlignment="Center"
+                          FontSize="11"
+                          ToolTip="Enables synchronized vertical and horizontal scrolling between the text and hex panes. This can significantly reduce UI responsiveness and increase scroll handling overhead, so it is disabled by default."/>
 
             </WrapPanel>
 
@@ -86,14 +94,15 @@
                      Grid.Column="0"
                      IsReadOnly="True"
                      VerticalScrollBarVisibility="Auto"
-                     HorizontalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Visible"
                      Background="#1c1c1c"
                      BorderThickness="0"
                      Padding="6,0,6,6"
                      FontFamily="Consolas"
                      FontSize="16"
                      IsDocumentEnabled="True"
-                     SpellCheck.IsEnabled="False">
+                     SpellCheck.IsEnabled="False"
+                     ScrollViewer.ScrollChanged="Pane_ScrollChanged">
                 <RichTextBox.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="Copy" Command="ApplicationCommands.Copy"/>
@@ -124,12 +133,13 @@
                          BorderThickness="0"
                          Padding="6,0,6,6"
                          FontFamily="Consolas"
-                         FontSize="12"
+                         FontSize="16"
                          AcceptsReturn="True"
                          AcceptsTab="True"
                          TextWrapping="NoWrap"
                          IsUndoEnabled="False"
-                         SpellCheck.IsEnabled="False">
+                         SpellCheck.IsEnabled="False"
+                         ScrollViewer.ScrollChanged="Pane_ScrollChanged">
                     <TextBox.ContextMenu>
                         <ContextMenu>
                             <MenuItem Header="Copy" Command="ApplicationCommands.Copy"/>

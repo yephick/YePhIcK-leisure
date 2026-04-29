@@ -1,4 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System;
+using System.IO;
 using System.Linq;
 using System.Windows.Media;
 using UartMonitor.Rendering;
@@ -419,6 +421,94 @@ namespace UartMonitor.Tests.Rendering
 
             Assert.AreEqual("00 1B 41 FF\r\n", formatted);
             Assert.IsFalse(formatted.Contains("|"));
+            Assert.IsFalse(formatted.Contains(":"));
+            Assert.IsFalse(formatted.Contains("0000"));
+        }
+
+        [TestMethod]
+        public void HexChunkFormatter_KeepsChunkAsSingleLine()
+        {
+            byte[] bytes = Enumerable.Range(0, 32).Select(value => (byte)value).ToArray();
+
+            string formatted = HexChunkFormatter.Format(bytes);
+
+            Assert.AreEqual("00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F\r\n", formatted);
+            Assert.AreEqual(1, formatted.Split(new[] { "\r\n" }, System.StringSplitOptions.None).Count(item => !string.IsNullOrEmpty(item)));
+        }
+
+        [TestMethod]
+        public void HexChunkFormatter_DoesNotReflowIntoOffsetRows()
+        {
+            byte[] bytes = Enumerable.Range(0, 48).Select(value => (byte)value).ToArray();
+
+            string formatted = HexChunkFormatter.Format(bytes);
+
+            Assert.IsFalse(formatted.Contains("0000 "));
+            Assert.IsFalse(formatted.Contains("0010 "));
+            Assert.IsFalse(formatted.Contains("0020 "));
+            Assert.AreEqual(1, formatted.Count(character => character == '\n'));
+        }
+
+        [TestMethod]
+        public void HexChunkFormatter_PreservesLeadingAnsiControlSequences()
+        {
+            byte[] bytes = new byte[]
+            {
+                0x1B, 0x5B, 0x33, 0x32, 0x6D,
+                0x1B, 0x5B, 0x34, 0x38, 0x3B, 0x35, 0x3B, 0x32, 0x33, 0x34, 0x6D,
+                0x1B, 0x5B, 0x32, 0x4A,
+                0x55, 0x41, 0x52, 0x54
+            };
+
+            string formatted = HexChunkFormatter.Format(bytes);
+
+            Assert.AreEqual("1B 5B 33 32 6D 1B 5B 34 38 3B 35 3B 32 33 34 6D 1B 5B 32 4A 55 41 52 54\r\n", formatted);
+        }
+
+        [TestMethod]
+        public void HexChunkFormatter_PreservesOscSequences()
+        {
+            byte[] bytes = new byte[]
+            {
+                0x1B, 0x5D, 0x30, 0x3B, 0x74, 0x69, 0x74, 0x6C, 0x65, 0x07,
+                0x52, 0x65, 0x61, 0x64, 0x79
+            };
+
+            string formatted = HexChunkFormatter.Format(bytes);
+
+            Assert.AreEqual("1B 5D 30 3B 74 69 74 6C 65 07 52 65 61 64 79\r\n", formatted);
+        }
+
+        [TestMethod]
+        public void HexChunkFormatter_EmptyInput_ProducesEmptyOutput()
+        {
+            Assert.AreEqual(string.Empty, HexChunkFormatter.Format(Array.Empty<byte>()));
+        }
+
+        [TestMethod]
+        public void HorizontalScaleFactor_DefaultsToThreeWhenUnknown()
+        {
+            Assert.AreEqual(3.0, UartMonitor.Serial.AlignmentMath.GetHorizontalScaleFactor(0, 0));
+            Assert.AreEqual(3.0, UartMonitor.Serial.AlignmentMath.GetHorizontalScaleFactor(12, 0));
+        }
+
+        [TestMethod]
+        public void HorizontalScaleFactor_UsesRawToVisibleWidthRatio()
+        {
+            Assert.AreEqual(2.5, UartMonitor.Serial.AlignmentMath.GetHorizontalScaleFactor(20, 50));
+            Assert.AreEqual(4.0, UartMonitor.Serial.AlignmentMath.GetHorizontalScaleFactor(10, 40));
+        }
+
+        [TestMethod]
+        public void ToolWindow_Xaml_ExposesDisabledPanelSyncWarning()
+        {
+            string xamlPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\..\UartMonitor\UartMonitorWindows\UartMonitorControl.xaml"));
+            string xaml = File.ReadAllText(xamlPath);
+
+            StringAssert.Contains(xaml, "x:Name=\"PanelSyncCheckBox\"");
+            StringAssert.Contains(xaml, "IsChecked=\"False\"");
+            StringAssert.Contains(xaml, "significantly reduce UI responsiveness");
+            StringAssert.Contains(xaml, "scroll handling overhead");
         }
 
         private static void AssertBrushColor(Color expected, Brush brush)

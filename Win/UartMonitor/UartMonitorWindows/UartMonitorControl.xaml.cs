@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
+using System.Windows.Controls.Primitives;
 using UartMonitor.Rendering;
 using UartMonitor.Serial;
 
@@ -16,6 +17,9 @@ namespace UartMonitor
     {
         private readonly AnsiParser _ansiParser = new AnsiParser();
         private readonly SerialReader _reader = new SerialReader();
+        private bool _syncingScroll;
+        private double _visibleTextColumns;
+        private double _hexColumns;
 
         public MyToolWindowControl()
         {
@@ -244,10 +248,15 @@ namespace UartMonitor
             AppendHexChunk(bytes);
 
             string text = encoding.GetString(bytes);
+            int visibleColumns = 0;
             foreach (LogSegment segment in _ansiParser.Parse(text))
             {
+                visibleColumns += segment.Text.Length;
                 AppendSegment(segment);
             }
+
+            _visibleTextColumns += visibleColumns;
+            _hexColumns += bytes.Length * 3.0;
 
             if (AutoScrollCheckBox.IsChecked == true)
             {
@@ -268,18 +277,23 @@ namespace UartMonitor
 
         private void InitializeLogDocument()
         {
+            const double sharedFontSize = 16;
+            const double sharedLineHeight = 16;
             FlowDocument document = new FlowDocument
             {
                 Background = new SolidColorBrush(Color.FromRgb(0x1c, 0x1c, 0x1c)),
                 Foreground = new SolidColorBrush(Color.FromRgb(0x00, 0xff, 0x00)),
                 PagePadding = new Thickness(0),
+                PageWidth = 10000,
                 FontFamily = LogBox.FontFamily,
-                FontSize = LogBox.FontSize,
+                FontSize = sharedFontSize,
                 LineStackingStrategy = LineStackingStrategy.BlockLineHeight
             };
 
-            document.Blocks.Add(CreateParagraph());
+            document.Blocks.Add(CreateParagraph(sharedLineHeight));
             LogBox.Document = document;
+            LogBox.FontSize = sharedFontSize;
+            HexLogBox.FontSize = sharedFontSize;
         }
 
         private Paragraph EnsureActiveParagraph()
@@ -292,18 +306,19 @@ namespace UartMonitor
             if (document.Blocks.LastBlock is Paragraph paragraph)
                 return paragraph;
 
-            paragraph = CreateParagraph();
+            paragraph = CreateParagraph(LogBox.FontSize);
             document.Blocks.Add(paragraph);
             return paragraph;
         }
 
-        private static Paragraph CreateParagraph()
+        private static Paragraph CreateParagraph(double lineHeight)
         {
             return new Paragraph
             {
                 Margin = new Thickness(0),
                 Padding = new Thickness(0),
-                LineHeight = double.NaN
+                LineHeight = lineHeight,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight
             };
         }
 
@@ -320,6 +335,7 @@ namespace UartMonitor
             {
                 FontFamily fontFamily = familyChoice.FontFamily;
                 LogBox.FontFamily = fontFamily;
+                HexLogBox.FontFamily = fontFamily;
                 if (LogBox.Document != null)
                     LogBox.Document.FontFamily = fontFamily;
             }
@@ -327,8 +343,11 @@ namespace UartMonitor
             if (TryGetFontSize(out double fontSize))
             {
                 LogBox.FontSize = fontSize;
+                HexLogBox.FontSize = fontSize;
                 if (LogBox.Document != null)
                     LogBox.Document.FontSize = fontSize;
+                if (LogBox.Document?.Blocks.LastBlock is Paragraph paragraph)
+                    paragraph.LineHeight = fontSize;
             }
         }
 
@@ -465,6 +484,81 @@ namespace UartMonitor
             public FontFamily FontFamily { get; }
             public bool IsMonospace { get; }
             public override string ToString() => FontFamily.Source;
+        }
+
+        private void Pane_ScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            if (PanelSyncCheckBox.IsChecked != true)
+                return;
+
+            if (_syncingScroll)
+                return;
+
+            if (e.OriginalSource is not DependencyObject sourceElement)
+                return;
+
+            bool sourceIsLog = IsDescendantOf(sourceElement, LogBox);
+            bool sourceIsHex = IsDescendantOf(sourceElement, HexLogBox);
+
+            if (!sourceIsLog && !sourceIsHex)
+                return;
+
+            ScrollViewer? source = GetScrollViewer(sourceElement);
+            ScrollViewer? target = sourceIsLog ? GetScrollViewer(HexLogBox) : GetScrollViewer(LogBox);
+
+            if (source == null || target == null)
+                return;
+
+            try
+            {
+                _syncingScroll = true;
+                double horizontalOffset = GetMirroredHorizontalOffset(sourceIsHex, source.HorizontalOffset);
+                target.ScrollToHorizontalOffset(Math.Max(horizontalOffset, 0));
+                target.ScrollToVerticalOffset(source.VerticalOffset);
+            }
+            finally
+            {
+                _syncingScroll = false;
+            }
+        }
+
+        private double GetMirroredHorizontalOffset(bool sourceIsHex, double sourceOffset)
+        {
+            double ratio = UartMonitor.Serial.AlignmentMath.GetHorizontalScaleFactor(_visibleTextColumns, _hexColumns);
+            return sourceIsHex ? sourceOffset / ratio : sourceOffset * ratio;
+        }
+
+        private static ScrollViewer? GetScrollViewer(DependencyObject? root)
+        {
+            if (root == null)
+                return null;
+
+            if (root is ScrollViewer viewer)
+                return viewer;
+
+            for (int i = 0, count = VisualTreeHelper.GetChildrenCount(root); i < count; i++)
+            {
+                ScrollViewer? childViewer = GetScrollViewer(VisualTreeHelper.GetChild(root, i));
+                if (childViewer != null)
+                    return childViewer;
+            }
+
+            return null;
+        }
+
+        private static bool IsDescendantOf(DependencyObject child, DependencyObject ancestor)
+        {
+            DependencyObject? current = child;
+
+            while (current != null)
+            {
+                if (ReferenceEquals(current, ancestor))
+                    return true;
+
+                current = VisualTreeHelper.GetParent(current);
+            }
+
+            return false;
         }
     }
 }
