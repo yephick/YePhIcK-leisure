@@ -17,6 +17,7 @@ namespace UartMonitor
     {
         private readonly AnsiParser _ansiParser = new AnsiParser();
         private readonly SerialReader _reader = new SerialReader();
+        private readonly HexStreamFormatter _hexFormatter = new HexStreamFormatter();
         private bool _syncingScroll;
         private double _visibleTextColumns;
         private double _hexColumns;
@@ -142,7 +143,6 @@ namespace UartMonitor
         {
             ClearLog();
             _ansiParser.Reset();
-            HexLogBox.Clear();
 
             Encoding encoding = GetSelectedEncoding();
             foreach (byte[] chunk in UartMonitor.Serial.TestSample.GetTestChunks())
@@ -155,13 +155,7 @@ namespace UartMonitor
         private void ClearButton_Click(object sender, RoutedEventArgs e)
         {
             ClearLog();
-            HexLogBox.Clear();
             _ansiParser.Reset();
-        }
-
-        private void HexClearButton_Click(object sender, RoutedEventArgs e)
-        {
-            HexLogBox.Clear();
         }
 
         private void Reader_ChunkReceived(object sender, SerialReader.ChunkReceivedEventArgs e)
@@ -267,12 +261,30 @@ namespace UartMonitor
 
         private void AppendHexChunk(byte[] bytes)
         {
-            HexLogBox.AppendText(HexChunkFormatter.Format(bytes));
+            string hex = _hexFormatter.Append(bytes);
+            if (hex.Length == 0)
+                return;
+
+            if (HexLogBox.Document?.Blocks.LastBlock is Paragraph paragraph)
+            {
+                string[] lines = hex.Split(new[] { "\r\n" }, StringSplitOptions.None);
+                for (int index = 0; index < lines.Length; index++)
+                {
+                    string line = lines[index];
+
+                    if (line.Length > 0)
+                        paragraph.Inlines.Add(new Run(line));
+
+                    if (index < lines.Length - 1)
+                        paragraph.Inlines.Add(new LineBreak());
+                }
+            }
         }
 
         private void ClearLog()
         {
             InitializeLogDocument();
+            _hexFormatter.Flush();
         }
 
         private void InitializeLogDocument()
@@ -293,6 +305,24 @@ namespace UartMonitor
             document.Blocks.Add(CreateParagraph(sharedLineHeight));
             LogBox.Document = document;
             LogBox.FontSize = sharedFontSize;
+            InitializeHexDocument(sharedFontSize, sharedLineHeight);
+        }
+
+        private void InitializeHexDocument(double sharedFontSize, double sharedLineHeight)
+        {
+            FlowDocument document = new FlowDocument
+            {
+                Background = new SolidColorBrush(Color.FromRgb(0x17, 0x17, 0x17)),
+                Foreground = new SolidColorBrush(Color.FromRgb(0xd0, 0xd0, 0xd0)),
+                PagePadding = new Thickness(0),
+                PageWidth = 10000,
+                FontFamily = HexLogBox.FontFamily,
+                FontSize = sharedFontSize,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight
+            };
+
+            document.Blocks.Add(CreateParagraph(sharedLineHeight));
+            HexLogBox.Document = document;
             HexLogBox.FontSize = sharedFontSize;
         }
 

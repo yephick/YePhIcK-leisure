@@ -118,35 +118,25 @@
                           Background="#2a2a2a"/>
 
             <DockPanel Grid.Column="2" Background="#171717">
-                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,4,6,4">
-                    <TextBlock Text="Hex log" Foreground="#d6d6d6" VerticalAlignment="Center"/>
-                    <Button x:Name="HexClearButton" Content="Clear" Width="60" Margin="8,0,0,0" Click="HexClearButton_Click"/>
-                </StackPanel>
-
-                <TextBox x:Name="HexLogBox"
-                         IsReadOnly="True"
-                         IsReadOnlyCaretVisible="True"
-                         VerticalScrollBarVisibility="Auto"
-                         HorizontalScrollBarVisibility="Auto"
-                         Background="#171717"
-                         Foreground="#d0d0d0"
-                         BorderThickness="0"
-                         Padding="6,0,6,6"
-                         FontFamily="Consolas"
-                         FontSize="16"
-                         AcceptsReturn="True"
-                         AcceptsTab="True"
-                         TextWrapping="NoWrap"
-                         IsUndoEnabled="False"
-                         SpellCheck.IsEnabled="False"
-                         ScrollViewer.ScrollChanged="Pane_ScrollChanged">
-                    <TextBox.ContextMenu>
+                <RichTextBox x:Name="HexLogBox"
+                             IsReadOnly="True"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto"
+                             Background="#171717"
+                             BorderThickness="0"
+                             Padding="6,0,6,6"
+                             FontFamily="Consolas"
+                             FontSize="16"
+                             IsDocumentEnabled="True"
+                             SpellCheck.IsEnabled="False"
+                             ScrollViewer.ScrollChanged="Pane_ScrollChanged">
+                    <RichTextBox.ContextMenu>
                         <ContextMenu>
                             <MenuItem Header="Copy" Command="ApplicationCommands.Copy"/>
                             <MenuItem Header="Select All" Command="ApplicationCommands.SelectAll"/>
                         </ContextMenu>
-                    </TextBox.ContextMenu>
-                </TextBox>
+                    </RichTextBox.ContextMenu>
+                </RichTextBox>
             </DockPanel>
         </Grid>
     </DockPanel>

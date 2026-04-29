@@ -426,20 +426,45 @@ namespace UartMonitor.Tests.Rendering
         }
 
         [TestMethod]
+        public void HexChunkFormatter_PreservesEmptyLines()
+        {
+            string formatted = HexChunkFormatter.Format(new byte[] { 0x41, 0x0d, 0x0a, 0x0d, 0x0a, 0x42 });
+
+            Assert.AreEqual("41 0D 0A\r\n\r\n\r\n42\r\n", formatted);
+        }
+
+        [TestMethod]
+        public void HexChunkFormatter_SplitsOnCrLfAndKeepsMarkers()
+        {
+            string formatted = HexChunkFormatter.Format(new byte[] { 0x41, 0x0d, 0x0a, 0x42, 0x0a, 0x0d, 0x43 });
+
+            Assert.AreEqual("41 0D 0A\r\n42 0A 0D\r\n43\r\n", formatted);
+        }
+
+        [TestMethod]
+        public void HexChunkFormatter_PreservesLeadingAndTrailingBlankRows()
+        {
+            string formatted = HexChunkFormatter.Format(new byte[] { 0x0d, 0x0a, 0x41, 0x0d, 0x0a, 0x0d, 0x0a });
+
+            StringAssert.Contains(formatted, "41 0D 0A");
+            Assert.AreEqual(6, formatted.Split(new[] { "\r\n" }, System.StringSplitOptions.None).Length - 1);
+        }
+
+        [TestMethod]
         public void HexChunkFormatter_KeepsChunkAsSingleLine()
         {
-            byte[] bytes = Enumerable.Range(0, 32).Select(value => (byte)value).ToArray();
+            byte[] bytes = Enumerable.Range(0x11, 16).Select(value => (byte)value).ToArray();
 
             string formatted = HexChunkFormatter.Format(bytes);
 
-            Assert.AreEqual("00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F\r\n", formatted);
+            Assert.AreEqual("11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20\r\n", formatted);
             Assert.AreEqual(1, formatted.Split(new[] { "\r\n" }, System.StringSplitOptions.None).Count(item => !string.IsNullOrEmpty(item)));
         }
 
         [TestMethod]
         public void HexChunkFormatter_DoesNotReflowIntoOffsetRows()
         {
-            byte[] bytes = Enumerable.Range(0, 48).Select(value => (byte)value).ToArray();
+            byte[] bytes = Enumerable.Range(0, 48).Where(value => value != 0x0d && value != 0x0a).Select(value => (byte)value).ToArray();
 
             string formatted = HexChunkFormatter.Format(bytes);
 
@@ -483,6 +508,31 @@ namespace UartMonitor.Tests.Rendering
         public void HexChunkFormatter_EmptyInput_ProducesEmptyOutput()
         {
             Assert.AreEqual(string.Empty, HexChunkFormatter.Format(Array.Empty<byte>()));
+        }
+
+        [TestMethod]
+        public void HexStreamFormatter_AppendsAcrossChunks_AsSingleRow()
+        {
+            HexStreamFormatter formatter = new HexStreamFormatter();
+
+            string first = formatter.Append(new byte[] { 0x34 });
+            string second = formatter.Append(new byte[] { 0x09, 0x1b, 0x5b, 0x33, 0x36, 0x6d });
+            string third = formatter.Append(new byte[] { 0x0d, 0x0a });
+
+            Assert.AreEqual(string.Empty, first);
+            Assert.AreEqual(string.Empty, second);
+            Assert.AreEqual("34 09 1B 5B 33 36 6D 0D 0A\r\n", third);
+        }
+
+        [TestMethod]
+        public void HexStreamFormatter_PreservesBlankLines_WithoutExtraRows()
+        {
+            HexStreamFormatter formatter = new HexStreamFormatter();
+
+            string first = formatter.Append(new byte[] { 0x41, 0x0d, 0x0a, 0x0d, 0x0a, 0x42 });
+            string second = formatter.Flush();
+
+            Assert.AreEqual("41 0D 0A\r\n\r\n42\r\n", first + second);
         }
 
         [TestMethod]
