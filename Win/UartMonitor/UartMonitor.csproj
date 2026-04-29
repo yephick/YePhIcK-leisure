@@ -67,6 +67,7 @@
       <DependentUpon>source.extension.vsixmanifest</DependentUpon>
     </Compile>
     <Compile Include="Settings\UartMonitorSettings.cs" />
+    <Compile Include="Settings\UartMonitorUserSettings.cs" />
     <Compile Include="VSCommandTable.cs">
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>

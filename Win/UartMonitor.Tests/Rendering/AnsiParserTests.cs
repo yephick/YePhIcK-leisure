@@ -5,6 +5,7 @@ using System.Linq;
 using System.Windows.Media;
 using UartMonitor.Rendering;
 using UartMonitor.Serial;
+using UartMonitor.Settings;
 using UartMonitor;
 
 namespace UartMonitor.Tests.Rendering
@@ -559,6 +560,52 @@ namespace UartMonitor.Tests.Rendering
             StringAssert.Contains(xaml, "IsChecked=\"False\"");
             StringAssert.Contains(xaml, "significantly reduce UI responsiveness");
             StringAssert.Contains(xaml, "scroll handling overhead");
+        }
+
+        [TestMethod]
+        public void Settings_SaveAndLoad_RoundTripsKeyValues()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "uartmonitor-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                UartMonitorUserSettings.OverrideFilePathForTests = Path.Combine(tempDir, "settings.txt");
+
+                UartMonitorUserSettings settings = new UartMonitorUserSettings
+                {
+                    PortName = "COM7",
+                    BaudRate = "3000000",
+                    EncodingDisplayName = "ISO-8859-1: 1998 (Latin-1, West Europe)",
+                    FontFamily = "Consolas",
+                    FontSize = "16",
+                    DataBits = 8,
+                    StopBits = "1",
+                    Parity = "None",
+                    FlowControl = "XON/XOFF",
+                    MergeLineEndings = true,
+                    AutoScroll = false,
+                    PanelSync = true
+                };
+
+                settings.Save();
+
+                UartMonitorUserSettings loaded = UartMonitorUserSettings.Load();
+
+                Assert.AreEqual("COM7", loaded.PortName);
+                Assert.AreEqual("3000000", loaded.BaudRate);
+                Assert.AreEqual("Consolas", loaded.FontFamily);
+                Assert.AreEqual("16", loaded.FontSize);
+                Assert.AreEqual(8, loaded.DataBits);
+                Assert.IsTrue(loaded.MergeLineEndings);
+                Assert.IsFalse(loaded.AutoScroll);
+                Assert.IsTrue(loaded.PanelSync);
+            }
+            finally
+            {
+                UartMonitorUserSettings.OverrideFilePathForTests = null;
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
         }
 
         private static void AssertBrushColor(Color expected, Brush brush)

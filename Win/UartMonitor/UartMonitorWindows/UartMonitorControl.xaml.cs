@@ -10,6 +10,7 @@ using System.Windows.Media;
 using System.Windows.Controls.Primitives;
 using UartMonitor.Rendering;
 using UartMonitor.Serial;
+using UartMonitor.Settings;
 
 namespace UartMonitor
 {
@@ -18,6 +19,7 @@ namespace UartMonitor
         private readonly AnsiParser _ansiParser = new AnsiParser();
         private readonly SerialReader _reader = new SerialReader();
         private readonly HexStreamFormatter _hexFormatter = new HexStreamFormatter();
+        private readonly UartMonitorUserSettings _settings = UartMonitorUserSettings.Load();
         private bool _syncingScroll;
         private double _visibleTextColumns;
         private double _hexColumns;
@@ -28,22 +30,24 @@ namespace UartMonitor
             InitializeLogDocument();
 
             BaudComboBox.ItemsSource = new[] { 4608000, 4000000, 3000000, 2000000, 1000000, 921600, 750000, 500000, 460800, 400000, 300000, 225000, 200000, 153600, 115200, 57600, 38400, 19200, 9600 };
-            BaudComboBox.Text = "115200";
+            BaudComboBox.Text = _settings.BaudRate;
 
             EncodingComboBox.ItemsSource = GetEncodings();
-            EncodingComboBox.SelectedItem = EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => choice.Encoding.CodePage == 28591)
+            EncodingComboBox.SelectedItem = EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => string.Equals(choice.DisplayName, _settings.EncodingDisplayName, StringComparison.OrdinalIgnoreCase))
+                ?? EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => choice.Encoding.CodePage == 28591)
                 ?? EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => choice.DisplayName.StartsWith("ISO-8859-1: 1998", StringComparison.OrdinalIgnoreCase));
 
             FontFamilyComboBox.ItemsSource = GetFontFamilies();
-            FontFamilyComboBox.SelectedItem = FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault(choice => choice.FontFamily.Source.Equals("Consolas", StringComparison.OrdinalIgnoreCase))
+            FontFamilyComboBox.SelectedItem = FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault(choice => choice.FontFamily.Source.Equals(_settings.FontFamily, StringComparison.OrdinalIgnoreCase))
+                ?? FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault(choice => choice.FontFamily.Source.Equals("Consolas", StringComparison.OrdinalIgnoreCase))
                 ?? FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault(choice => choice.IsMonospace)
                 ?? FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault();
 
             FontSizeComboBox.ItemsSource = new[] { 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24 };
-            FontSizeComboBox.Text = "16";
+            FontSizeComboBox.Text = _settings.FontSize;
 
             DataBitsComboBox.ItemsSource = new[] { 5, 6, 7, 8 };
-            DataBitsComboBox.SelectedItem = 8;
+            DataBitsComboBox.SelectedItem = _settings.DataBits;
 
             StopBitsComboBox.ItemsSource = new[]
             {
@@ -51,10 +55,11 @@ namespace UartMonitor
                 new StopBitsChoice("1.5", StopBits.OnePointFive),
                 new StopBitsChoice("2", StopBits.Two)
             };
-            StopBitsComboBox.SelectedIndex = 0;
+            StopBitsComboBox.SelectedItem = StopBitsComboBox.Items.OfType<StopBitsChoice>().FirstOrDefault(choice => choice.DisplayName == _settings.StopBits)
+                ?? StopBitsComboBox.Items.OfType<StopBitsChoice>().First();
 
             ParityComboBox.ItemsSource = Enum.GetValues(typeof(Parity)).Cast<Parity>().ToArray();
-            ParityComboBox.SelectedItem = Parity.None;
+            ParityComboBox.SelectedItem = Enum.TryParse(_settings.Parity, out Parity savedParity) ? savedParity : Parity.None;
 
             FlowControlComboBox.ItemsSource = new[]
             {
@@ -63,7 +68,12 @@ namespace UartMonitor
                 new FlowControlChoice("RTS/CTS", Handshake.RequestToSend),
                 new FlowControlChoice("RTS/CTS + XON/XOFF", Handshake.RequestToSendXOnXOff)
             };
-            FlowControlComboBox.SelectedItem = FlowControlComboBox.Items.OfType<FlowControlChoice>().First(choice => choice.Handshake == Handshake.XOnXOff);
+            FlowControlComboBox.SelectedItem = FlowControlComboBox.Items.OfType<FlowControlChoice>().FirstOrDefault(choice => choice.DisplayName == _settings.FlowControl)
+                ?? FlowControlComboBox.Items.OfType<FlowControlChoice>().First(choice => choice.Handshake == Handshake.XOnXOff);
+
+            MergeLineEndingsCheckBox.IsChecked = _settings.MergeLineEndings;
+            AutoScrollCheckBox.IsChecked = _settings.AutoScroll;
+            PanelSyncCheckBox.IsChecked = _settings.PanelSync;
 
             _reader.ChunkReceived += Reader_ChunkReceived;
             _reader.StatusChanged += Reader_StatusChanged;
@@ -71,6 +81,7 @@ namespace UartMonitor
 
             ApplyFontSettings();
             RefreshPorts();
+            ApplySavedPort();
         }
 
         private void RefreshButton_Click(object sender, RoutedEventArgs e)
@@ -383,7 +394,14 @@ namespace UartMonitor
 
         public void Dispose()
         {
+            SaveSettings();
             _reader.Dispose();
+        }
+
+        private void ApplySavedPort()
+        {
+            if (!string.IsNullOrWhiteSpace(_settings.PortName) && PortComboBox.Items.Contains(_settings.PortName))
+                PortComboBox.SelectedItem = _settings.PortName;
         }
 
         private int ParseBaudRate()
@@ -462,6 +480,24 @@ namespace UartMonitor
 
             fontSize = 16;
             return false;
+        }
+
+        private void SaveSettings()
+        {
+            _settings.PortName = PortComboBox.SelectedItem as string;
+            _settings.BaudRate = BaudComboBox.Text?.Trim() ?? _settings.BaudRate;
+            _settings.EncodingDisplayName = (EncodingComboBox.SelectedItem as EncodingChoice)?.DisplayName ?? _settings.EncodingDisplayName;
+            _settings.FontFamily = (FontFamilyComboBox.SelectedItem as FontFamilyChoice)?.FontFamily.Source ?? _settings.FontFamily;
+            _settings.FontSize = FontSizeComboBox.Text?.Trim() ?? _settings.FontSize;
+            _settings.DataBits = GetSelectedDataBits();
+            _settings.StopBits = (StopBitsComboBox.SelectedItem as StopBitsChoice)?.DisplayName ?? _settings.StopBits;
+            _settings.Parity = GetSelectedParity().ToString();
+            _settings.FlowControl = (FlowControlComboBox.SelectedItem as FlowControlChoice)?.DisplayName ?? _settings.FlowControl;
+            _settings.MergeLineEndings = MergeLineEndingsCheckBox.IsChecked == true;
+            _settings.AutoScroll = AutoScrollCheckBox.IsChecked == true;
+            _settings.PanelSync = PanelSyncCheckBox.IsChecked == true;
+
+            _settings.Save();
         }
 
         private sealed class EncodingChoice
