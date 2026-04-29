@@ -287,11 +287,13 @@ namespace UartMonitor
             if (LogBox.Document == null)
                 InitializeLogDocument();
 
-            if (LogBox.Document.Blocks.LastBlock is Paragraph paragraph)
+            FlowDocument document = LogBox.Document!;
+
+            if (document.Blocks.LastBlock is Paragraph paragraph)
                 return paragraph;
 
             paragraph = CreateParagraph();
-            LogBox.Document.Blocks.Add(paragraph);
+            document.Blocks.Add(paragraph);
             return paragraph;
         }
 

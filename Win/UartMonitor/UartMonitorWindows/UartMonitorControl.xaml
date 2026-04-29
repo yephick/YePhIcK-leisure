@@ -16,7 +16,12 @@
     <DockPanel Background="#1c1c1c">
 
         <StackPanel DockPanel.Dock="Top" Orientation="Vertical" Margin="8,8,8,4">
-            <WrapPanel Margin="0,0,0,4" FontSize="11">
+            <WrapPanel Margin="0,0,0,4">
+                <Button x:Name="RefreshButton" Content="↻" Width="24" Height="24" Margin="0,0,4,0" Padding="0" Click="RefreshButton_Click" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Refresh ports" Background="#2a2a2a" BorderBrush="#3b3b3b" BorderThickness="1" Foreground="#d6d6d6" Cursor="Hand" MinWidth="0" MinHeight="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
+                <Button x:Name="ConnectButton" Content="⚡" Width="24" Height="24" Margin="0,0,4,0" Click="ConnectButton_Click" Background="#2a2a2a" BorderBrush="#3b3b3b" BorderThickness="1" Foreground="#d6d6d6" FontWeight="SemiBold" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Connect" Padding="0" MinWidth="0" MinHeight="0" Cursor="Hand" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
+                <Button x:Name="DisconnectButton" Content="⎋" Width="24" Height="24" Margin="0,0,4,0" Click="DisconnectButton_Click" Background="#2a2a2a" BorderBrush="#3b3b3b" BorderThickness="1" Foreground="#d6d6d6" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Disconnect" Padding="0" MinWidth="0" MinHeight="0" Cursor="Hand" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
+                <Button x:Name="TestButton" Content="🔤" Width="24" Height="24" Margin="0,0,4,0" Click="TestButton_Click" Background="#2a2a2a" BorderBrush="#3b3b3b" BorderThickness="1" Foreground="#d6d6d6" FontSize="13" FontFamily="Segoe UI Emoji" ToolTip="Run test sample" Padding="0" MinWidth="0" MinHeight="0" Cursor="Hand" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
+                <Button x:Name="ClearButton" Content="❌" Width="24" Height="24" Margin="0,0,8,0" Click="ClearButton_Click" Background="#2a2a2a" BorderBrush="#3b3b3b" BorderThickness="1" Foreground="#d6d6d6" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Clear log" Padding="0" MinWidth="0" MinHeight="0" Cursor="Hand" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
                 <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
                     <TextBlock Text="Port:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
                     <ComboBox x:Name="PortComboBox" Width="72" FontSize="11"/>
@@ -24,7 +29,7 @@
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
                     <TextBlock Text="Baud:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                    <ComboBox x:Name="BaudComboBox" Width="92" IsEditable="True" FontSize="11"/>
+                    <ComboBox x:Name="BaudComboBox" Width="64" IsEditable="True" FontSize="11"/>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
@@ -34,22 +39,22 @@
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
                     <TextBlock Text="Font:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                    <ComboBox x:Name="FontFamilyComboBox" Width="150" FontSize="11" SelectionChanged="FontFamilyComboBox_SelectionChanged"/>
+                    <ComboBox x:Name="FontFamilyComboBox" Width="112" FontSize="11" SelectionChanged="FontFamilyComboBox_SelectionChanged"/>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
                     <TextBlock Text="Size:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                    <ComboBox x:Name="FontSizeComboBox" Width="52" IsEditable="True" FontSize="11" SelectionChanged="FontSizeComboBox_SelectionChanged" LostFocus="FontSizeComboBox_LostFocus"/>
+                    <ComboBox x:Name="FontSizeComboBox" Width="36" IsEditable="True" FontSize="11" SelectionChanged="FontSizeComboBox_SelectionChanged" LostFocus="FontSizeComboBox_LostFocus"/>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
                     <TextBlock Text="Data bits:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                    <ComboBox x:Name="DataBitsComboBox" Width="48" FontSize="11"/>
+                    <ComboBox x:Name="DataBitsComboBox" Width="38" FontSize="11"/>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
                     <TextBlock Text="Stop bits:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                    <ComboBox x:Name="StopBitsComboBox" Width="60" FontSize="11"/>
+                    <ComboBox x:Name="StopBitsComboBox" Width="35" FontSize="11"/>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
@@ -65,11 +70,6 @@
                 <CheckBox x:Name="MergeLineEndingsCheckBox" Content="Merge CR/LF" Foreground="#d6d6d6" IsChecked="True" Margin="0,0,6,0" VerticalAlignment="Center" FontSize="11"/>
                 <CheckBox x:Name="AutoScrollCheckBox" Content="Auto-scroll" Foreground="#d6d6d6" IsChecked="True" Margin="0,0,6,0" VerticalAlignment="Center" FontSize="11"/>
 
-                <Button x:Name="RefreshButton" Content="Refresh" Width="64" Margin="0,0,4,0" Click="RefreshButton_Click" FontSize="11"/>
-                <Button x:Name="ConnectButton" Content="Connect" Width="68" Margin="0,0,4,0" Click="ConnectButton_Click" Background="#2f7d32" Foreground="#ffffff" FontWeight="SemiBold" BorderBrush="#4caf50" FontSize="11"/>
-                <Button x:Name="DisconnectButton" Content="Disconnect" Width="78" Margin="0,0,4,0" Click="DisconnectButton_Click" FontSize="11"/>
-                <Button x:Name="TestButton" Content="Test" Width="52" Margin="0,0,4,0" Click="TestButton_Click" FontSize="11"/>
-                <Button x:Name="ClearButton" Content="Clear" Width="58" Click="ClearButton_Click" FontSize="11"/>
             </WrapPanel>
 
             <TextBlock x:Name="StatusTextBlock" Text="Disconnected" Foreground="#d6d6d6" FontSize="11"/>
