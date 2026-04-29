@@ -72,7 +72,7 @@ namespace UartMonitor.Rendering
                 for (int search = index + 2; search < input.Length; search++)
                 {
                     char final = input[search];
-                    if (final >= '@' && final <= '~')
+                    if ((final >= 'A' && final <= 'Z') || (final >= '[' && final <= '`') || (final >= 'a' && final <= '~'))
                     {
                         end = search;
                         break;

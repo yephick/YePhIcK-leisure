@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using UartMonitor.Rendering;
 using UartMonitor.Serial;
@@ -19,6 +20,7 @@ namespace UartMonitor
         public MyToolWindowControl()
         {
             InitializeComponent();
+            InitializeLogDocument();
 
             BaudComboBox.ItemsSource = new[] { 4608000, 4000000, 3000000, 2000000, 1000000, 921600, 750000, 500000, 460800, 400000, 300000, 225000, 200000, 153600, 115200, 57600, 38400, 19200, 9600 };
             BaudComboBox.Text = "115200";
@@ -134,7 +136,7 @@ namespace UartMonitor
 
         private void TestButton_Click(object sender, RoutedEventArgs e)
         {
-            LogBox.Clear();
+            ClearLog();
             _ansiParser.Reset();
             HexLogBox.Clear();
 
@@ -148,7 +150,7 @@ namespace UartMonitor
 
         private void ClearButton_Click(object sender, RoutedEventArgs e)
         {
-            LogBox.Clear();
+            ClearLog();
             HexLogBox.Clear();
             _ansiParser.Reset();
         }
@@ -222,7 +224,19 @@ namespace UartMonitor
 
         private void AppendSegment(LogSegment segment)
         {
-            LogBox.AppendText(segment.Text);
+            Paragraph paragraph = EnsureActiveParagraph();
+            Run run = new Run(segment.Text);
+
+            if (segment.Style.Foreground is Color foreground)
+                run.Foreground = CreateBrush(foreground);
+
+            if (segment.Style.Background is Color background)
+                run.Background = CreateBrush(background);
+
+            run.FontWeight = segment.Style.FontWeight;
+            run.TextDecorations = segment.Style.TextDecorations;
+
+            paragraph.Inlines.Add(run);
         }
 
         private void ProcessChunk(byte[] bytes, Encoding encoding)
@@ -247,17 +261,72 @@ namespace UartMonitor
             HexLogBox.AppendText(HexChunkFormatter.Format(bytes));
         }
 
+        private void ClearLog()
+        {
+            InitializeLogDocument();
+        }
+
+        private void InitializeLogDocument()
+        {
+            FlowDocument document = new FlowDocument
+            {
+                Background = new SolidColorBrush(Color.FromRgb(0x1c, 0x1c, 0x1c)),
+                Foreground = new SolidColorBrush(Color.FromRgb(0x00, 0xff, 0x00)),
+                PagePadding = new Thickness(0),
+                FontFamily = LogBox.FontFamily,
+                FontSize = LogBox.FontSize,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight
+            };
+
+            document.Blocks.Add(CreateParagraph());
+            LogBox.Document = document;
+        }
+
+        private Paragraph EnsureActiveParagraph()
+        {
+            if (LogBox.Document == null)
+                InitializeLogDocument();
+
+            if (LogBox.Document.Blocks.LastBlock is Paragraph paragraph)
+                return paragraph;
+
+            paragraph = CreateParagraph();
+            LogBox.Document.Blocks.Add(paragraph);
+            return paragraph;
+        }
+
+        private static Paragraph CreateParagraph()
+        {
+            return new Paragraph
+            {
+                Margin = new Thickness(0),
+                Padding = new Thickness(0),
+                LineHeight = double.NaN
+            };
+        }
+
+        private static SolidColorBrush CreateBrush(Color color)
+        {
+            SolidColorBrush brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
+        }
+
         private void ApplyFontSettings()
         {
             if (FontFamilyComboBox.SelectedItem is FontFamilyChoice familyChoice)
             {
                 FontFamily fontFamily = familyChoice.FontFamily;
                 LogBox.FontFamily = fontFamily;
+                if (LogBox.Document != null)
+                    LogBox.Document.FontFamily = fontFamily;
             }
 
             if (TryGetFontSize(out double fontSize))
             {
                 LogBox.FontSize = fontSize;
+                if (LogBox.Document != null)
+                    LogBox.Document.FontSize = fontSize;
             }
         }
 
