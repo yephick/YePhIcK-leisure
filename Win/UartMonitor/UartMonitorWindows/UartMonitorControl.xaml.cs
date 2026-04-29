@@ -379,6 +379,8 @@ namespace UartMonitor
                 HexLogBox.FontFamily = fontFamily;
                 if (LogBox.Document != null)
                     LogBox.Document.FontFamily = fontFamily;
+                if (HexLogBox.Document != null)
+                    HexLogBox.Document.FontFamily = fontFamily;
             }
 
             if (TryGetFontSize(out double fontSize))
@@ -387,8 +389,12 @@ namespace UartMonitor
                 HexLogBox.FontSize = fontSize;
                 if (LogBox.Document != null)
                     LogBox.Document.FontSize = fontSize;
+                if (HexLogBox.Document != null)
+                    HexLogBox.Document.FontSize = fontSize;
                 if (LogBox.Document?.Blocks.LastBlock is Paragraph paragraph)
                     paragraph.LineHeight = fontSize;
+                if (HexLogBox.Document?.Blocks.LastBlock is Paragraph hexParagraph)
+                    hexParagraph.LineHeight = fontSize;
             }
         }
 

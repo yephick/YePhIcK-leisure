@@ -346,6 +346,26 @@ namespace UartMonitor.Tests.Rendering
         }
 
         [TestMethod]
+        public void Parse_LeadingBinaryFraming_IsSkippedBeforeFirstRenderableContent()
+        {
+            AnsiParser parser = new AnsiParser();
+
+            byte[] bytes = new byte[]
+            {
+                0x00, 0x80, 0x26, 0x01, 0x00, 0x85, 0xB3, 0x4B, 0x2A, 0x02, 0x00, 0x00, 0x00,
+                0x1B, 0x63, 0x1B, 0x5B, 0x33, 0x32, 0x6D, 0x1B, 0x5B, 0x34, 0x38, 0x3B, 0x35, 0x3B, 0x32, 0x33, 0x34, 0x6D,
+                0x1B, 0x5B, 0x32, 0x4A,
+                0x55, 0x41, 0x52, 0x54, 0x20, 0x69, 0x6E, 0x69, 0x74, 0x69, 0x61, 0x6C, 0x69, 0x7A, 0x65, 0x64
+            };
+
+            string text = System.Text.Encoding.GetEncoding(28591).GetString(bytes);
+            LogSegment segment = parser.Parse(text).First();
+
+            StringAssert.StartsWith(segment.Text, "UART initialized");
+            Assert.AreEqual(Color.FromRgb(0x00, 0xff, 0x00), segment.Style.Foreground);
+        }
+
+        [TestMethod]
         public void Parse_CrLfAndCr_AreNormalizedToSingleNewLine()
         {
             AnsiParser parser = new AnsiParser();

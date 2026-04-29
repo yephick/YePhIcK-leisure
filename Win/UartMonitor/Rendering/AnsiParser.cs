@@ -20,6 +20,8 @@ namespace UartMonitor.Rendering
 
             List<LogSegment> segments = new List<LogSegment>();
             StringBuilder buffer = new StringBuilder();
+            StringBuilder prefixBuffer = new StringBuilder();
+            bool sawEscape = false;
 
             for (int index = 0; index < input.Length; index++)
             {
@@ -27,6 +29,8 @@ namespace UartMonitor.Rendering
 
                 if (ch != '\x1b')
                 {
+                    StringBuilder target = sawEscape ? buffer : prefixBuffer;
+
                     if (ch == '\r' || ch == '\n')
                     {
                         if (index + 1 >= input.Length)
@@ -41,12 +45,11 @@ namespace UartMonitor.Rendering
                             index++;
                         }
 
-                        buffer.Append('\n');
+                        target.Append('\n');
+                        continue;
                     }
-                    else
-                    {
-                        buffer.Append(ch);
-                    }
+
+                    target.Append(ch);
                     continue;
                 }
 
@@ -59,6 +62,8 @@ namespace UartMonitor.Rendering
                 if (input[index + 1] == 'c')
                 {
                     _style.Reset();
+                    sawEscape = true;
+                    prefixBuffer.Clear();
                     index++;
                     continue;
                 }
@@ -87,11 +92,17 @@ namespace UartMonitor.Rendering
 
                 FlushText(segments, buffer);
 
+                sawEscape = true;
+                prefixBuffer.Clear();
+
                 if (input[end] == 'm')
                     ApplySgr(input.Substring(index + 2, end - index - 2));
 
                 index = end;
             }
+
+            if (!sawEscape && prefixBuffer.Length > 0)
+                buffer.Append(prefixBuffer);
 
             FlushText(segments, buffer);
             return segments;
@@ -257,5 +268,6 @@ namespace UartMonitor.Rendering
         {
             return (byte)(value == 0 ? 0 : 55 + (value * 40));
         }
+
     }
 }
