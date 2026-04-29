@@ -12,4 +12,5 @@ public sealed class SerialPortOptions
     public StopBits StopBits { get; set; } = StopBits.One;
     public Handshake Handshake { get; set; } = Handshake.None;
     public Encoding Encoding { get; set; } = Encoding.UTF8;
+    public bool MergeLineEndings { get; set; } = true;
 }

@@ -54,6 +54,9 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Commands\MyToolWindowCommand.cs" />
     <Compile Include="Serial\SerialPortOptions.cs" />
+    <Compile Include="Serial\LineEndingNormalizer.cs" />
+    <Compile Include="Serial\HexChunkFormatter.cs" />
+    <Compile Include="Serial\TestSample.cs" />
     <Compile Include="Serial\SerialReader.cs" />
     <Compile Include="UartMonitorPackage.cs" />
     <Compile Include="source.extension.cs">

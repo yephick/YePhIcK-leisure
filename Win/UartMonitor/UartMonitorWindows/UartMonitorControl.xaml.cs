@@ -5,31 +5,85 @@ using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using UartMonitor.Rendering;
 using UartMonitor.Serial;
 
 namespace UartMonitor
 {
     public partial class MyToolWindowControl : UserControl, IDisposable
     {
+        private readonly AnsiParser _ansiParser = new AnsiParser();
         private readonly SerialReader _reader = new SerialReader();
 
         public MyToolWindowControl()
         {
             InitializeComponent();
 
-            BaudComboBox.ItemsSource = new[] { 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 2000000, 3000000, 4000000, 4608000 };
-            BaudComboBox.SelectedItem = 115200;
+            BaudComboBox.ItemsSource = new[] { 4608000, 4000000, 3000000, 2000000, 1000000, 921600, 750000, 500000, 460800, 400000, 300000, 225000, 200000, 153600, 115200, 57600, 38400, 19200, 9600 };
+            BaudComboBox.Text = "115200";
 
-            _reader.TextReceived += Reader_TextReceived;
+            EncodingComboBox.ItemsSource = GetEncodings();
+            EncodingComboBox.SelectedItem = EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => choice.Encoding.CodePage == 28591)
+                ?? EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => choice.DisplayName.StartsWith("ISO-8859-1: 1998", StringComparison.OrdinalIgnoreCase));
+
+            FontFamilyComboBox.ItemsSource = GetFontFamilies();
+            FontFamilyComboBox.SelectedItem = FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault(choice => choice.FontFamily.Source.Equals("Consolas", StringComparison.OrdinalIgnoreCase))
+                ?? FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault(choice => choice.IsMonospace)
+                ?? FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault();
+
+            FontSizeComboBox.ItemsSource = new[] { 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24 };
+            FontSizeComboBox.Text = "16";
+
+            DataBitsComboBox.ItemsSource = new[] { 5, 6, 7, 8 };
+            DataBitsComboBox.SelectedItem = 8;
+
+            StopBitsComboBox.ItemsSource = new[]
+            {
+                new StopBitsChoice("1", StopBits.One),
+                new StopBitsChoice("1.5", StopBits.OnePointFive),
+                new StopBitsChoice("2", StopBits.Two)
+            };
+            StopBitsComboBox.SelectedIndex = 0;
+
+            ParityComboBox.ItemsSource = Enum.GetValues(typeof(Parity)).Cast<Parity>().ToArray();
+            ParityComboBox.SelectedItem = Parity.None;
+
+            FlowControlComboBox.ItemsSource = new[]
+            {
+                new FlowControlChoice("None", Handshake.None),
+                new FlowControlChoice("XON/XOFF", Handshake.XOnXOff),
+                new FlowControlChoice("RTS/CTS", Handshake.RequestToSend),
+                new FlowControlChoice("RTS/CTS + XON/XOFF", Handshake.RequestToSendXOnXOff)
+            };
+            FlowControlComboBox.SelectedItem = FlowControlComboBox.Items.OfType<FlowControlChoice>().First(choice => choice.Handshake == Handshake.XOnXOff);
+
+            _reader.ChunkReceived += Reader_ChunkReceived;
             _reader.StatusChanged += Reader_StatusChanged;
             _reader.Error += Reader_Error;
 
+            ApplyFontSettings();
             RefreshPorts();
         }
 
         private void RefreshButton_Click(object sender, RoutedEventArgs e)
         {
             RefreshPorts();
+        }
+
+        private void FontFamilyComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            ApplyFontSettings();
+        }
+
+        private void FontSizeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            ApplyFontSettings();
+        }
+
+        private void FontSizeComboBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            ApplyFontSettings();
         }
 
         private void ConnectButton_Click(object sender, RoutedEventArgs e)
@@ -41,17 +95,23 @@ namespace UartMonitor
                 return;
             }
 
-            int baudRate = BaudComboBox.SelectedItem is int selectedBaud ? selectedBaud : 115200;
+            int baudRate = ParseBaudRate();
+            Encoding encoding = GetSelectedEncoding();
+            int dataBits = GetSelectedDataBits();
+            StopBits stopBits = GetSelectedStopBits();
+            Parity parity = GetSelectedParity();
+            Handshake handshake = GetSelectedHandshake();
 
             var options = new SerialPortOptions
             {
                 PortName = portName!,
                 BaudRate = baudRate,
-                DataBits = 8,
-                Parity = Parity.None,
-                StopBits = StopBits.One,
-                Handshake = Handshake.None,
-                Encoding = Encoding.UTF8
+                DataBits = dataBits,
+                Parity = parity,
+                StopBits = stopBits,
+                Handshake = handshake,
+                Encoding = encoding,
+                MergeLineEndings = MergeLineEndingsCheckBox.IsChecked == true
             };
 
             try
@@ -72,22 +132,41 @@ namespace UartMonitor
             UpdateConnectionButtons();
         }
 
-        private void ClearButton_Click(object sender, RoutedEventArgs e)
+        private void TestButton_Click(object sender, RoutedEventArgs e)
         {
-            LogBox.Document.Blocks.Clear();
+            LogBox.Clear();
+            _ansiParser.Reset();
+            HexLogBox.Clear();
+
+            Encoding encoding = GetSelectedEncoding();
+            foreach (byte[] chunk in UartMonitor.Serial.TestSample.GetTestChunks())
+                ProcessChunk(chunk, encoding);
+
+            LogBox.ScrollToEnd();
+            HexLogBox.ScrollToEnd();
         }
 
-        private void Reader_TextReceived(object sender, string text)
+        private void ClearButton_Click(object sender, RoutedEventArgs e)
+        {
+            LogBox.Clear();
+            HexLogBox.Clear();
+            _ansiParser.Reset();
+        }
+
+        private void HexClearButton_Click(object sender, RoutedEventArgs e)
+        {
+            HexLogBox.Clear();
+        }
+
+        private void Reader_ChunkReceived(object sender, SerialReader.ChunkReceivedEventArgs e)
         {
 #pragma warning disable VSSDK007
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
 #pragma warning restore VSSDK007
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                LogBox.AppendText(text);
 
-                if (AutoScrollCheckBox.IsChecked == true)
-                    LogBox.ScrollToEnd();
+                ProcessChunk(e.Bytes, GetSelectedEncoding());
             });
         }
 
@@ -141,9 +220,180 @@ namespace UartMonitor
             StatusTextBlock.Text = text;
         }
 
+        private void AppendSegment(LogSegment segment)
+        {
+            LogBox.AppendText(segment.Text);
+        }
+
+        private void ProcessChunk(byte[] bytes, Encoding encoding)
+        {
+            AppendHexChunk(bytes);
+
+            string text = encoding.GetString(bytes);
+            foreach (LogSegment segment in _ansiParser.Parse(text))
+            {
+                AppendSegment(segment);
+            }
+
+            if (AutoScrollCheckBox.IsChecked == true)
+            {
+                LogBox.ScrollToEnd();
+                HexLogBox.ScrollToEnd();
+            }
+        }
+
+        private void AppendHexChunk(byte[] bytes)
+        {
+            HexLogBox.AppendText(HexChunkFormatter.Format(bytes));
+        }
+
+        private void ApplyFontSettings()
+        {
+            if (FontFamilyComboBox.SelectedItem is FontFamilyChoice familyChoice)
+            {
+                FontFamily fontFamily = familyChoice.FontFamily;
+                LogBox.FontFamily = fontFamily;
+            }
+
+            if (TryGetFontSize(out double fontSize))
+            {
+                LogBox.FontSize = fontSize;
+            }
+        }
+
         public void Dispose()
         {
             _reader.Dispose();
+        }
+
+        private int ParseBaudRate()
+        {
+            if (BaudComboBox.Text != null && int.TryParse(BaudComboBox.Text.Trim(), out int baudRate) && baudRate > 0)
+                return baudRate;
+
+            return BaudComboBox.SelectedItem is int selectedBaud ? selectedBaud : 115200;
+        }
+
+        private Encoding GetSelectedEncoding()
+        {
+            if (EncodingComboBox.SelectedItem is EncodingChoice choice)
+                return choice.Encoding;
+
+            return Encoding.UTF8;
+        }
+
+        private int GetSelectedDataBits()
+        {
+            return DataBitsComboBox.SelectedItem is int dataBits ? dataBits : 8;
+        }
+
+        private StopBits GetSelectedStopBits()
+        {
+            return StopBitsComboBox.SelectedItem is StopBitsChoice choice ? choice.StopBits : StopBits.One;
+        }
+
+        private Parity GetSelectedParity()
+        {
+            return ParityComboBox.SelectedItem is Parity parity ? parity : Parity.None;
+        }
+
+        private Handshake GetSelectedHandshake()
+        {
+            return FlowControlComboBox.SelectedItem is FlowControlChoice choice ? choice.Handshake : Handshake.XOnXOff;
+        }
+
+        private static EncodingChoice[] GetEncodings()
+        {
+            return Encoding.GetEncodings()
+                .Select(info => new EncodingChoice(info.DisplayName, Encoding.GetEncoding(info.CodePage)))
+                .OrderBy(choice => choice.DisplayName)
+                .ToArray();
+        }
+
+        private static FontFamilyChoice[] GetFontFamilies()
+        {
+            return Fonts.SystemFontFamilies
+                .Select(fontFamily => new FontFamilyChoice(fontFamily, IsMonospace(fontFamily)))
+                .OrderByDescending(choice => choice.IsMonospace)
+                .ThenBy(choice => choice.FontFamily.Source, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        private static bool IsMonospace(FontFamily fontFamily)
+        {
+            string name = fontFamily.Source.ToLowerInvariant();
+
+            if (name.Contains("mono") || name.Contains("code") || name.Contains("consolas") || name.Contains("courier") || name.Contains("fixed") || name.Contains("terminal") || name.Contains("console"))
+                return true;
+
+            return false;
+        }
+
+        private bool TryGetFontSize(out double fontSize)
+        {
+            if (FontSizeComboBox.Text != null && double.TryParse(FontSizeComboBox.Text.Trim(), out fontSize) && fontSize > 0)
+                return true;
+
+            if (FontSizeComboBox.SelectedItem is int selectedSize)
+            {
+                fontSize = selectedSize;
+                return true;
+            }
+
+            fontSize = 16;
+            return false;
+        }
+
+        private sealed class EncodingChoice
+        {
+            public EncodingChoice(string displayName, Encoding encoding)
+            {
+                DisplayName = displayName;
+                Encoding = encoding;
+            }
+
+            public string DisplayName { get; }
+            public Encoding Encoding { get; }
+            public override string ToString() => DisplayName;
+        }
+
+        private sealed class StopBitsChoice
+        {
+            public StopBitsChoice(string displayName, StopBits stopBits)
+            {
+                DisplayName = displayName;
+                StopBits = stopBits;
+            }
+
+            public string DisplayName { get; }
+            public StopBits StopBits { get; }
+            public override string ToString() => DisplayName;
+        }
+
+        private sealed class FlowControlChoice
+        {
+            public FlowControlChoice(string displayName, Handshake handshake)
+            {
+                DisplayName = displayName;
+                Handshake = handshake;
+            }
+
+            public string DisplayName { get; }
+            public Handshake Handshake { get; }
+            public override string ToString() => DisplayName;
+        }
+
+        private sealed class FontFamilyChoice
+        {
+            public FontFamilyChoice(FontFamily fontFamily, bool isMonospace)
+            {
+                FontFamily = fontFamily;
+                IsMonospace = isMonospace;
+            }
+
+            public FontFamily FontFamily { get; }
+            public bool IsMonospace { get; }
+            public override string ToString() => FontFamily.Source;
         }
     }
 }

@@ -13,7 +13,23 @@ public sealed class SerialReader : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _readerTask;
     private Encoding _encoding = Encoding.UTF8;
+    private bool _mergeLineEndings = true;
+    private readonly LineEndingNormalizer _lineEndingNormalizer = new LineEndingNormalizer();
 
+    public sealed class ChunkReceivedEventArgs : EventArgs
+    {
+        public ChunkReceivedEventArgs(byte[] bytes, string text)
+        {
+            Bytes = bytes;
+            Text = text;
+        }
+
+        public byte[] Bytes { get; }
+        public string Text { get; }
+    }
+
+    public event EventHandler<byte[]>? BytesReceived;
+    public event EventHandler<ChunkReceivedEventArgs>? ChunkReceived;
     public event EventHandler<string>? TextReceived;
     public event EventHandler<string>? StatusChanged;
     public event EventHandler<Exception>? Error;
@@ -33,6 +49,7 @@ public sealed class SerialReader : IDisposable
             return;
 
         _encoding = options.Encoding;
+        _mergeLineEndings = options.MergeLineEndings;
 
         SerialPort port = new SerialPort(options.PortName, options.BaudRate, options.Parity, options.DataBits, options.StopBits)
         {
@@ -135,7 +152,13 @@ public sealed class SerialReader : IDisposable
                 if (count <= 0)
                     continue;
 
+                byte[] chunk = new byte[count];
+                Buffer.BlockCopy(buffer, 0, chunk, 0, count);
+                BytesReceived?.Invoke(this, chunk);
+
                 string text = _encoding.GetString(buffer, 0, count);
+                text = _lineEndingNormalizer.Normalize(text, _mergeLineEndings);
+                ChunkReceived?.Invoke(this, new ChunkReceivedEventArgs(chunk, text));
                 TextReceived?.Invoke(this, text);
             }
             catch (TimeoutException)

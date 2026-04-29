@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net481</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\UartMonitor\Rendering\AnsiParser.cs" Link="Rendering\AnsiParser.cs" />
+    <Compile Include="..\UartMonitor\Rendering\AnsiStyle.cs" Link="Rendering\AnsiStyle.cs" />
+    <Compile Include="..\UartMonitor\Rendering\LogLine.cs" Link="Rendering\LogLine.cs" />
+    <Compile Include="..\UartMonitor\Serial\LineEndingNormalizer.cs" Link="Serial\LineEndingNormalizer.cs" />
+    <Compile Include="..\UartMonitor\Serial\HexChunkFormatter.cs" Link="Serial\HexChunkFormatter.cs" />
+    <Compile Include="..\UartMonitor\Serial\TestSample.cs" Link="Serial\TestSample.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="MSTest.TestAdapter" Version="3.8.3" />
+    <PackageReference Include="MSTest.TestFramework" Version="3.8.3" />
+  </ItemGroup>
+</Project>

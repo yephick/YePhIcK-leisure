@@ -1,4 +1,4 @@
-﻿global using Community.VisualStudio.Toolkit;
+global using Community.VisualStudio.Toolkit;
 global using Microsoft.VisualStudio.Shell;
 global using System;
 global using Task = System.Threading.Tasks.Task;
@@ -9,7 +9,7 @@ namespace UartMonitor
 {
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [InstalledProductRegistration(Vsix.Name, Vsix.Description, Vsix.Version)]
-    [ProvideToolWindow(typeof(UartMonitorWindow.Pane), Style = VsDockStyle.Tabbed, Window = WindowGuids.SolutionExplorer)]
+    [ProvideToolWindow(typeof(UartMonitorWindow.Pane), Style = VsDockStyle.Tabbed, Window = WindowGuids.OutputWindow)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
     [Guid(PackageGuids.UartMonitorString)]
     public sealed class UartMonitorPackage : ToolkitPackage
