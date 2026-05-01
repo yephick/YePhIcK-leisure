@@ -57,7 +57,10 @@
     <Compile Include="Serial\LineEndingNormalizer.cs" />
     <Compile Include="Serial\HexChunkFormatter.cs" />
     <Compile Include="Serial\HexStreamFormatter.cs" />
+    <Compile Include="Serial\RawLineSplitter.cs" />
     <Compile Include="Serial\AlignmentMath.cs" />
+    <Compile Include="Serial\CaptureLineIndex.cs" />
+    <Compile Include="Serial\SelectionMirror.cs" />
     <Compile Include="Serial\TestSample.cs" />
     <Compile Include="Serial\SerialReader.cs" />
     <Compile Include="UartMonitorPackage.cs" />

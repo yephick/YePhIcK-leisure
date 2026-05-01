@@ -14,7 +14,10 @@
     <Compile Include="..\UartMonitor\Serial\LineEndingNormalizer.cs" Link="Serial\LineEndingNormalizer.cs" />
     <Compile Include="..\UartMonitor\Serial\HexChunkFormatter.cs" Link="Serial\HexChunkFormatter.cs" />
     <Compile Include="..\UartMonitor\Serial\HexStreamFormatter.cs" Link="Serial\HexStreamFormatter.cs" />
+    <Compile Include="..\UartMonitor\Serial\RawLineSplitter.cs" Link="Serial\RawLineSplitter.cs" />
     <Compile Include="..\UartMonitor\Serial\AlignmentMath.cs" Link="Serial\AlignmentMath.cs" />
+    <Compile Include="..\UartMonitor\Serial\CaptureLineIndex.cs" Link="Serial\CaptureLineIndex.cs" />
+    <Compile Include="..\UartMonitor\Serial\SelectionMirror.cs" Link="Serial\SelectionMirror.cs" />
     <Compile Include="..\UartMonitor\Serial\TestSample.cs" Link="Serial\TestSample.cs" />
     <Compile Include="..\UartMonitor\Settings\UartMonitorUserSettings.cs" Link="Settings\UartMonitorUserSettings.cs" />
   </ItemGroup>

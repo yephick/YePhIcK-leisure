@@ -583,6 +583,17 @@ namespace UartMonitor.Tests.Rendering
         }
 
         [TestMethod]
+        public void ToolWindow_Xaml_EnablesInactiveSelectionHighlightOnBothPanes()
+        {
+            string xamlPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\..\UartMonitor\UartMonitorWindows\UartMonitorControl.xaml"));
+            string xaml = File.ReadAllText(xamlPath);
+
+            StringAssert.Contains(xaml, "x:Name=\"LogBox\"");
+            StringAssert.Contains(xaml, "IsInactiveSelectionHighlightEnabled=\"True\"");
+            StringAssert.Contains(xaml, "x:Name=\"HexLogBox\"");
+        }
+
+        [TestMethod]
         public void Settings_SaveAndLoad_RoundTripsKeyValues()
         {
             string tempDir = Path.Combine(Path.GetTempPath(), "uartmonitor-tests", Guid.NewGuid().ToString("N"));

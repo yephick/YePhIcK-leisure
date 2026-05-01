@@ -1,13 +1,16 @@
 using Microsoft.VisualStudio.Shell;
 using System;
+using System.Collections.Generic;
 using System.IO.Ports;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Controls.Primitives;
+using System.Windows.Threading;
 using UartMonitor.Rendering;
 using UartMonitor.Serial;
 using UartMonitor.Settings;
@@ -19,8 +22,21 @@ namespace UartMonitor
         private readonly AnsiParser _ansiParser = new AnsiParser();
         private readonly SerialReader _reader = new SerialReader();
         private readonly HexStreamFormatter _hexFormatter = new HexStreamFormatter();
+        private readonly RawLineSplitter _rawLineSplitter = new RawLineSplitter();
+        private readonly CaptureLineIndex _lineIndex = new CaptureLineIndex();
         private readonly UartMonitorUserSettings _settings = UartMonitorUserSettings.Load();
+        private readonly List<TextPointer> _textLineStarts = new List<TextPointer>();
+        private readonly List<TextPointer> _hexLineStarts = new List<TextPointer>();
+        private readonly DispatcherTimer _selectionDebounceTimer;
+        private readonly object _processingGate = new object();
+        private RichTextBox? _pendingSelectionSource;
+        private RichTextBox? _pendingSelectionTarget;
         private bool _syncingScroll;
+        private bool _syncingSelection;
+        private bool _suppressSelectionEvents;
+        private bool _suspendUiRefresh;
+        private bool _refreshQueued;
+        private Encoding _selectedEncoding = Encoding.UTF8;
         private double _visibleTextColumns;
         private double _hexColumns;
 
@@ -28,6 +44,11 @@ namespace UartMonitor
         {
             InitializeComponent();
             InitializeLogDocument();
+            _selectionDebounceTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(100)
+            };
+            _selectionDebounceTimer.Tick += SelectionDebounceTimer_Tick;
 
             BaudComboBox.ItemsSource = new[] { 4608000, 4000000, 3000000, 2000000, 1000000, 921600, 750000, 500000, 460800, 400000, 300000, 225000, 200000, 153600, 115200, 57600, 38400, 19200, 9600 };
             BaudComboBox.Text = _settings.BaudRate;
@@ -36,6 +57,7 @@ namespace UartMonitor
             EncodingComboBox.SelectedItem = EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => string.Equals(choice.DisplayName, _settings.EncodingDisplayName, StringComparison.OrdinalIgnoreCase))
                 ?? EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => choice.Encoding.CodePage == 28591)
                 ?? EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => choice.DisplayName.StartsWith("ISO-8859-1: 1998", StringComparison.OrdinalIgnoreCase));
+            EncodingComboBox.SelectionChanged += EncodingComboBox_SelectionChanged;
 
             FontFamilyComboBox.ItemsSource = GetFontFamilies();
             FontFamilyComboBox.SelectedItem = FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault(choice => choice.FontFamily.Source.Equals(_settings.FontFamily, StringComparison.OrdinalIgnoreCase))
@@ -80,8 +102,10 @@ namespace UartMonitor
             _reader.Error += Reader_Error;
 
             ApplyFontSettings();
+            UpdateSelectedEncodingSnapshot();
             RefreshPorts();
             ApplySavedPort();
+            UpdateSelectionDebug();
         }
 
         private void RefreshButton_Click(object sender, RoutedEventArgs e)
@@ -102,6 +126,37 @@ namespace UartMonitor
         private void FontSizeComboBox_LostFocus(object sender, RoutedEventArgs e)
         {
             ApplyFontSettings();
+        }
+
+        private void EncodingComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            UpdateSelectedEncodingSnapshot();
+        }
+
+        private void LogBox_SelectionChanged(object sender, RoutedEventArgs e)
+        {
+            if (_syncingSelection || _suppressSelectionEvents)
+                return;
+
+            QueueSelectionSync(LogBox, HexLogBox);
+            UpdateSelectionDebug();
+        }
+
+        private void HexLogBox_SelectionChanged(object sender, RoutedEventArgs e)
+        {
+            if (_syncingSelection || _suppressSelectionEvents)
+                return;
+
+            QueueSelectionSync(HexLogBox, LogBox);
+            UpdateSelectionDebug();
+        }
+
+        private void SelectionPane_GotKeyboardFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
+        {
+        }
+
+        private void SelectionPane_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
         }
 
         private void ConnectButton_Click(object sender, RoutedEventArgs e)
@@ -154,10 +209,22 @@ namespace UartMonitor
         {
             ClearLog();
             _ansiParser.Reset();
+            _lineIndex.Clear();
+            _rawLineSplitter.Clear();
 
             Encoding encoding = GetSelectedEncoding();
-            foreach (byte[] chunk in UartMonitor.Serial.TestSample.GetTestChunks())
-                ProcessChunk(chunk, encoding);
+            _suspendUiRefresh = true;
+            try
+            {
+                foreach (byte[] chunk in UartMonitor.Serial.TestSample.GetTestChunks())
+                    ProcessChunk(chunk, encoding);
+            }
+            finally
+            {
+                _suspendUiRefresh = false;
+            }
+
+            RefreshRenderedDocuments();
 
             LogBox.ScrollToEnd();
             HexLogBox.ScrollToEnd();
@@ -167,17 +234,18 @@ namespace UartMonitor
         {
             ClearLog();
             _ansiParser.Reset();
+            _lineIndex.Clear();
+            _rawLineSplitter.Clear();
         }
 
         private void Reader_ChunkReceived(object sender, SerialReader.ChunkReceivedEventArgs e)
         {
-#pragma warning disable VSSDK007
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-#pragma warning restore VSSDK007
+            byte[] chunk = (byte[])e.Bytes.Clone();
+            Encoding encoding = _selectedEncoding;
+            _ = Task.Run(() =>
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-
-                ProcessChunk(e.Bytes, GetSelectedEncoding());
+                ProcessChunkCore(chunk, encoding);
+                RequestUiRefresh();
             });
         }
 
@@ -231,6 +299,86 @@ namespace UartMonitor
             StatusTextBlock.Text = text;
         }
 
+        private void UpdateSelectionDebug()
+        {
+            SelectionDebugTextBlock.Text = BuildSelectionDebugText("L", LogBox) + "   " + BuildSelectionDebugText("R", HexLogBox);
+        }
+
+        private void QueueSelectionSync(RichTextBox source, RichTextBox target)
+        {
+            _pendingSelectionSource = source;
+            _pendingSelectionTarget = target;
+            _selectionDebounceTimer.Stop();
+            _selectionDebounceTimer.Start();
+        }
+
+        private void SelectionDebounceTimer_Tick(object? sender, EventArgs e)
+        {
+            _selectionDebounceTimer.Stop();
+
+            if (_pendingSelectionSource == null || _pendingSelectionTarget == null)
+                return;
+
+            SyncSelection(_pendingSelectionSource, _pendingSelectionTarget);
+            UpdateSelectionDebug();
+        }
+
+        private static string BuildSelectionDebugText(string label, RichTextBox box)
+        {
+            string documentText = new TextRange(box.Document.ContentStart, box.Document.ContentEnd).Text;
+            int startOffset = GetTextOffset(box.Document.ContentStart, box.Selection.Start);
+            int endOffset = GetTextOffset(box.Document.ContentStart, box.Selection.End);
+            (int startLine, int startColumn) = GetLineAndColumn(documentText, startOffset);
+            (int endLine, int endColumn) = GetLineAndColumn(documentText, endOffset);
+            int selectedLength = Math.Max(0, endOffset - startOffset);
+            string selectedText = GetSafeSnippet(documentText, startOffset, endOffset, 40);
+            string startContext = GetSafeSnippet(documentText, Math.Max(0, startOffset - 12), Math.Min(documentText.Length, startOffset + 12), 24);
+            string endContext = GetSafeSnippet(documentText, Math.Max(0, endOffset - 12), Math.Min(documentText.Length, endOffset + 12), 24);
+
+            return $"{label}[s r{startLine + 1},c{startColumn + 1} e r{endLine + 1},c{endColumn + 1} len{selectedLength} off{startOffset}-{endOffset} txt='{selectedText}' sc='{startContext}' ec='{endContext}']";
+        }
+
+        private static (int line, int column) GetLineAndColumn(string text, int offset)
+        {
+            int line = 0;
+            int column = 0;
+            int current = 0;
+            int target = Math.Max(0, Math.Min(offset, text.Length));
+
+            while (current < target)
+            {
+                char value = text[current++];
+                if (value == '\r' || value == '\n')
+                {
+                    line++;
+                    column = 0;
+                    if (current < target && IsLineBreakPair(value, text[current]))
+                        current++;
+                    continue;
+                }
+
+                column++;
+            }
+
+            return (line, column);
+        }
+
+        private static bool IsLineBreakPair(char first, char second)
+        {
+            return (first == '\r' && second == '\n') || (first == '\n' && second == '\r');
+        }
+
+        private static string GetSafeSnippet(string text, int startOffset, int endOffset, int maxLength)
+        {
+            int start = Math.Max(0, Math.Min(startOffset, text.Length));
+            int end = Math.Max(start, Math.Min(endOffset, text.Length));
+            string snippet = text.Substring(start, end - start);
+            snippet = snippet.Replace("\r", "\\r").Replace("\n", "\\n");
+            if (snippet.Length > maxLength)
+                snippet = snippet.Substring(0, maxLength) + "...";
+            return snippet;
+        }
+
         private void AppendSegment(LogSegment segment)
         {
             Paragraph paragraph = EnsureActiveParagraph();
@@ -250,56 +398,159 @@ namespace UartMonitor
 
         private void ProcessChunk(byte[] bytes, Encoding encoding)
         {
-            AppendHexChunk(bytes);
+            ProcessChunkCore(bytes, encoding);
 
-            string text = encoding.GetString(bytes);
-            int visibleColumns = 0;
-            foreach (LogSegment segment in _ansiParser.Parse(text))
+            if (_suspendUiRefresh)
+                return;
+
+            RefreshRenderedDocuments();
+        }
+
+        private void ProcessChunkCore(byte[] bytes, Encoding encoding)
+        {
+            lock (_processingGate)
             {
-                visibleColumns += segment.Text.Length;
-                AppendSegment(segment);
+            foreach (RawLinePart part in _rawLineSplitter.Append(bytes))
+            {
+                byte[] textBytes = part.LineEndingLength > 0
+                    ? part.Bytes.Take(part.Bytes.Length - part.LineEndingLength).ToArray()
+                    : part.Bytes;
+                string text = encoding.GetString(textBytes);
+                string renderedText = string.Concat(_ansiParser.Parse(text).Select(segment => segment.Text));
+                string hex = FormatHexLine(part.Bytes);
+                _lineIndex.AppendLinePart(renderedText, hex, part.IsComplete, part.LineEndingLength, text);
             }
-
-            _visibleTextColumns += visibleColumns;
-            _hexColumns += bytes.Length * 3.0;
-
-            if (AutoScrollCheckBox.IsChecked == true)
-            {
-                LogBox.ScrollToEnd();
-                HexLogBox.ScrollToEnd();
             }
         }
 
-        private void AppendHexChunk(byte[] bytes)
+        private void RefreshRenderedDocuments()
         {
-            string hex = _hexFormatter.Append(bytes);
-            if (hex.Length == 0)
-                return;
-
-            if (HexLogBox.Document?.Blocks.LastBlock is Paragraph paragraph)
+            _suppressSelectionEvents = true;
+            try
             {
-                string[] lines = hex.Split(new[] { "\r\n" }, StringSplitOptions.None);
-                for (int index = 0; index < lines.Length; index++)
+                lock (_processingGate)
                 {
-                    string line = lines[index];
+                    RebuildDocumentsFromRows();
+                    _visibleTextColumns = _lineIndex.GetLines().Sum(line => line.TextLength);
+                    _hexColumns = _lineIndex.GetLines().Sum(line => line.HexLength);
+                }
 
-                    if (line.Length > 0)
-                        paragraph.Inlines.Add(new Run(line));
-
-                    if (index < lines.Length - 1)
-                        paragraph.Inlines.Add(new LineBreak());
+                if (AutoScrollCheckBox.IsChecked == true)
+                {
+                    LogBox.ScrollToEnd();
+                    HexLogBox.ScrollToEnd();
                 }
             }
+            finally
+            {
+                _suppressSelectionEvents = false;
+            }
+
+            UpdateSelectionDebug();
+        }
+
+        private void RequestUiRefresh()
+        {
+            lock (_processingGate)
+            {
+                if (_refreshQueued)
+                    return;
+                _refreshQueued = true;
+            }
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                lock (_processingGate)
+                    _refreshQueued = false;
+
+                if (_suspendUiRefresh)
+                    return;
+
+                RefreshRenderedDocuments();
+            }), DispatcherPriority.Background);
         }
 
         private void ClearLog()
         {
             InitializeLogDocument();
             _hexFormatter.Flush();
+            _rawLineSplitter.Clear();
+            UpdateSelectionDebug();
+        }
+
+        private static string FormatHexLine(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length == 0)
+                return string.Empty;
+
+            StringBuilder builder = new StringBuilder(bytes.Length * 3);
+            for (int index = 0; index < bytes.Length; index++)
+            {
+                if (index > 0)
+                    builder.Append(' ');
+
+                builder.Append(bytes[index].ToString("X2"));
+            }
+
+            return builder.ToString();
+        }
+
+        private void RebuildDocumentsFromRows()
+        {
+            if (LogBox.Document == null || HexLogBox.Document == null)
+                InitializeLogDocument();
+
+            FlowDocument textDocument = LogBox.Document!;
+            FlowDocument hexDocument = HexLogBox.Document!;
+
+            textDocument.Blocks.Clear();
+            hexDocument.Blocks.Clear();
+
+            Paragraph textParagraph = CreateParagraph(LogBox.FontSize);
+            Paragraph hexParagraph = CreateParagraph(HexLogBox.FontSize);
+            textDocument.Blocks.Add(textParagraph);
+            hexDocument.Blocks.Add(hexParagraph);
+            _textLineStarts.Clear();
+            _hexLineStarts.Clear();
+
+            _ansiParser.Reset();
+            int renderedTextOffset = 0;
+            int renderedHexOffset = 0;
+            foreach (CaptureLineIndex.CaptureLine line in _lineIndex.GetLines())
+            {
+                line.SetRenderedDocumentStartOffsets(renderedTextOffset, renderedHexOffset);
+                Span textSpan = new Span();
+                foreach (LogSegment segment in _ansiParser.Parse(line.AnsiText))
+                {
+                    if (string.IsNullOrEmpty(segment.Text))
+                        continue;
+
+                    Run run = new Run(segment.Text);
+                    if (segment.Style.Foreground is Color foreground)
+                        run.Foreground = CreateBrush(foreground);
+                    if (segment.Style.Background is Color background)
+                        run.Background = CreateBrush(background);
+                    run.FontWeight = segment.Style.FontWeight;
+                    run.TextDecorations = segment.Style.TextDecorations;
+                    textSpan.Inlines.Add(run);
+                }
+
+                Run hexRun = new Run(line.Hex);
+                textParagraph.Inlines.Add(textSpan);
+                hexParagraph.Inlines.Add(hexRun);
+                _textLineStarts.Add(textSpan.ContentStart);
+                _hexLineStarts.Add(hexRun.ContentStart);
+                textParagraph.Inlines.Add(new LineBreak());
+                hexParagraph.Inlines.Add(new LineBreak());
+                renderedTextOffset += line.TextLength + 2;
+                renderedHexOffset += line.HexLength + 2;
+            }
         }
 
         private void InitializeLogDocument()
         {
+            _textLineStarts.Clear();
+            _hexLineStarts.Clear();
             const double sharedFontSize = 16;
             const double sharedLineHeight = 16;
             FlowDocument document = new FlowDocument
@@ -410,6 +661,199 @@ namespace UartMonitor
                 PortComboBox.SelectedItem = _settings.PortName;
         }
 
+        private void SyncSelection(RichTextBox source, RichTextBox target)
+        {
+            if (_syncingSelection)
+                return;
+
+            try
+            {
+                _syncingSelection = true;
+                _syncingScroll = true;
+                ScrollViewer? targetScrollViewer = GetScrollViewer(target);
+                double targetHorizontalOffset = targetScrollViewer?.HorizontalOffset ?? 0;
+                double targetVerticalOffset = targetScrollViewer?.VerticalOffset ?? 0;
+
+                string sourceText = new TextRange(source.Document.ContentStart, source.Document.ContentEnd).Text;
+                string targetText = new TextRange(target.Document.ContentStart, target.Document.ContentEnd).Text;
+                if (sourceText.Length == 0 || targetText.Length == 0 || _lineIndex.Count == 0)
+                    return;
+
+                bool sourceIsHex = ReferenceEquals(source, HexLogBox);
+                int sourceStartOffset = GetTextOffset(source.Document.ContentStart, source.Selection.Start);
+                int sourceEndOffset = GetTextOffset(source.Document.ContentStart, source.Selection.End);
+                int sourceStartLineIndex = sourceIsHex
+                    ? _lineIndex.GetLineIndexForRenderedHexDocumentOffset(sourceStartOffset)
+                    : _lineIndex.GetLineIndexForRenderedTextDocumentOffset(sourceStartOffset);
+                int sourceEndLineIndex = sourceIsHex
+                    ? _lineIndex.GetLineIndexForRenderedHexDocumentOffset(sourceEndOffset)
+                    : _lineIndex.GetLineIndexForRenderedTextDocumentOffset(sourceEndOffset);
+
+                sourceStartLineIndex = Math.Max(0, Math.Min(sourceStartLineIndex, Math.Max(0, _lineIndex.Count - 1)));
+                sourceEndLineIndex = Math.Max(0, Math.Min(sourceEndLineIndex, Math.Max(0, _lineIndex.Count - 1)));
+                if (sourceEndLineIndex < sourceStartLineIndex)
+                {
+                    int temp = sourceStartLineIndex;
+                    sourceStartLineIndex = sourceEndLineIndex;
+                    sourceEndLineIndex = temp;
+                }
+
+                TextPointer? firstTargetPointer = null;
+                TextPointer? lastTargetPointer = null;
+
+                for (int lineIndex = sourceStartLineIndex; lineIndex <= sourceEndLineIndex; lineIndex++)
+                {
+                    CaptureLineIndex.CaptureLine sourceLine = _lineIndex.GetLine(lineIndex);
+                    int lineLength = sourceIsHex ? sourceLine.HexLength : sourceLine.TextLength;
+                    int rowStartOffset = lineIndex == sourceStartLineIndex
+                        ? GetRowLocalOffset(source, lineIndex, source.Selection.Start)
+                        : 0;
+                    int rowEndOffset = lineIndex == sourceEndLineIndex
+                        ? GetRowLocalOffset(source, lineIndex, source.Selection.End)
+                        : lineLength;
+
+                    if (rowEndOffset < rowStartOffset)
+                        rowEndOffset = rowStartOffset;
+                    if (rowStartOffset == rowEndOffset)
+                        continue;
+
+                    if (!TryMapOffsets(sourceLine, sourceIsHex, rowStartOffset, rowEndOffset, out int targetStartOffset, out int targetEndOffset))
+                        continue;
+                    if (targetEndOffset <= targetStartOffset)
+                        continue;
+
+                    TextPointer? lineStartPointer = GetLineStartPointer(target, lineIndex);
+                    if (lineStartPointer == null)
+                        continue;
+
+                    CaptureLineIndex.CaptureLine targetLine = _lineIndex.GetLine(lineIndex);
+                    int targetLineLength = sourceIsHex ? targetLine.TextLength : targetLine.HexLength;
+                    int safeStart = Math.Max(0, Math.Min(targetStartOffset, targetLineLength));
+                    int safeEnd = Math.Max(safeStart, Math.Min(targetEndOffset, targetLineLength));
+                    TextPointer startPointer = lineStartPointer.GetPositionAtOffset(safeStart, LogicalDirection.Forward) ?? lineStartPointer;
+                    TextPointer endPointer = lineStartPointer.GetPositionAtOffset(safeEnd, LogicalDirection.Forward) ?? startPointer;
+
+                    firstTargetPointer ??= startPointer;
+                    lastTargetPointer = endPointer;
+                }
+
+                if (firstTargetPointer == null || lastTargetPointer == null)
+                    return;
+
+                target.Selection.Select(firstTargetPointer, lastTargetPointer);
+                targetScrollViewer?.ScrollToHorizontalOffset(targetHorizontalOffset);
+                targetScrollViewer?.ScrollToVerticalOffset(targetVerticalOffset);
+            }
+            finally
+            {
+                _syncingScroll = false;
+                _syncingSelection = false;
+            }
+        }
+
+        private void SelectOffsets(RichTextBox box, int lineIndex, int rowStartOffset, int rowEndOffset)
+        {
+            TextPointer? lineStart = GetLineStartPointer(box, lineIndex);
+            if (lineStart == null)
+                return;
+
+            CaptureLineIndex.CaptureLine line = _lineIndex.GetLine(lineIndex);
+            int lineLength = ReferenceEquals(box, HexLogBox) ? line.HexLength : line.TextLength;
+            int startOffset = Math.Max(0, Math.Min(rowStartOffset, lineLength));
+            int endOffset = Math.Max(startOffset, Math.Min(rowEndOffset, lineLength));
+            TextPointer start = lineStart.GetPositionAtOffset(startOffset, LogicalDirection.Forward) ?? lineStart;
+            TextPointer end = lineStart.GetPositionAtOffset(endOffset, LogicalDirection.Forward) ?? start;
+
+            if (start != null && end != null)
+                box.Selection.Select(start, end);
+        }
+
+        private bool TryMapOffsets(CaptureLineIndex.CaptureLine sourceLine, bool sourceIsHex, int rowStartOffset, int rowEndOffset, out int targetStartOffset, out int targetEndOffset)
+        {
+            if (sourceIsHex)
+                return sourceLine.TryGetTextSelectionFromHex(rowStartOffset, rowEndOffset, GetSelectedEncoding(), out targetStartOffset, out targetEndOffset);
+
+            return sourceLine.TryGetHexSelection(rowStartOffset, rowEndOffset, GetSelectedEncoding(), out targetStartOffset, out targetEndOffset);
+        }
+
+        private int GetRowLocalOffset(RichTextBox box, int lineIndex, TextPointer position)
+        {
+            TextPointer? lineStart = GetLineStartPointer(box, lineIndex);
+            if (lineStart == null)
+                return 0;
+
+            int positionOffset = GetTextOffset(box.Document.ContentStart, position);
+            int lineStartOffset = GetTextOffset(box.Document.ContentStart, lineStart);
+            if (positionOffset <= lineStartOffset)
+                return 0;
+
+            CaptureLineIndex.CaptureLine line = _lineIndex.GetLine(lineIndex);
+            int lineLength = ReferenceEquals(box, HexLogBox) ? line.HexLength : line.TextLength;
+            int offset = new TextRange(lineStart, position).Text.Length;
+            return Math.Max(0, Math.Min(offset, lineLength));
+        }
+
+        private TextPointer? GetLineStartPointer(RichTextBox box, int lineIndex)
+        {
+            IReadOnlyList<TextPointer> starts = ReferenceEquals(box, HexLogBox) ? _hexLineStarts : _textLineStarts;
+            if (lineIndex < 0 || lineIndex >= starts.Count)
+                return null;
+
+            return starts[lineIndex];
+        }
+
+        private static string GetRowSelectionText(string lineText, int rowStartOffset, int rowEndOffset)
+        {
+            if (string.IsNullOrEmpty(lineText))
+                return string.Empty;
+
+            int start = Math.Max(0, Math.Min(rowStartOffset, lineText.Length));
+            int end = Math.Max(start, Math.Min(rowEndOffset, lineText.Length));
+            return lineText.Substring(start, end - start);
+        }
+
+        private static int GetTextOffset(TextPointer documentStart, TextPointer position)
+        {
+            return new TextRange(documentStart, position).Text.Length;
+        }
+
+        private static TextPointer GetTextPointerAtTextOffset(TextPointer documentStart, int textOffset)
+        {
+            TextPointer current = documentStart;
+            int remaining = Math.Max(0, textOffset);
+
+            while (current != null)
+            {
+                if (current.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
+                {
+                    string run = current.GetTextInRun(LogicalDirection.Forward);
+                    if (remaining <= run.Length)
+                        return current.GetPositionAtOffset(remaining, LogicalDirection.Forward) ?? current;
+
+                    remaining -= run.Length;
+                    current = current.GetPositionAtOffset(run.Length, LogicalDirection.Forward);
+                    continue;
+                }
+
+                TextPointer next = current.GetNextContextPosition(LogicalDirection.Forward);
+                if (next == null)
+                    return current;
+
+                string skippedText = new TextRange(current, next).Text;
+                if (skippedText.Length > 0)
+                {
+                    if (remaining <= skippedText.Length)
+                        return next;
+
+                    remaining -= skippedText.Length;
+                }
+
+                current = next;
+            }
+
+            return documentStart.DocumentEnd;
+        }
+
         private int ParseBaudRate()
         {
             if (BaudComboBox.Text != null && int.TryParse(BaudComboBox.Text.Trim(), out int baudRate) && baudRate > 0)
@@ -424,6 +868,11 @@ namespace UartMonitor
                 return choice.Encoding;
 
             return Encoding.UTF8;
+        }
+
+        private void UpdateSelectedEncodingSnapshot()
+        {
+            _selectedEncoding = GetSelectedEncoding();
         }
 
         private int GetSelectedDataBits()

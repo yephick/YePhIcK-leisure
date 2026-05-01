@@ -81,6 +81,7 @@
             </WrapPanel>
 
             <TextBlock x:Name="StatusTextBlock" Text="Disconnected" Foreground="#d6d6d6" FontSize="11"/>
+            <TextBlock x:Name="SelectionDebugTextBlock" Text="" Foreground="#8f8f8f" FontSize="10" Margin="0,2,0,0"/>
         </StackPanel>
 
         <Grid>
@@ -93,6 +94,7 @@
             <RichTextBox x:Name="LogBox"
                      Grid.Column="0"
                      IsReadOnly="True"
+                     IsInactiveSelectionHighlightEnabled="True"
                      VerticalScrollBarVisibility="Auto"
                      HorizontalScrollBarVisibility="Visible"
                      Background="#1c1c1c"
@@ -102,6 +104,9 @@
                      FontSize="16"
                      IsDocumentEnabled="True"
                      SpellCheck.IsEnabled="False"
+                     SelectionChanged="LogBox_SelectionChanged"
+                     GotKeyboardFocus="SelectionPane_GotKeyboardFocus"
+                     PreviewMouseLeftButtonDown="SelectionPane_PreviewMouseLeftButtonDown"
                      ScrollViewer.ScrollChanged="Pane_ScrollChanged">
                 <RichTextBox.ContextMenu>
                     <ContextMenu>
@@ -120,6 +125,7 @@
             <DockPanel Grid.Column="2" Background="#171717">
                 <RichTextBox x:Name="HexLogBox"
                              IsReadOnly="True"
+                             IsInactiveSelectionHighlightEnabled="True"
                              VerticalScrollBarVisibility="Auto"
                              HorizontalScrollBarVisibility="Auto"
                              Background="#171717"
@@ -129,6 +135,9 @@
                              FontSize="16"
                              IsDocumentEnabled="True"
                              SpellCheck.IsEnabled="False"
+                             SelectionChanged="HexLogBox_SelectionChanged"
+                             GotKeyboardFocus="SelectionPane_GotKeyboardFocus"
+                             PreviewMouseLeftButtonDown="SelectionPane_PreviewMouseLeftButtonDown"
                              ScrollViewer.ScrollChanged="Pane_ScrollChanged">
                     <RichTextBox.ContextMenu>
                         <ContextMenu>
