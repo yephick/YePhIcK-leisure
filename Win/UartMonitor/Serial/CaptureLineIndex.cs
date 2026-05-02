@@ -262,6 +262,8 @@ namespace UartMonitor.Serial
             private readonly StringBuilder _textBuilder = new StringBuilder();
             private readonly StringBuilder _hexBuilder = new StringBuilder();
             private readonly StringBuilder _ansiTextBuilder = new StringBuilder();
+            private readonly List<LineChunk> _chunks = new List<LineChunk>();
+            private LineSelectionMap? _selectionMap;
 
             public CaptureLine(int index, string text, string hex, bool isComplete, int lineBreakLength, int documentStartOffset, int renderedDocumentStartOffset, string ansiText)
             {
@@ -269,6 +271,7 @@ namespace UartMonitor.Serial
                 _textBuilder.Append(text);
                 _hexBuilder.Append(hex);
                 _ansiTextBuilder.Append(ansiText ?? string.Empty);
+                _chunks.Add(new LineChunk(0, text ?? string.Empty, 0, hex ?? string.Empty));
                 IsComplete = isComplete;
                 LineBreakLength = Math.Max(0, lineBreakLength);
                 DocumentStartOffset = Math.Max(0, documentStartOffset);
@@ -314,6 +317,11 @@ namespace UartMonitor.Serial
 
             public void Append(string text, string hex, bool isComplete, int lineBreakLength, string ansiText)
             {
+                int textStartOffset = _textBuilder.Length;
+                int hexStartOffset = _hexBuilder.Length > 0 && !string.IsNullOrEmpty(hex)
+                    ? _hexBuilder.Length + 1
+                    : _hexBuilder.Length;
+
                 if (!string.IsNullOrEmpty(text))
                 {
                     if (_textBuilder.Length > 0)
@@ -336,8 +344,12 @@ namespace UartMonitor.Serial
                 if (!string.IsNullOrEmpty(ansiText))
                     _ansiTextBuilder.Append(ansiText);
 
+                if (!string.IsNullOrEmpty(text) || !string.IsNullOrEmpty(hex))
+                    _chunks.Add(new LineChunk(textStartOffset, text ?? string.Empty, hexStartOffset, hex ?? string.Empty));
+
                 IsComplete |= isComplete;
                 LineBreakLength = Math.Max(LineBreakLength, Math.Max(0, lineBreakLength));
+                _selectionMap = null;
             }
 
             public bool TryGetHexSelection(string selectedText, Encoding encoding, out int hexStartOffset, out int hexEndOffset)
@@ -368,24 +380,24 @@ namespace UartMonitor.Serial
                 if (textEndOffset <= textStartOffset || string.IsNullOrEmpty(Hex))
                     return false;
 
-                List<VisibleByteSpan> spans = BuildVisibleByteSpans(encoding);
-                VisibleByteSpan? first = null;
-                VisibleByteSpan? last = null;
-
-                foreach (VisibleByteSpan span in spans)
+                LineSelectionMap map = GetOrBuildSelectionMap(encoding);
+                int startToken = -1;
+                int endToken = -1;
+                foreach (VisibleByteSpan span in map.Spans)
                 {
                     if (span.TextEndOffset <= textStartOffset || span.TextStartOffset >= textEndOffset)
                         continue;
 
-                    first ??= span;
-                    last = span;
+                    if (startToken < 0)
+                        startToken = span.TokenStartIndex;
+                    endToken = span.TokenStartIndex;
                 }
 
-                if (first == null || last == null)
+                if (startToken < 0 || endToken < startToken || map.Tokens.Count == 0)
                     return false;
 
-                hexStartOffset = first.Value.HexStartOffset;
-                hexEndOffset = last.Value.HexEndOffset;
+                hexStartOffset = map.Tokens[startToken].StartOffset;
+                hexEndOffset = map.Tokens[endToken].EndOffset;
                 return true;
             }
 
@@ -422,25 +434,92 @@ namespace UartMonitor.Serial
                 if (hexEndOffset <= hexStartOffset || string.IsNullOrEmpty(Text))
                     return false;
 
-                List<VisibleByteSpan> spans = BuildVisibleByteSpans(encoding);
-                VisibleByteSpan? first = null;
-                VisibleByteSpan? last = null;
-
-                foreach (VisibleByteSpan span in spans)
-                {
-                    if (span.HexEndOffset <= hexStartOffset || span.HexStartOffset >= hexEndOffset)
-                        continue;
-
-                    first ??= span;
-                    last = span;
-                }
-
-                if (first == null || last == null)
+                LineSelectionMap map = GetOrBuildSelectionMap(encoding);
+                if (map.Tokens.Count == 0)
                     return false;
 
-                textStartOffset = first.Value.TextStartOffset;
-                textEndOffset = last.Value.TextEndOffset;
+                int normalizedHexStartOffset = Math.Max(0, Math.Min(hexStartOffset, Math.Max(0, HexLength - 1)));
+                int normalizedHexEndOffset = Math.Max(normalizedHexStartOffset, Math.Min(hexEndOffset, Math.Max(0, HexLength - 1)));
+                int startTokenIndex = FindTokenIndexForOffset(map.Tokens, normalizedHexStartOffset, preferPrevious: false);
+                int endTokenIndexInclusive = FindTokenIndexForOffset(map.Tokens, normalizedHexEndOffset, preferPrevious: true);
+                int endTokenIndexExclusive = Math.Min(map.Tokens.Count, endTokenIndexInclusive + 1);
+                if (startTokenIndex < 0 || endTokenIndexExclusive <= startTokenIndex)
+                    return false;
+
+                if (!ContainsAnyVisibleToken(map.Tokens, startTokenIndex, endTokenIndexExclusive, map.AnsiSpans))
+                    return false;
+
+                int firstSpanIndex = -1;
+                int lastSpanIndex = -1;
+                for (int i = 0; i < map.Spans.Count; i++)
+                {
+                    VisibleByteSpan span = map.Spans[i];
+                    if (IsInsideAnsiSpan(span.TokenStartIndex, map.AnsiSpans))
+                        continue;
+                    if (span.TokenEndIndexExclusive <= startTokenIndex || span.TokenStartIndex >= endTokenIndexExclusive)
+                        continue;
+                    if (firstSpanIndex < 0)
+                        firstSpanIndex = i;
+                    lastSpanIndex = i;
+                }
+
+                if (firstSpanIndex < 0 || lastSpanIndex < firstSpanIndex)
+                    return false;
+
+                textStartOffset = map.Spans[firstSpanIndex].TextStartOffset;
+                textEndOffset = map.Spans[lastSpanIndex].TextEndOffset;
                 return true;
+            }
+
+            private static bool ContainsAnyVisibleToken(IReadOnlyList<HexToken> tokens, int startTokenIndex, int endTokenIndexExclusive, IReadOnlyList<TokenRange> ansiSpans)
+            {
+                int upper = Math.Min(endTokenIndexExclusive, tokens.Count);
+                for (int i = Math.Max(0, startTokenIndex); i < upper; i++)
+                {
+                    if (IsInsideAnsiSpan(i, ansiSpans))
+                        continue;
+
+                    byte value = tokens[i].Value;
+                    if (value == 0x1B)
+                        continue;
+
+                    if (IsSkippedControl(value))
+                        continue;
+
+                    return true;
+                }
+
+                return false;
+            }
+
+            private static bool IsInsideAnsiSpan(int tokenIndex, IReadOnlyList<TokenRange> ansiSpans)
+            {
+                for (int i = 0; i < ansiSpans.Count; i++)
+                {
+                    TokenRange span = ansiSpans[i];
+                    if (tokenIndex >= span.Start && tokenIndex < span.EndExclusive)
+                        return true;
+                }
+
+                return false;
+            }
+
+            private static int FindTokenIndexForOffset(IReadOnlyList<HexToken> tokens, int offset, bool preferPrevious)
+            {
+                if (tokens.Count == 0)
+                    return -1;
+
+                for (int i = 0; i < tokens.Count; i++)
+                {
+                    HexToken token = tokens[i];
+                    if (offset >= token.StartOffset && offset < token.EndOffset)
+                        return i;
+
+                    if (offset < token.StartOffset)
+                        return preferPrevious ? Math.Max(0, i - 1) : i;
+                }
+
+                return tokens.Count - 1;
             }
 
             public bool ContainsText(string selectedText)
@@ -478,37 +557,90 @@ namespace UartMonitor.Serial
                 return bytes.ToArray();
             }
 
-            private List<VisibleByteSpan> BuildVisibleByteSpans(Encoding encoding)
+            private LineSelectionMap GetOrBuildSelectionMap(Encoding encoding)
             {
-                List<HexToken> tokens = ParseHexTokens(Hex);
+                if (_selectionMap != null && _selectionMap.EncodingCodePage == encoding.CodePage)
+                    return _selectionMap;
+
+                var tokens = new List<HexToken>();
                 var spans = new List<VisibleByteSpan>();
-                int textOffset = 0;
+                var ansiSpans = new List<TokenRange>();
+                int tokenBaseIndex = 0;
 
-                for (int index = 0; index < tokens.Count; index++)
+                foreach (LineChunk chunk in _chunks)
                 {
-                    byte value = tokens[index].Value;
+                    List<HexToken> chunkTokens = ParseHexTokens(chunk.Hex, chunk.HexStartOffset);
+                    int chunkTextOffset = 0;
+                    bool sawEscape = false;
 
-                    if (value == 0x1B)
+                    for (int index = 0; index < chunkTokens.Count; index++)
                     {
-                        SkipEscape(tokens, ref index);
-                        continue;
+                        byte value = chunkTokens[index].Value;
+
+                        if (value == 0x1B)
+                        {
+                            int ansiStart = tokenBaseIndex + index;
+                            if (!sawEscape && chunkTextOffset < chunk.Text.Length)
+                            {
+                                RemoveChunkSpans(spans, chunk.TextStartOffset);
+                                chunkTextOffset = 0;
+                            }
+
+                            sawEscape = true;
+                            SkipEscape(chunkTokens, ref index);
+                            ansiSpans.Add(new TokenRange(ansiStart, tokenBaseIndex + Math.Min(chunkTokens.Count, index + 1)));
+                            continue;
+                        }
+
+                        if (IsSkippedControl(value))
+                            continue;
+
+                        string text = encoding.GetString(new[] { value });
+                        if (string.IsNullOrEmpty(text))
+                            continue;
+
+                        if (!MatchesVisibleTextAtOffset(chunk.Text, text, chunkTextOffset))
+                            continue;
+
+                        int textStartOffset = chunk.TextStartOffset + chunkTextOffset;
+                        spans.Add(new VisibleByteSpan(textStartOffset, textStartOffset + text.Length, chunkTokens[index].StartOffset, chunkTokens[index].EndOffset, tokenBaseIndex + index, tokenBaseIndex + index + 1));
+                        chunkTextOffset += text.Length;
                     }
 
-                    if (IsSkippedControl(value))
-                        continue;
-
-                    string text = encoding.GetString(new[] { value });
-                    if (string.IsNullOrEmpty(text))
-                        continue;
-
-                    spans.Add(new VisibleByteSpan(textOffset, textOffset + text.Length, tokens[index].StartOffset, tokens[index].EndOffset));
-                    textOffset += text.Length;
+                    tokens.AddRange(chunkTokens);
+                    tokenBaseIndex += chunkTokens.Count;
                 }
 
-                return spans;
+                _selectionMap = new LineSelectionMap(encoding.CodePage, tokens, spans, ansiSpans);
+                return _selectionMap;
+            }
+
+            private static void RemoveChunkSpans(List<VisibleByteSpan> spans, int chunkTextStartOffset)
+            {
+                for (int index = spans.Count - 1; index >= 0; index--)
+                {
+                    if (spans[index].TextStartOffset >= chunkTextStartOffset)
+                        spans.RemoveAt(index);
+                }
+            }
+
+            private static bool MatchesVisibleTextAtOffset(string lineText, string value, int startOffset)
+            {
+                if (string.IsNullOrEmpty(lineText) || string.IsNullOrEmpty(value))
+                    return false;
+
+                if (startOffset < 0 || startOffset + value.Length > lineText.Length)
+                    return false;
+
+                return string.CompareOrdinal(lineText, startOffset, value, 0, value.Length) == 0;
             }
 
             private static List<HexToken> ParseHexTokens(string hex)
+            {
+                return ParseHexTokens(hex, 0);
+            }
+
+            private static List<HexToken> ParseHexTokens(string hex, int offsetAdjustment)
             {
                 var tokens = new List<HexToken>();
                 ReadOnlySpan<char> span = hex.AsSpan();
@@ -531,7 +663,7 @@ namespace UartMonitor.Serial
                     int start = index;
                     string token = span.Slice(index, 2).ToString();
                     if (byte.TryParse(token, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte value))
-                        tokens.Add(new HexToken(value, start, index + 2));
+                        tokens.Add(new HexToken(value, offsetAdjustment + start, offsetAdjustment + index + 2));
 
                     index += 2;
                 }
@@ -638,20 +770,68 @@ namespace UartMonitor.Serial
                 public int EndOffset { get; }
             }
 
+            private readonly struct LineChunk
+            {
+                public LineChunk(int textStartOffset, string text, int hexStartOffset, string hex)
+                {
+                    TextStartOffset = textStartOffset;
+                    Text = text;
+                    HexStartOffset = hexStartOffset;
+                    Hex = hex;
+                }
+
+                public int TextStartOffset { get; }
+                public string Text { get; }
+                public int HexStartOffset { get; }
+                public string Hex { get; }
+            }
+
             private readonly struct VisibleByteSpan
             {
-                public VisibleByteSpan(int textStartOffset, int textEndOffset, int hexStartOffset, int hexEndOffset)
+                public VisibleByteSpan(int textStartOffset, int textEndOffset, int hexStartOffset, int hexEndOffset, int tokenStartIndex, int tokenEndIndexExclusive)
                 {
                     TextStartOffset = textStartOffset;
                     TextEndOffset = textEndOffset;
                     HexStartOffset = hexStartOffset;
                     HexEndOffset = hexEndOffset;
+                    TokenStartIndex = tokenStartIndex;
+                    TokenEndIndexExclusive = tokenEndIndexExclusive;
                 }
 
                 public int TextStartOffset { get; }
                 public int TextEndOffset { get; }
                 public int HexStartOffset { get; }
                 public int HexEndOffset { get; }
+                public int TokenStartIndex { get; }
+                public int TokenEndIndexExclusive { get; }
+            }
+
+            private sealed class LineSelectionMap
+            {
+                public LineSelectionMap(int encodingCodePage, List<HexToken> tokens, List<VisibleByteSpan> spans, List<TokenRange> ansiSpans)
+                {
+                    EncodingCodePage = encodingCodePage;
+                    Tokens = tokens;
+                    Spans = spans;
+                    AnsiSpans = ansiSpans;
+                }
+
+                public int EncodingCodePage { get; }
+                public List<HexToken> Tokens { get; }
+                public List<VisibleByteSpan> Spans { get; }
+                public List<TokenRange> AnsiSpans { get; }
+            }
+
+            private readonly struct TokenRange
+            {
+                public TokenRange(int start, int endExclusive)
+                {
+                    Start = start;
+                    EndExclusive = endExclusive;
+                }
+
+                public int Start { get; }
+                public int EndExclusive { get; }
             }
         }
     }

@@ -680,14 +680,8 @@ namespace UartMonitor
                     return;
 
                 bool sourceIsHex = ReferenceEquals(source, HexLogBox);
-                int sourceStartOffset = GetTextOffset(source.Document.ContentStart, source.Selection.Start);
-                int sourceEndOffset = GetTextOffset(source.Document.ContentStart, source.Selection.End);
-                int sourceStartLineIndex = sourceIsHex
-                    ? _lineIndex.GetLineIndexForRenderedHexDocumentOffset(sourceStartOffset)
-                    : _lineIndex.GetLineIndexForRenderedTextDocumentOffset(sourceStartOffset);
-                int sourceEndLineIndex = sourceIsHex
-                    ? _lineIndex.GetLineIndexForRenderedHexDocumentOffset(sourceEndOffset)
-                    : _lineIndex.GetLineIndexForRenderedTextDocumentOffset(sourceEndOffset);
+                int sourceStartLineIndex = GetLineIndexFromPointer(source, source.Selection.Start);
+                int sourceEndLineIndex = GetLineIndexFromPointer(source, source.Selection.End);
 
                 sourceStartLineIndex = Math.Max(0, Math.Min(sourceStartLineIndex, Math.Max(0, _lineIndex.Count - 1)));
                 sourceEndLineIndex = Math.Max(0, Math.Min(sourceEndLineIndex, Math.Max(0, _lineIndex.Count - 1)));
@@ -782,15 +776,45 @@ namespace UartMonitor
             if (lineStart == null)
                 return 0;
 
-            int positionOffset = GetTextOffset(box.Document.ContentStart, position);
-            int lineStartOffset = GetTextOffset(box.Document.ContentStart, lineStart);
-            if (positionOffset <= lineStartOffset)
+            if (position.CompareTo(lineStart) <= 0)
                 return 0;
 
             CaptureLineIndex.CaptureLine line = _lineIndex.GetLine(lineIndex);
             int lineLength = ReferenceEquals(box, HexLogBox) ? line.HexLength : line.TextLength;
-            int offset = new TextRange(lineStart, position).Text.Length;
+            int offset = NormalizeRowOffset(new TextRange(lineStart, position).Text);
             return Math.Max(0, Math.Min(offset, lineLength));
+        }
+
+        private int GetLineIndexFromPointer(RichTextBox box, TextPointer position)
+        {
+            IReadOnlyList<TextPointer> starts = ReferenceEquals(box, HexLogBox) ? _hexLineStarts : _textLineStarts;
+            if (starts.Count == 0)
+                return 0;
+
+            for (int index = starts.Count - 1; index >= 0; index--)
+            {
+                if (position.CompareTo(starts[index]) >= 0)
+                    return index;
+            }
+
+            return 0;
+        }
+
+        private static int NormalizeRowOffset(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return 0;
+
+            int length = value.Length;
+            while (length > 0)
+            {
+                char tail = value[length - 1];
+                if (tail != '\r' && tail != '\n')
+                    break;
+                length--;
+            }
+
+            return length;
         }
 
         private TextPointer? GetLineStartPointer(RichTextBox box, int lineIndex)
