@@ -27,6 +27,7 @@ namespace UartMonitor
         private readonly UartMonitorUserSettings _settings = UartMonitorUserSettings.Load();
         private readonly List<TextPointer> _textLineStarts = new List<TextPointer>();
         private readonly List<TextPointer> _hexLineStarts = new List<TextPointer>();
+        private readonly List<TextRange> _hexMirrorHighlights = new List<TextRange>();
         private readonly DispatcherTimer _selectionDebounceTimer;
         private readonly object _processingGate = new object();
         private RichTextBox? _pendingSelectionSource;
@@ -138,6 +139,7 @@ namespace UartMonitor
             if (_syncingSelection || _suppressSelectionEvents)
                 return;
 
+            ClearHexMirrorHighlights();
             QueueSelectionSync(LogBox, HexLogBox);
             UpdateSelectionDebug();
         }
@@ -147,6 +149,7 @@ namespace UartMonitor
             if (_syncingSelection || _suppressSelectionEvents)
                 return;
 
+            ClearHexMirrorHighlights();
             QueueSelectionSync(HexLogBox, LogBox);
             UpdateSelectionDebug();
         }
@@ -505,6 +508,7 @@ namespace UartMonitor
 
             textDocument.Blocks.Clear();
             hexDocument.Blocks.Clear();
+            _hexMirrorHighlights.Clear();
 
             Paragraph textParagraph = CreateParagraph(LogBox.FontSize);
             Paragraph hexParagraph = CreateParagraph(HexLogBox.FontSize);
@@ -551,6 +555,7 @@ namespace UartMonitor
         {
             _textLineStarts.Clear();
             _hexLineStarts.Clear();
+            _hexMirrorHighlights.Clear();
             const double sharedFontSize = 16;
             const double sharedLineHeight = 16;
             FlowDocument document = new FlowDocument
@@ -694,6 +699,7 @@ namespace UartMonitor
 
                 TextPointer? firstTargetPointer = null;
                 TextPointer? lastTargetPointer = null;
+                var targetHighlightRanges = new List<TextRange>();
 
                 for (int lineIndex = sourceStartLineIndex; lineIndex <= sourceEndLineIndex; lineIndex++)
                 {
@@ -708,10 +714,24 @@ namespace UartMonitor
 
                     if (rowEndOffset < rowStartOffset)
                         rowEndOffset = rowStartOffset;
-                    if (rowStartOffset == rowEndOffset)
+                    bool includeLeadingBytes = !sourceIsHex && rowStartOffset == 0 && sourceStartLineIndex != sourceEndLineIndex;
+                    bool includeTrailingBytes = !sourceIsHex && lineIndex < sourceEndLineIndex;
+                    bool emptySelectedTextRowWithHex = !sourceIsHex
+                        && rowStartOffset == rowEndOffset
+                        && sourceStartLineIndex != sourceEndLineIndex
+                        && lineIndex > sourceStartLineIndex
+                        && lineIndex < sourceEndLineIndex
+                        && sourceLine.HexLength > 0;
+                    if (rowStartOffset == rowEndOffset && !emptySelectedTextRowWithHex)
                         continue;
 
-                    if (!TryMapOffsets(sourceLine, sourceIsHex, rowStartOffset, rowEndOffset, out int targetStartOffset, out int targetEndOffset))
+                    if (emptySelectedTextRowWithHex)
+                    {
+                        includeLeadingBytes = true;
+                        includeTrailingBytes = true;
+                    }
+
+                    if (!TryMapOffsets(sourceLine, sourceIsHex, rowStartOffset, rowEndOffset, includeLeadingBytes, includeTrailingBytes, out int targetStartOffset, out int targetEndOffset))
                         continue;
                     if (targetEndOffset <= targetStartOffset)
                         continue;
@@ -729,12 +749,14 @@ namespace UartMonitor
 
                     firstTargetPointer ??= startPointer;
                     lastTargetPointer = endPointer;
+                    targetHighlightRanges.Add(new TextRange(startPointer, endPointer));
                 }
 
                 if (firstTargetPointer == null || lastTargetPointer == null)
                     return;
 
                 target.Selection.Select(firstTargetPointer, lastTargetPointer);
+                ApplyMirrorHighlights(target, targetHighlightRanges);
                 targetScrollViewer?.ScrollToHorizontalOffset(targetHorizontalOffset);
                 targetScrollViewer?.ScrollToVerticalOffset(targetVerticalOffset);
             }
@@ -743,6 +765,38 @@ namespace UartMonitor
                 _syncingScroll = false;
                 _syncingSelection = false;
             }
+        }
+
+        private void ApplyMirrorHighlights(RichTextBox target, IEnumerable<TextRange> ranges)
+        {
+            if (!ReferenceEquals(target, HexLogBox))
+                return;
+
+            ClearHexMirrorHighlights();
+            SolidColorBrush brush = CreateBrush(Color.FromRgb(0x66, 0x66, 0x66));
+
+            foreach (TextRange range in ranges)
+            {
+                if (range.IsEmpty)
+                    continue;
+
+                range.ApplyPropertyValue(TextElement.BackgroundProperty, brush);
+                _hexMirrorHighlights.Add(range);
+            }
+        }
+
+        private void ClearHexMirrorHighlights()
+        {
+            if (_hexMirrorHighlights.Count == 0)
+                return;
+
+            foreach (TextRange range in _hexMirrorHighlights)
+            {
+                if (!range.IsEmpty)
+                    range.ApplyPropertyValue(TextElement.BackgroundProperty, null);
+            }
+
+            _hexMirrorHighlights.Clear();
         }
 
         private void SelectOffsets(RichTextBox box, int lineIndex, int rowStartOffset, int rowEndOffset)
@@ -762,12 +816,12 @@ namespace UartMonitor
                 box.Selection.Select(start, end);
         }
 
-        private bool TryMapOffsets(CaptureLineIndex.CaptureLine sourceLine, bool sourceIsHex, int rowStartOffset, int rowEndOffset, out int targetStartOffset, out int targetEndOffset)
+        private bool TryMapOffsets(CaptureLineIndex.CaptureLine sourceLine, bool sourceIsHex, int rowStartOffset, int rowEndOffset, bool includeLeadingBytes, bool includeTrailingBytes, out int targetStartOffset, out int targetEndOffset)
         {
             if (sourceIsHex)
                 return sourceLine.TryGetTextSelectionFromHex(rowStartOffset, rowEndOffset, GetSelectedEncoding(), out targetStartOffset, out targetEndOffset);
 
-            return sourceLine.TryGetHexSelection(rowStartOffset, rowEndOffset, GetSelectedEncoding(), out targetStartOffset, out targetEndOffset);
+            return sourceLine.TryGetHexSelection(rowStartOffset, rowEndOffset, GetSelectedEncoding(), out targetStartOffset, out targetEndOffset, includeLeadingBytes, includeTrailingBytes);
         }
 
         private int GetRowLocalOffset(RichTextBox box, int lineIndex, TextPointer position)

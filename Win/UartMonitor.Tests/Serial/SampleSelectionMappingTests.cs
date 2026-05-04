@@ -57,7 +57,7 @@ namespace UartMonitor.Tests.Serial
                     Assert.IsTrue(mapped, $"Expected text->hex mapping on line: {selectedLine.Line.Text}");
 
                     string actualHex = ExtractHexSpan(selectedLine.Line.Hex, hexStartOffset, hexEndOffset);
-                    string expectedHex = BytesToHex(selectedLine.Bytes.Skip(selectedLine.VisibleChars[start].ByteIndex).Take(selectedLine.VisibleChars[end].ByteIndex - selectedLine.VisibleChars[start].ByteIndex + 1));
+                    string expectedHex = ExpectedHexForTextRange(selectedLine, start, end);
                     Assert.AreEqual(expectedHex, actualHex, $"Mismatch for text span '{selectedLine.Line.Text.Substring(textStart, textEnd - textStart)}'");
                 }
             }
@@ -316,6 +316,20 @@ namespace UartMonitor.Tests.Serial
             int start = selected[0].TextOffset;
             int end = selected[selected.Length - 1].TextOffset + 1;
             return line.Line.Text.Substring(start, end - start);
+        }
+
+        private static string ExpectedHexForTextRange(LineData line, int startChar, int endChar)
+        {
+            int firstByte = line.VisibleChars[startChar].ByteIndex;
+            if (startChar > 0)
+                firstByte = line.VisibleChars[startChar - 1].ByteIndex + 1;
+            else
+                firstByte = 0;
+
+            int lastByte = line.VisibleChars[endChar].ByteIndex;
+            return BytesToHex(line.Bytes
+                .Skip(firstByte)
+                .Take(lastByte - firstByte + 1));
         }
 
         private static int HexTokenStartOffset(int tokenIndex)

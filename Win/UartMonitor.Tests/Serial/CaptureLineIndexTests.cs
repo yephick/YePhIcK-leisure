@@ -137,6 +137,22 @@ namespace UartMonitor.Tests.Serial
         }
 
         [TestMethod]
+        public void CaptureLine_TryGetHexSelection_IncludesHiddenBytesInsideVisibleSelection()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "ABC",
+                "41 00 42 07 43",
+                true);
+
+            bool matched = line.TryGetHexSelection(0, 3, encoding, out int startOffset, out int endOffset);
+
+            Assert.IsTrue(matched);
+            Assert.AreEqual("41 00 42 07 43", ExtractHexSpan(line.Hex, startOffset, endOffset));
+        }
+
+        [TestMethod]
         public void CaptureLine_TryGetTextSelectionFromHex_FindsVisibleTextSpan()
         {
             var line = new CaptureLineIndex.CaptureLine(

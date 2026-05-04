@@ -372,32 +372,49 @@ namespace UartMonitor.Serial
                 return true;
             }
 
-            public bool TryGetHexSelection(int textStartOffset, int textEndOffset, Encoding encoding, out int hexStartOffset, out int hexEndOffset)
+            public bool TryGetHexSelection(int textStartOffset, int textEndOffset, Encoding encoding, out int hexStartOffset, out int hexEndOffset, bool includeLeadingBytes = false, bool includeTrailingBytes = false)
             {
                 hexStartOffset = 0;
                 hexEndOffset = 0;
+
+                if (TextLength == 0 && includeLeadingBytes && includeTrailingBytes && !string.IsNullOrEmpty(Hex))
+                {
+                    hexEndOffset = HexLength;
+                    return true;
+                }
 
                 if (textEndOffset <= textStartOffset || string.IsNullOrEmpty(Hex))
                     return false;
 
                 LineSelectionMap map = GetOrBuildSelectionMap(encoding);
+                int startSpanIndex = -1;
                 int startToken = -1;
                 int endToken = -1;
-                foreach (VisibleByteSpan span in map.Spans)
+                for (int index = 0; index < map.Spans.Count; index++)
                 {
+                    VisibleByteSpan span = map.Spans[index];
                     if (span.TextEndOffset <= textStartOffset || span.TextStartOffset >= textEndOffset)
                         continue;
 
                     if (startToken < 0)
+                    {
+                        startSpanIndex = index;
                         startToken = span.TokenStartIndex;
+                    }
+
                     endToken = span.TokenStartIndex;
                 }
 
                 if (startToken < 0 || endToken < startToken || map.Tokens.Count == 0)
                     return false;
 
-                hexStartOffset = map.Tokens[startToken].StartOffset;
+                int effectiveStartToken = includeLeadingBytes
+                    ? 0
+                    : GetBoundaryStartToken(map.Spans, startSpanIndex, startToken);
+                hexStartOffset = map.Tokens[Math.Max(0, Math.Min(effectiveStartToken, map.Tokens.Count - 1))].StartOffset;
                 hexEndOffset = map.Tokens[endToken].EndOffset;
+                if (includeTrailingBytes)
+                    hexEndOffset = HexLength;
                 return true;
             }
 
@@ -490,6 +507,15 @@ namespace UartMonitor.Serial
                 }
 
                 return false;
+            }
+
+            private static int GetBoundaryStartToken(IReadOnlyList<VisibleByteSpan> spans, int startSpanIndex, int fallbackStartToken)
+            {
+                if (startSpanIndex <= 0)
+                    return 0;
+
+                int previousVisibleEnd = spans[startSpanIndex - 1].TokenEndIndexExclusive;
+                return Math.Min(previousVisibleEnd, fallbackStartToken);
             }
 
             private static bool IsInsideAnsiSpan(int tokenIndex, IReadOnlyList<TokenRange> ansiSpans)

@@ -57,9 +57,7 @@ namespace UartMonitor.Tests.Serial
                     Assert.IsTrue(mapped, $"No mapping line='{line.Line.Text}' hex='{line.Line.Hex}' textRange={textStart}-{textEnd} selected='{line.Line.Text.Substring(Math.Min(textStart, line.Line.Text.Length), Math.Max(0, Math.Min(textEnd, line.Line.Text.Length) - Math.Min(textStart, line.Line.Text.Length)))}'");
 
                     string selectedHex = ExtractHexSpan(line.Line.Hex, hexStartOffset, hexEndOffset);
-                    string expectedHex = BytesToHex(line.Bytes
-                        .Skip(line.VisibleChars[startChar].ByteIndex)
-                        .Take(line.VisibleChars[endChar].ByteIndex - line.VisibleChars[startChar].ByteIndex + 1));
+                    string expectedHex = ExpectedHexForTextRange(line, startChar, endChar);
 
                     Assert.AreEqual(expectedHex, selectedHex);
                 }
@@ -94,6 +92,93 @@ namespace UartMonitor.Tests.Serial
                     }
                 }
             }
+        }
+
+        [TestMethod]
+        public void Design_LeftToRight_SelectedTextBoundariesDefineFullHexRange()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "ABC",
+                "41 00 42 07 43",
+                true);
+
+            bool mappedSingle = line.TryGetHexSelection(1, 2, encoding, out int singleStart, out int singleEnd);
+            Assert.IsTrue(mappedSingle);
+            Assert.AreEqual("00 42", ExtractHexSpan(line.Hex, singleStart, singleEnd));
+
+            bool mappedRange = line.TryGetHexSelection(1, 3, encoding, out int rangeStart, out int rangeEnd);
+            Assert.IsTrue(mappedRange);
+            Assert.AreEqual("00 42 07 43", ExtractHexSpan(line.Hex, rangeStart, rangeEnd));
+        }
+
+        [TestMethod]
+        public void Design_LeftToRight_IntermediateSelectedRowsIncludeTrailingLineBytes()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "ABC",
+                "41 00 42 07 43 0A 0D",
+                true);
+
+            bool mappedNormal = line.TryGetHexSelection(1, 3, encoding, out int normalStart, out int normalEnd);
+            Assert.IsTrue(mappedNormal);
+            Assert.AreEqual("00 42 07 43", ExtractHexSpan(line.Hex, normalStart, normalEnd));
+
+            bool mappedThroughRow = line.TryGetHexSelection(1, 3, encoding, out int rowStart, out int rowEnd, includeTrailingBytes: true);
+            Assert.IsTrue(mappedThroughRow);
+            Assert.AreEqual("00 42 07 43 0A 0D", ExtractHexSpan(line.Hex, rowStart, rowEnd));
+        }
+
+        [TestMethod]
+        public void Design_LeftToRight_SelectedRowsStartingAtColumnZeroIncludeLeadingLineBytes()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "ABC",
+                "1B 5B 33 32 6D 41 42 43 0A 0D",
+                true);
+
+            bool mappedNormal = line.TryGetHexSelection(0, 2, encoding, out int normalStart, out int normalEnd);
+            Assert.IsTrue(mappedNormal);
+            Assert.AreEqual("1B 5B 33 32 6D 41 42", ExtractHexSpan(line.Hex, normalStart, normalEnd));
+
+            bool mappedFromRowStart = line.TryGetHexSelection(0, 2, encoding, out int rowStart, out int rowEnd, includeLeadingBytes: true);
+            Assert.IsTrue(mappedFromRowStart);
+            Assert.AreEqual("1B 5B 33 32 6D 41 42", ExtractHexSpan(line.Hex, rowStart, rowEnd));
+        }
+
+        [TestMethod]
+        public void Design_LeftToRight_FirstPrintableCharacterIncludesPrecedingControls()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "AB",
+                "41 07 42",
+                true);
+
+            bool mapped = line.TryGetHexSelection(1, 2, encoding, out int start, out int end);
+            Assert.IsTrue(mapped);
+            Assert.AreEqual("07 42", ExtractHexSpan(line.Hex, start, end));
+        }
+
+        [TestMethod]
+        public void Design_LeftToRight_EmptySelectedRowsWithHexAreFullySelected()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                string.Empty,
+                "1B 5B 33 32 6D 0A 0D",
+                true);
+
+            bool mapped = line.TryGetHexSelection(0, 0, encoding, out int start, out int end, includeLeadingBytes: true, includeTrailingBytes: true);
+            Assert.IsTrue(mapped);
+            Assert.AreEqual("1B 5B 33 32 6D 0A 0D", ExtractHexSpan(line.Hex, start, end));
         }
 
         [TestMethod]
@@ -307,6 +392,20 @@ namespace UartMonitor.Tests.Serial
             int start = selected[0].TextOffset;
             int end = selected[selected.Length - 1].TextOffset + 1;
             return line.Line.Text.Substring(start, end - start);
+        }
+
+        private static string ExpectedHexForTextRange(LineData line, int startChar, int endChar)
+        {
+            int firstByte = line.VisibleChars[startChar].ByteIndex;
+            if (startChar > 0)
+                firstByte = line.VisibleChars[startChar - 1].ByteIndex + 1;
+            else
+                firstByte = 0;
+
+            int lastByte = line.VisibleChars[endChar].ByteIndex;
+            return BytesToHex(line.Bytes
+                .Skip(firstByte)
+                .Take(lastByte - firstByte + 1));
         }
 
         private static int HexTokenStartOffset(int tokenIndex) => tokenIndex * 3;
