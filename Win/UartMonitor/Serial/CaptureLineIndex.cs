@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using UartMonitor.Rendering;
 
 namespace UartMonitor.Serial
 {
@@ -46,6 +47,11 @@ namespace UartMonitor.Serial
 
         public void AppendLinePart(string text, string hex, bool isComplete, int lineBreakLength, string ansiText)
         {
+            AppendLinePart(text, hex, isComplete, lineBreakLength, ansiText, null);
+        }
+
+        public void AppendLinePart(string text, string hex, bool isComplete, int lineBreakLength, string ansiText, IReadOnlyList<LogSegment>? segments)
+        {
             if (string.IsNullOrEmpty(text) && isComplete && lineBreakLength > 0)
                 hex = TrimHexToTrailingBytes(hex, lineBreakLength);
 
@@ -55,11 +61,11 @@ namespace UartMonitor.Serial
 
             if (_lines.Count > 0 && !_lines[_lines.Count - 1].IsComplete)
             {
-                _lines[_lines.Count - 1].Append(text, hex, isComplete, lineBreakLength, ansiText);
+                _lines[_lines.Count - 1].Append(text, hex, isComplete, lineBreakLength, ansiText, segments);
                 return;
             }
 
-            _lines.Add(new CaptureLine(_lines.Count, text, hex, isComplete, lineBreakLength, documentOffset, 0, ansiText));
+            _lines.Add(new CaptureLine(_lines.Count, text, hex, isComplete, lineBreakLength, documentOffset, 0, ansiText, segments));
         }
 
         private static string TrimHexToTrailingBytes(string hex, int byteCount)
@@ -273,20 +279,27 @@ namespace UartMonitor.Serial
 
         public sealed class CaptureLine
         {
-            public static readonly CaptureLine Empty = new CaptureLine(-1, string.Empty, string.Empty, false, 0, 0, 0, string.Empty);
+            public static readonly CaptureLine Empty = new CaptureLine(-1, string.Empty, string.Empty, false, 0, 0, 0, string.Empty, null);
             private readonly StringBuilder _textBuilder = new StringBuilder();
             private readonly StringBuilder _hexBuilder = new StringBuilder();
             private readonly StringBuilder _ansiTextBuilder = new StringBuilder();
             private readonly List<LineChunk> _chunks = new List<LineChunk>();
+            private readonly List<StyledTextSpan> _textStyleSpans = new List<StyledTextSpan>();
             private LineSelectionMap? _selectionMap;
 
             public CaptureLine(int index, string text, string hex, bool isComplete, int lineBreakLength, int documentStartOffset, int renderedDocumentStartOffset, string ansiText)
+                : this(index, text, hex, isComplete, lineBreakLength, documentStartOffset, renderedDocumentStartOffset, ansiText, null)
+            {
+            }
+
+            public CaptureLine(int index, string text, string hex, bool isComplete, int lineBreakLength, int documentStartOffset, int renderedDocumentStartOffset, string ansiText, IReadOnlyList<LogSegment>? segments)
             {
                 Index = index;
                 _textBuilder.Append(text);
                 _hexBuilder.Append(hex);
                 _ansiTextBuilder.Append(ansiText ?? string.Empty);
                 _chunks.Add(new LineChunk(0, text ?? string.Empty, 0, hex ?? string.Empty));
+                AppendStyledTextSpans(0, text ?? string.Empty, segments);
                 IsComplete = isComplete;
                 LineBreakLength = Math.Max(0, lineBreakLength);
                 DocumentStartOffset = Math.Max(0, documentStartOffset);
@@ -332,6 +345,11 @@ namespace UartMonitor.Serial
 
             public void Append(string text, string hex, bool isComplete, int lineBreakLength, string ansiText)
             {
+                Append(text, hex, isComplete, lineBreakLength, ansiText, null);
+            }
+
+            public void Append(string text, string hex, bool isComplete, int lineBreakLength, string ansiText, IReadOnlyList<LogSegment>? segments)
+            {
                 int textStartOffset = _textBuilder.Length;
                 int hexStartOffset = _hexBuilder.Length > 0 && !string.IsNullOrEmpty(hex)
                     ? _hexBuilder.Length + 1
@@ -359,12 +377,81 @@ namespace UartMonitor.Serial
                 if (!string.IsNullOrEmpty(ansiText))
                     _ansiTextBuilder.Append(ansiText);
 
+                AppendStyledTextSpans(textStartOffset, text ?? string.Empty, segments);
+
                 if (!string.IsNullOrEmpty(text) || !string.IsNullOrEmpty(hex))
                     _chunks.Add(new LineChunk(textStartOffset, text ?? string.Empty, hexStartOffset, hex ?? string.Empty));
 
                 IsComplete |= isComplete;
                 LineBreakLength = Math.Max(LineBreakLength, Math.Max(0, lineBreakLength));
                 _selectionMap = null;
+            }
+
+            public IReadOnlyList<LogSegment> GetTextRenderSegments()
+            {
+                var segments = new List<LogSegment>();
+                string text = Text;
+                if (string.IsNullOrEmpty(text))
+                    return segments;
+
+                int cursor = 0;
+                foreach (StyledTextSpan span in _textStyleSpans.OrderBy(item => item.TextStartOffset))
+                {
+                    int start = Math.Max(cursor, Math.Min(span.TextStartOffset, text.Length));
+                    int end = Math.Max(start, Math.Min(span.TextEndOffset, text.Length));
+                    if (start > cursor)
+                        segments.Add(new LogSegment(text.Substring(cursor, start - cursor), new AnsiStyle()));
+                    if (end > start)
+                        segments.Add(new LogSegment(text.Substring(start, end - start), span.Style.Clone()));
+                    cursor = end;
+                }
+
+                if (cursor < text.Length)
+                    segments.Add(new LogSegment(text.Substring(cursor), new AnsiStyle()));
+
+                return segments;
+            }
+
+            public IReadOnlyList<HexRenderSegment> GetHexRenderSegments(Encoding encoding)
+            {
+                string hex = Hex;
+                var segments = new List<HexRenderSegment>();
+                if (string.IsNullOrEmpty(hex))
+                    return segments;
+
+                LineSelectionMap map = GetOrBuildSelectionMap(encoding);
+                if (map.Tokens.Count == 0)
+                {
+                    segments.Add(new HexRenderSegment(hex, new AnsiStyle(), false));
+                    return segments;
+                }
+
+                int cursor = 0;
+                HexRenderSegment? active = null;
+                for (int tokenIndex = 0; tokenIndex < map.Tokens.Count; tokenIndex++)
+                {
+                    HexToken token = map.Tokens[tokenIndex];
+                    int start = Math.Max(cursor, Math.Min(token.StartOffset, hex.Length));
+                    int end = Math.Max(start, Math.Min(token.EndOffset, hex.Length));
+                    if (start > cursor && active != null)
+                    {
+                        active.Append(hex.Substring(cursor, start - cursor));
+                    }
+                    else if (start > cursor)
+                    {
+                        active = AppendHexRenderSegment(segments, active, hex.Substring(cursor, start - cursor), new AnsiStyle(), false);
+                    }
+
+                    bool isAnsiSequence = IsInsideAnsiSpan(tokenIndex, map.AnsiSpans);
+                    AnsiStyle style = GetTokenRenderStyle(map, tokenIndex, isAnsiSequence);
+                    active = AppendHexRenderSegment(segments, active, hex.Substring(start, end - start), style, isAnsiSequence);
+                    cursor = end;
+                }
+
+                if (cursor < hex.Length)
+                    AppendHexRenderSegment(segments, active, hex.Substring(cursor), active?.Style ?? new AnsiStyle(), active?.IsAnsiSequence ?? false);
+
+                return segments;
             }
 
             public bool TryGetHexSelection(string selectedText, Encoding encoding, out int hexStartOffset, out int hexEndOffset)
@@ -644,7 +731,7 @@ namespace UartMonitor.Serial
                             continue;
 
                         int textStartOffset = chunk.TextStartOffset + chunkTextOffset;
-                        spans.Add(new VisibleByteSpan(textStartOffset, textStartOffset + text.Length, chunkTokens[index].StartOffset, chunkTokens[index].EndOffset, tokenBaseIndex + index, tokenBaseIndex + index + 1));
+                        spans.Add(new VisibleByteSpan(textStartOffset, textStartOffset + text.Length, chunkTokens[index].StartOffset, chunkTokens[index].EndOffset, tokenBaseIndex + index, tokenBaseIndex + index + 1, GetStyleAtTextOffset(textStartOffset)));
                         chunkTextOffset += text.Length;
                     }
 
@@ -654,6 +741,105 @@ namespace UartMonitor.Serial
 
                 _selectionMap = new LineSelectionMap(encoding.CodePage, tokens, spans, ansiSpans);
                 return _selectionMap;
+            }
+
+            private void AppendStyledTextSpans(int textStartOffset, string text, IReadOnlyList<LogSegment>? segments)
+            {
+                if (string.IsNullOrEmpty(text))
+                    return;
+
+                if (segments == null || segments.Count == 0)
+                {
+                    _textStyleSpans.Add(new StyledTextSpan(textStartOffset, textStartOffset + text.Length, new AnsiStyle()));
+                    return;
+                }
+
+                int offset = textStartOffset;
+                foreach (LogSegment segment in segments)
+                {
+                    if (string.IsNullOrEmpty(segment.Text))
+                        continue;
+
+                    _textStyleSpans.Add(new StyledTextSpan(offset, offset + segment.Text.Length, segment.Style.Clone()));
+                    offset += segment.Text.Length;
+                }
+            }
+
+            private AnsiStyle GetStyleAtTextOffset(int textOffset)
+            {
+                for (int index = _textStyleSpans.Count - 1; index >= 0; index--)
+                {
+                    StyledTextSpan span = _textStyleSpans[index];
+                    if (textOffset >= span.TextStartOffset && textOffset < span.TextEndOffset)
+                        return span.Style.Clone();
+                }
+
+                return new AnsiStyle();
+            }
+
+            private static HexRenderSegment AppendHexRenderSegment(List<HexRenderSegment> segments, HexRenderSegment? active, string text, AnsiStyle style, bool isAnsiSequence)
+            {
+                if (string.IsNullOrEmpty(text))
+                    return active ?? new HexRenderSegment(string.Empty, style, isAnsiSequence);
+
+                if (active != null && active.IsAnsiSequence == isAnsiSequence && StylesEqual(active.Style, style))
+                {
+                    active.Append(text);
+                    return active;
+                }
+
+                HexRenderSegment segment = new HexRenderSegment(text, style.Clone(), isAnsiSequence);
+                segments.Add(segment);
+                return segment;
+            }
+
+            private static AnsiStyle GetTokenRenderStyle(LineSelectionMap map, int tokenIndex, bool preferNextVisible)
+            {
+                for (int index = 0; index < map.Spans.Count; index++)
+                {
+                    VisibleByteSpan span = map.Spans[index];
+                    if (tokenIndex >= span.TokenStartIndex && tokenIndex < span.TokenEndIndexExclusive)
+                        return span.Style.Clone();
+                }
+
+                if (preferNextVisible)
+                {
+                    for (int index = 0; index < map.Spans.Count; index++)
+                    {
+                        VisibleByteSpan span = map.Spans[index];
+                        if (span.TokenStartIndex > tokenIndex)
+                            return span.Style.Clone();
+                    }
+                }
+
+                for (int index = map.Spans.Count - 1; index >= 0; index--)
+                {
+                    VisibleByteSpan span = map.Spans[index];
+                    if (span.TokenEndIndexExclusive <= tokenIndex)
+                        return span.Style.Clone();
+                }
+
+                if (!preferNextVisible)
+                {
+                    for (int index = 0; index < map.Spans.Count; index++)
+                    {
+                        VisibleByteSpan span = map.Spans[index];
+                        if (span.TokenStartIndex > tokenIndex)
+                            return span.Style.Clone();
+                    }
+                }
+
+                return new AnsiStyle();
+            }
+
+            private static bool StylesEqual(AnsiStyle left, AnsiStyle right)
+            {
+                return left.Foreground == right.Foreground
+                    && left.Background == right.Background
+                    && left.Bold == right.Bold
+                    && left.Underline == right.Underline
+                    && left.Blink == right.Blink
+                    && left.Strikeout == right.Strikeout;
             }
 
             private static void RemoveChunkSpans(List<VisibleByteSpan> spans, int chunkTextStartOffset)
@@ -827,9 +1013,44 @@ namespace UartMonitor.Serial
                 public string Hex { get; }
             }
 
+            private readonly struct StyledTextSpan
+            {
+                public StyledTextSpan(int textStartOffset, int textEndOffset, AnsiStyle style)
+                {
+                    TextStartOffset = textStartOffset;
+                    TextEndOffset = textEndOffset;
+                    Style = style;
+                }
+
+                public int TextStartOffset { get; }
+                public int TextEndOffset { get; }
+                public AnsiStyle Style { get; }
+            }
+
+            public sealed class HexRenderSegment
+            {
+                private readonly StringBuilder _text = new StringBuilder();
+
+                public HexRenderSegment(string text, AnsiStyle style, bool isAnsiSequence)
+                {
+                    _text.Append(text ?? string.Empty);
+                    Style = style;
+                    IsAnsiSequence = isAnsiSequence;
+                }
+
+                public string Text => _text.ToString();
+                public AnsiStyle Style { get; }
+                public bool IsAnsiSequence { get; }
+
+                internal void Append(string text)
+                {
+                    _text.Append(text);
+                }
+            }
+
             private readonly struct VisibleByteSpan
             {
-                public VisibleByteSpan(int textStartOffset, int textEndOffset, int hexStartOffset, int hexEndOffset, int tokenStartIndex, int tokenEndIndexExclusive)
+                public VisibleByteSpan(int textStartOffset, int textEndOffset, int hexStartOffset, int hexEndOffset, int tokenStartIndex, int tokenEndIndexExclusive, AnsiStyle style)
                 {
                     TextStartOffset = textStartOffset;
                     TextEndOffset = textEndOffset;
@@ -837,6 +1058,7 @@ namespace UartMonitor.Serial
                     HexEndOffset = hexEndOffset;
                     TokenStartIndex = tokenStartIndex;
                     TokenEndIndexExclusive = tokenEndIndexExclusive;
+                    Style = style;
                 }
 
                 public int TextStartOffset { get; }
@@ -845,6 +1067,7 @@ namespace UartMonitor.Serial
                 public int HexEndOffset { get; }
                 public int TokenStartIndex { get; }
                 public int TokenEndIndexExclusive { get; }
+                public AnsiStyle Style { get; }
             }
 
             private sealed class LineSelectionMap

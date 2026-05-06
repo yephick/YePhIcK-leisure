@@ -14,6 +14,7 @@ namespace UartMonitor.Settings
         public string EncodingDisplayName { get; set; } = "ISO-8859-1: 1998 (Latin-1, West Europe)";
         public string FontFamily { get; set; } = "Consolas";
         public string FontSize { get; set; } = "16";
+        public int TabSize { get; set; } = 8;
         public int DataBits { get; set; } = 8;
         public string StopBits { get; set; } = "1";
         public string Parity { get; set; } = "None";
@@ -50,6 +51,7 @@ namespace UartMonitor.Settings
                 settings.EncodingDisplayName = GetString(values, nameof(EncodingDisplayName), settings.EncodingDisplayName);
                 settings.FontFamily = GetString(values, nameof(FontFamily), settings.FontFamily);
                 settings.FontSize = GetString(values, nameof(FontSize), settings.FontSize);
+                settings.TabSize = GetAllowedTabSize(GetInt(values, nameof(TabSize), settings.TabSize));
                 settings.DataBits = GetInt(values, nameof(DataBits), settings.DataBits);
                 settings.StopBits = GetString(values, nameof(StopBits), settings.StopBits);
                 settings.Parity = GetString(values, nameof(Parity), settings.Parity);
@@ -75,6 +77,7 @@ namespace UartMonitor.Settings
                 $"EncodingDisplayName={EncodingDisplayName}",
                 $"FontFamily={FontFamily}",
                 $"FontSize={FontSize}",
+                $"TabSize={GetAllowedTabSize(TabSize).ToString(CultureInfo.InvariantCulture)}",
                 $"DataBits={DataBits.ToString(CultureInfo.InvariantCulture)}",
                 $"StopBits={StopBits}",
                 $"Parity={Parity}",
@@ -102,6 +105,13 @@ namespace UartMonitor.Settings
             return values.TryGetValue(key, out string? value) && bool.TryParse(value, out bool parsed)
                 ? parsed
                 : fallback;
+        }
+
+        private static int GetAllowedTabSize(int value)
+        {
+            return value == 2 || value == 3 || value == 4 || value == 6 || value == 8
+                ? value
+                : 8;
         }
     }
 }

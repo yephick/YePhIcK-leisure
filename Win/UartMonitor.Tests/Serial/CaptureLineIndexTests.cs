@@ -1,6 +1,9 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Linq;
 using System.Text;
+using System.Windows.Media;
+using UartMonitor.Rendering;
 using UartMonitor.Serial;
 
 namespace UartMonitor.Tests.Serial
@@ -339,6 +342,64 @@ namespace UartMonitor.Tests.Serial
             Assert.AreEqual(3, index.Count);
             Assert.AreEqual(string.Empty, index.GetLine(1).Text);
             Assert.AreEqual("0A 0D", index.GetLine(1).Hex);
+        }
+
+        [TestMethod]
+        public void CaptureLine_UsesStoredTextSegmentsForRendering()
+        {
+            AnsiStyle red = new AnsiStyle { Foreground = Color.FromRgb(0xff, 0x00, 0x00) };
+            AnsiStyle green = new AnsiStyle { Foreground = Color.FromRgb(0x00, 0xff, 0x00) };
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "redgreen",
+                "72 65 64 67 72 65 65 6E",
+                true,
+                0,
+                0,
+                0,
+                "\x1b[31mred\x1b[32mgreen",
+                new[]
+                {
+                    new LogSegment("red", red),
+                    new LogSegment("green", green)
+                });
+
+            LogSegment[] segments = line.GetTextRenderSegments().ToArray();
+
+            Assert.AreEqual(2, segments.Length);
+            Assert.AreEqual("red", segments[0].Text);
+            Assert.AreEqual(Color.FromRgb(0xff, 0x00, 0x00), segments[0].Style.Foreground);
+            Assert.AreEqual("green", segments[1].Text);
+            Assert.AreEqual(Color.FromRgb(0x00, 0xff, 0x00), segments[1].Style.Foreground);
+        }
+
+        [TestMethod]
+        public void CaptureLine_HexRenderSegments_ColorVisibleBytesAndMarkAnsiSequences()
+        {
+            AnsiStyle style = new AnsiStyle
+            {
+                Foreground = Color.FromRgb(0xff, 0x00, 0x00),
+                Background = Color.FromRgb(0x00, 0x00, 0x40)
+            };
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "red",
+                "1B 5B 33 31 6D 72 65 64",
+                true,
+                0,
+                0,
+                0,
+                "\x1b[31mred",
+                new[] { new LogSegment("red", style) });
+
+            CaptureLineIndex.CaptureLine.HexRenderSegment[] segments = line.GetHexRenderSegments(Encoding.ASCII).ToArray();
+
+            Assert.AreEqual("1B 5B 33 31 6D 72 65 64", string.Concat(segments.Select(segment => segment.Text)));
+            Assert.IsTrue(segments[0].IsAnsiSequence);
+            Assert.AreEqual(Color.FromRgb(0xff, 0x00, 0x00), segments[0].Style.Foreground);
+            Assert.AreEqual(Color.FromRgb(0x00, 0x00, 0x40), segments[0].Style.Background);
+            Assert.IsFalse(segments[1].IsAnsiSequence);
+            Assert.AreEqual(Color.FromRgb(0xff, 0x00, 0x00), segments[1].Style.Foreground);
         }
 
         private static string ExtractHexSpan(string hex, int startOffset, int endOffset)

@@ -90,10 +90,15 @@ namespace UartMonitor.Rendering
                     break;
                 }
 
+                if (prefixBuffer.Length > 0)
+                {
+                    buffer.Append(prefixBuffer);
+                    prefixBuffer.Clear();
+                }
+
                 FlushText(segments, buffer);
 
                 sawEscape = true;
-                prefixBuffer.Clear();
 
                 if (input[end] == 'm')
                     ApplySgr(input.Substring(index + 2, end - index - 2));

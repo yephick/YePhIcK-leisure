@@ -38,6 +38,48 @@ namespace UartMonitor.Tests.Rendering
         }
 
         [TestMethod]
+        public void Parse_PrintableTabPrefixBeforeAnsi_IsRendered()
+        {
+            AnsiParser parser = new AnsiParser();
+
+            LogSegment[] segments = parser.Parse("0\t\x1b[32mready").ToArray();
+
+            Assert.AreEqual(2, segments.Length);
+            Assert.AreEqual("0\t", segments[0].Text);
+            Assert.IsNull(segments[0].Style.Foreground);
+            Assert.AreEqual("ready", segments[1].Text);
+            Assert.AreEqual(Color.FromRgb(0x00, 0xff, 0x00), segments[1].Style.Foreground);
+        }
+
+        [TestMethod]
+        public void Parse_UnsupportedAnsiAfterPrintablePrefix_PreservesPrefix()
+        {
+            AnsiParser parser = new AnsiParser();
+
+            LogSegment[] segments = parser.Parse("0\t\x1b[2Jready").ToArray();
+
+            Assert.AreEqual(2, segments.Length);
+            Assert.AreEqual("0\t", segments[0].Text);
+            Assert.AreEqual("ready", segments[1].Text);
+            Assert.AreEqual("0\tready", string.Concat(segments.Select(segment => segment.Text)));
+        }
+
+        [TestMethod]
+        public void TabExpansion_ExpandsTabsToConfiguredStopsAndMapsOffsets()
+        {
+            int column = 0;
+
+            string expanded = TabExpansion.Expand("ab\tc\t", 4, ref column);
+
+            Assert.AreEqual("ab  c   ", expanded);
+            Assert.AreEqual(8, column);
+            Assert.AreEqual(8, TabExpansion.GetExpandedLength("ab\tc\t", 4));
+            Assert.AreEqual(4, TabExpansion.ModelOffsetToExpandedOffset("ab\tc", 3, 4));
+            Assert.AreEqual(2, TabExpansion.ExpandedOffsetToModelOffset("ab\tc", 3, 4));
+            Assert.AreEqual(3, TabExpansion.ExpandedOffsetToModelOffset("ab\tc", 4, 4));
+        }
+
+        [TestMethod]
         public void Parse_Sgr256ForegroundAndBackground_StylesRunCorrectly()
         {
             AnsiParser parser = new AnsiParser();
@@ -437,6 +479,7 @@ namespace UartMonitor.Tests.Rendering
                     EncodingDisplayName = "ISO-8859-1: 1998 (Latin-1, West Europe)",
                     FontFamily = "Consolas",
                     FontSize = "16",
+                    TabSize = 6,
                     DataBits = 8,
                     StopBits = "1",
                     Parity = "None",
@@ -454,6 +497,7 @@ namespace UartMonitor.Tests.Rendering
                 Assert.AreEqual("3000000", loaded.BaudRate);
                 Assert.AreEqual("Consolas", loaded.FontFamily);
                 Assert.AreEqual("16", loaded.FontSize);
+                Assert.AreEqual(6, loaded.TabSize);
                 Assert.AreEqual(8, loaded.DataBits);
                 Assert.IsTrue(loaded.MergeLineEndings);
                 Assert.IsFalse(loaded.AutoScroll);

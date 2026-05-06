@@ -11,6 +11,7 @@
     <Compile Include="..\UartMonitor\Rendering\AnsiParser.cs" Link="Rendering\AnsiParser.cs" />
     <Compile Include="..\UartMonitor\Rendering\AnsiStyle.cs" Link="Rendering\AnsiStyle.cs" />
     <Compile Include="..\UartMonitor\Rendering\LogLine.cs" Link="Rendering\LogLine.cs" />
+    <Compile Include="..\UartMonitor\Rendering\TabExpansion.cs" Link="Rendering\TabExpansion.cs" />
     <Compile Include="..\UartMonitor\Serial\LineEndingNormalizer.cs" Link="Serial\LineEndingNormalizer.cs" />
     <Compile Include="..\UartMonitor\Serial\HexChunkFormatter.cs" Link="Serial\HexChunkFormatter.cs" />
     <Compile Include="..\UartMonitor\Serial\HexStreamFormatter.cs" Link="Serial\HexStreamFormatter.cs" />

@@ -69,6 +69,9 @@ namespace UartMonitor
             FontSizeComboBox.ItemsSource = new[] { 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24 };
             FontSizeComboBox.Text = _settings.FontSize;
 
+            TabSizeComboBox.ItemsSource = new[] { 2, 3, 4, 6, 8 };
+            TabSizeComboBox.SelectedItem = GetAllowedTabSize(_settings.TabSize);
+
             DataBitsComboBox.ItemsSource = new[] { 5, 6, 7, 8 };
             DataBitsComboBox.SelectedItem = _settings.DataBits;
 
@@ -127,6 +130,11 @@ namespace UartMonitor
         private void FontSizeComboBox_LostFocus(object sender, RoutedEventArgs e)
         {
             ApplyFontSettings();
+        }
+
+        private void TabSizeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            RefreshRenderedDocuments();
         }
 
         private void EncodingComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -433,9 +441,10 @@ namespace UartMonitor
                     ? part.Bytes.Take(part.Bytes.Length - part.LineEndingLength).ToArray()
                     : part.Bytes;
                 string text = encoding.GetString(textBytes);
-                string renderedText = string.Concat(_ansiParser.Parse(text).Select(segment => segment.Text));
+                LogSegment[] segments = _ansiParser.Parse(text).ToArray();
+                string renderedText = string.Concat(segments.Select(segment => segment.Text));
                 string hex = FormatHexLine(part.Bytes);
-                _lineIndex.AppendLinePart(renderedText, hex, part.IsComplete, part.LineEndingLength, text);
+                _lineIndex.AppendLinePart(renderedText, hex, part.IsComplete, part.LineEndingLength, text, segments);
             }
             }
         }
@@ -448,7 +457,8 @@ namespace UartMonitor
                 lock (_processingGate)
                 {
                     RebuildDocumentsFromRows();
-                    _visibleTextColumns = _lineIndex.GetLines().Sum(line => line.TextLength);
+                    int tabSize = GetSelectedTabSize();
+                    _visibleTextColumns = _lineIndex.GetLines().Sum(line => TabExpansion.GetExpandedLength(line.Text, tabSize));
                     _hexColumns = _lineIndex.GetLines().Sum(line => line.HexLength);
                 }
 
@@ -531,19 +541,21 @@ namespace UartMonitor
             _textLineStarts.Clear();
             _hexLineStarts.Clear();
 
-            _ansiParser.Reset();
             int renderedTextOffset = 0;
             int renderedHexOffset = 0;
+            int tabSize = GetSelectedTabSize();
             foreach (CaptureLineIndex.CaptureLine line in _lineIndex.GetLines())
             {
                 line.SetRenderedDocumentStartOffsets(renderedTextOffset, renderedHexOffset);
                 Span textSpan = new Span();
-                foreach (LogSegment segment in _ansiParser.Parse(line.AnsiText))
+                int textColumn = 0;
+                foreach (LogSegment segment in line.GetTextRenderSegments())
                 {
                     if (string.IsNullOrEmpty(segment.Text))
                         continue;
 
-                    Run run = new Run(segment.Text);
+                    string text = TabExpansion.Expand(segment.Text, tabSize, ref textColumn);
+                    Run run = new Run(text);
                     if (segment.Style.Foreground is Color foreground)
                         run.Foreground = CreateBrush(foreground);
                     if (segment.Style.Background is Color background)
@@ -553,14 +565,30 @@ namespace UartMonitor
                     textSpan.Inlines.Add(run);
                 }
 
-                Run hexRun = new Run(line.Hex);
+                Span hexSpan = new Span();
+                foreach (CaptureLineIndex.CaptureLine.HexRenderSegment segment in line.GetHexRenderSegments(GetSelectedEncoding()))
+                {
+                    if (string.IsNullOrEmpty(segment.Text))
+                        continue;
+
+                    Run run = new Run(segment.Text);
+                    AnsiStyle style = segment.IsAnsiSequence ? CreateDimmedAnsiStyle(segment.Style) : segment.Style;
+                    if (style.Foreground is Color foreground)
+                        run.Foreground = CreateBrush(foreground);
+                    if (style.Background is Color background)
+                        run.Background = CreateBrush(background);
+                    run.FontWeight = style.FontWeight;
+                    run.TextDecorations = style.TextDecorations;
+                    hexSpan.Inlines.Add(run);
+                }
+
                 textParagraph.Inlines.Add(textSpan);
-                hexParagraph.Inlines.Add(hexRun);
+                hexParagraph.Inlines.Add(hexSpan);
                 _textLineStarts.Add(textSpan.ContentStart);
-                _hexLineStarts.Add(hexRun.ContentStart);
+                _hexLineStarts.Add(hexSpan.ContentStart);
                 textParagraph.Inlines.Add(new LineBreak());
                 hexParagraph.Inlines.Add(new LineBreak());
-                renderedTextOffset += line.TextLength + 2;
+                renderedTextOffset += TabExpansion.GetExpandedLength(line.Text, tabSize) + 2;
                 renderedHexOffset += line.HexLength + 2;
             }
         }
@@ -638,6 +666,18 @@ namespace UartMonitor
             SolidColorBrush brush = new SolidColorBrush(color);
             brush.Freeze();
             return brush;
+        }
+
+        private static AnsiStyle CreateDimmedAnsiStyle(AnsiStyle style)
+        {
+            AnsiStyle dimmed = style.Clone();
+            Color foreground = style.Foreground ?? Color.FromRgb(0xd0, 0xd0, 0xd0);
+            dimmed.Foreground = Color.FromRgb(
+                (byte)Math.Max(0, foreground.R * 3 / 5),
+                (byte)Math.Max(0, foreground.G * 3 / 5),
+                (byte)Math.Max(0, foreground.B * 3 / 5));
+            dimmed.Bold = false;
+            return dimmed;
         }
 
         private void ApplyFontSettings()
@@ -758,8 +798,10 @@ namespace UartMonitor
                     int targetLineLength = sourceIsHex ? targetLine.TextLength : targetLine.HexLength;
                     int safeStart = Math.Max(0, Math.Min(targetStartOffset, targetLineLength));
                     int safeEnd = Math.Max(safeStart, Math.Min(targetEndOffset, targetLineLength));
-                    TextPointer startPointer = lineStartPointer.GetPositionAtOffset(safeStart, LogicalDirection.Forward) ?? lineStartPointer;
-                    TextPointer endPointer = lineStartPointer.GetPositionAtOffset(safeEnd, LogicalDirection.Forward) ?? startPointer;
+                    int pointerStart = GetPointerOffset(target, targetLine, safeStart);
+                    int pointerEnd = GetPointerOffset(target, targetLine, safeEnd);
+                    TextPointer startPointer = lineStartPointer.GetPositionAtOffset(pointerStart, LogicalDirection.Forward) ?? lineStartPointer;
+                    TextPointer endPointer = lineStartPointer.GetPositionAtOffset(pointerEnd, LogicalDirection.Forward) ?? startPointer;
 
                     firstTargetPointer ??= startPointer;
                     lastTargetPointer = endPointer;
@@ -836,8 +878,8 @@ namespace UartMonitor
             int lineLength = ReferenceEquals(box, HexLogBox) ? line.HexLength : line.TextLength;
             int startOffset = Math.Max(0, Math.Min(rowStartOffset, lineLength));
             int endOffset = Math.Max(startOffset, Math.Min(rowEndOffset, lineLength));
-            TextPointer start = lineStart.GetPositionAtOffset(startOffset, LogicalDirection.Forward) ?? lineStart;
-            TextPointer end = lineStart.GetPositionAtOffset(endOffset, LogicalDirection.Forward) ?? start;
+            TextPointer start = lineStart.GetPositionAtOffset(GetPointerOffset(box, line, startOffset), LogicalDirection.Forward) ?? lineStart;
+            TextPointer end = lineStart.GetPositionAtOffset(GetPointerOffset(box, line, endOffset), LogicalDirection.Forward) ?? start;
 
             if (start != null && end != null)
                 box.Selection.Select(start, end);
@@ -863,6 +905,8 @@ namespace UartMonitor
             CaptureLineIndex.CaptureLine line = _lineIndex.GetLine(lineIndex);
             int lineLength = ReferenceEquals(box, HexLogBox) ? line.HexLength : line.TextLength;
             int offset = NormalizeRowOffset(new TextRange(lineStart, position).Text);
+            if (ReferenceEquals(box, LogBox))
+                offset = TabExpansion.ExpandedOffsetToModelOffset(line.Text, offset, GetSelectedTabSize());
             return Math.Max(0, Math.Min(offset, lineLength));
         }
 
@@ -915,6 +959,14 @@ namespace UartMonitor
             int start = Math.Max(0, Math.Min(rowStartOffset, lineText.Length));
             int end = Math.Max(start, Math.Min(rowEndOffset, lineText.Length));
             return lineText.Substring(start, end - start);
+        }
+
+        private int GetPointerOffset(RichTextBox box, CaptureLineIndex.CaptureLine line, int rowOffset)
+        {
+            if (ReferenceEquals(box, LogBox))
+                return TabExpansion.ModelOffsetToExpandedOffset(line.Text, rowOffset, GetSelectedTabSize());
+
+            return Math.Max(0, Math.Min(rowOffset, line.HexLength));
         }
 
         private static int GetTextOffset(TextPointer documentStart, TextPointer position)
@@ -985,6 +1037,16 @@ namespace UartMonitor
             return DataBitsComboBox.SelectedItem is int dataBits ? dataBits : 8;
         }
 
+        private int GetSelectedTabSize()
+        {
+            return TabSizeComboBox.SelectedItem is int tabSize ? GetAllowedTabSize(tabSize) : 8;
+        }
+
+        private static int GetAllowedTabSize(int value)
+        {
+            return TabExpansion.GetAllowedTabSize(value);
+        }
+
         private StopBits GetSelectedStopBits()
         {
             return StopBitsComboBox.SelectedItem is StopBitsChoice choice ? choice.StopBits : StopBits.One;
@@ -1049,6 +1111,7 @@ namespace UartMonitor
             _settings.EncodingDisplayName = (EncodingComboBox.SelectedItem as EncodingChoice)?.DisplayName ?? _settings.EncodingDisplayName;
             _settings.FontFamily = (FontFamilyComboBox.SelectedItem as FontFamilyChoice)?.FontFamily.Source ?? _settings.FontFamily;
             _settings.FontSize = FontSizeComboBox.Text?.Trim() ?? _settings.FontSize;
+            _settings.TabSize = GetSelectedTabSize();
             _settings.DataBits = GetSelectedDataBits();
             _settings.StopBits = (StopBitsComboBox.SelectedItem as StopBitsChoice)?.DisplayName ?? _settings.StopBits;
             _settings.Parity = GetSelectedParity().ToString();
