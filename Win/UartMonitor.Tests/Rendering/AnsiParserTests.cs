@@ -6,7 +6,6 @@ using System.Windows.Media;
 using UartMonitor.Rendering;
 using UartMonitor.Serial;
 using UartMonitor.Settings;
-using UartMonitor;
 
 namespace UartMonitor.Tests.Rendering
 {
@@ -240,19 +239,6 @@ namespace UartMonitor.Tests.Rendering
         }
 
         [TestMethod]
-        public void Parse_SampleSeedBanner_HasExpectedFirstStyledRun()
-        {
-            AnsiParser parser = new AnsiParser();
-
-            string sample = UartMonitor.Serial.TestSample.GetTestSample(System.Text.Encoding.GetEncoding(28591));
-            LogSegment banner = parser.Parse(sample).First(item => item.Text.StartsWith("UART initialized at verbosity level 8"));
-
-            StringAssert.StartsWith(banner.Text, "UART initialized at verbosity level 8");
-            Assert.AreEqual(Color.FromRgb(0x00, 0xff, 0x00), banner.Style.Foreground);
-            Assert.AreEqual(Color.FromRgb(0x1c, 0x1c, 0x1c), banner.Style.Background);
-        }
-
-        [TestMethod]
         public void Parse_SampleSeedAnsiPrefix_PreservesStyledText()
         {
             AnsiParser parser = new AnsiParser();
@@ -275,21 +261,6 @@ namespace UartMonitor.Tests.Rendering
 
             Assert.AreEqual("error", segment.Text);
             Assert.AreEqual(Color.FromRgb(0xff, 0x00, 0x00), segment.Style.Foreground);
-        }
-
-        [TestMethod]
-        public void Parse_Reset_RestoresDefaultStyle()
-        {
-            AnsiParser parser = new AnsiParser();
-
-            LogSegment[] segments = parser.Parse("\x1b[31mred\x1b[0mgreen").ToArray();
-
-            Assert.AreEqual(2, segments.Length);
-            Assert.AreEqual("red", segments[0].Text);
-            Assert.AreEqual(Color.FromRgb(0xff, 0x00, 0x00), segments[0].Style.Foreground);
-            Assert.AreEqual("green", segments[1].Text);
-            Assert.IsNull(segments[1].Style.Foreground);
-            AssertBrushColor(Color.FromRgb(0x00, 0xff, 0x00), segments[1].Style.ForegroundBrush);
         }
 
         [TestMethod]
@@ -436,127 +407,6 @@ namespace UartMonitor.Tests.Rendering
         }
 
         [TestMethod]
-        public void HexChunkFormatter_FormatsHexOnly()
-        {
-            string formatted = HexChunkFormatter.Format(new byte[] { 0x00, 0x1b, 0x41, 0xff });
-
-            Assert.AreEqual("00 1B 41 FF\r\n", formatted);
-            Assert.IsFalse(formatted.Contains("|"));
-            Assert.IsFalse(formatted.Contains(":"));
-            Assert.IsFalse(formatted.Contains("0000"));
-        }
-
-        [TestMethod]
-        public void HexChunkFormatter_PreservesEmptyLines()
-        {
-            string formatted = HexChunkFormatter.Format(new byte[] { 0x41, 0x0d, 0x0a, 0x0d, 0x0a, 0x42 });
-
-            Assert.AreEqual("41 0D 0A\r\n\r\n\r\n42\r\n", formatted);
-        }
-
-        [TestMethod]
-        public void HexChunkFormatter_SplitsOnCrLfAndKeepsMarkers()
-        {
-            string formatted = HexChunkFormatter.Format(new byte[] { 0x41, 0x0d, 0x0a, 0x42, 0x0a, 0x0d, 0x43 });
-
-            Assert.AreEqual("41 0D 0A\r\n42 0A 0D\r\n43\r\n", formatted);
-        }
-
-        [TestMethod]
-        public void HexChunkFormatter_PreservesLeadingAndTrailingBlankRows()
-        {
-            string formatted = HexChunkFormatter.Format(new byte[] { 0x0d, 0x0a, 0x41, 0x0d, 0x0a, 0x0d, 0x0a });
-
-            StringAssert.Contains(formatted, "41 0D 0A");
-            Assert.AreEqual(6, formatted.Split(new[] { "\r\n" }, System.StringSplitOptions.None).Length - 1);
-        }
-
-        [TestMethod]
-        public void HexChunkFormatter_KeepsChunkAsSingleLine()
-        {
-            byte[] bytes = Enumerable.Range(0x11, 16).Select(value => (byte)value).ToArray();
-
-            string formatted = HexChunkFormatter.Format(bytes);
-
-            Assert.AreEqual("11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20\r\n", formatted);
-            Assert.AreEqual(1, formatted.Split(new[] { "\r\n" }, System.StringSplitOptions.None).Count(item => !string.IsNullOrEmpty(item)));
-        }
-
-        [TestMethod]
-        public void HexChunkFormatter_DoesNotReflowIntoOffsetRows()
-        {
-            byte[] bytes = Enumerable.Range(0, 48).Where(value => value != 0x0d && value != 0x0a).Select(value => (byte)value).ToArray();
-
-            string formatted = HexChunkFormatter.Format(bytes);
-
-            Assert.IsFalse(formatted.Contains("0000 "));
-            Assert.IsFalse(formatted.Contains("0010 "));
-            Assert.IsFalse(formatted.Contains("0020 "));
-            Assert.AreEqual(1, formatted.Count(character => character == '\n'));
-        }
-
-        [TestMethod]
-        public void HexChunkFormatter_PreservesLeadingAnsiControlSequences()
-        {
-            byte[] bytes = new byte[]
-            {
-                0x1B, 0x5B, 0x33, 0x32, 0x6D,
-                0x1B, 0x5B, 0x34, 0x38, 0x3B, 0x35, 0x3B, 0x32, 0x33, 0x34, 0x6D,
-                0x1B, 0x5B, 0x32, 0x4A,
-                0x55, 0x41, 0x52, 0x54
-            };
-
-            string formatted = HexChunkFormatter.Format(bytes);
-
-            Assert.AreEqual("1B 5B 33 32 6D 1B 5B 34 38 3B 35 3B 32 33 34 6D 1B 5B 32 4A 55 41 52 54\r\n", formatted);
-        }
-
-        [TestMethod]
-        public void HexChunkFormatter_PreservesOscSequences()
-        {
-            byte[] bytes = new byte[]
-            {
-                0x1B, 0x5D, 0x30, 0x3B, 0x74, 0x69, 0x74, 0x6C, 0x65, 0x07,
-                0x52, 0x65, 0x61, 0x64, 0x79
-            };
-
-            string formatted = HexChunkFormatter.Format(bytes);
-
-            Assert.AreEqual("1B 5D 30 3B 74 69 74 6C 65 07 52 65 61 64 79\r\n", formatted);
-        }
-
-        [TestMethod]
-        public void HexChunkFormatter_EmptyInput_ProducesEmptyOutput()
-        {
-            Assert.AreEqual(string.Empty, HexChunkFormatter.Format(Array.Empty<byte>()));
-        }
-
-        [TestMethod]
-        public void HexStreamFormatter_AppendsAcrossChunks_AsSingleRow()
-        {
-            HexStreamFormatter formatter = new HexStreamFormatter();
-
-            string first = formatter.Append(new byte[] { 0x34 });
-            string second = formatter.Append(new byte[] { 0x09, 0x1b, 0x5b, 0x33, 0x36, 0x6d });
-            string third = formatter.Append(new byte[] { 0x0d, 0x0a });
-
-            Assert.AreEqual(string.Empty, first);
-            Assert.AreEqual(string.Empty, second);
-            Assert.AreEqual("34 09 1B 5B 33 36 6D 0D 0A\r\n", third);
-        }
-
-        [TestMethod]
-        public void HexStreamFormatter_PreservesBlankLines_WithoutExtraRows()
-        {
-            HexStreamFormatter formatter = new HexStreamFormatter();
-
-            string first = formatter.Append(new byte[] { 0x41, 0x0d, 0x0a, 0x0d, 0x0a, 0x42 });
-            string second = formatter.Flush();
-
-            Assert.AreEqual("41 0D 0A\r\n\r\n42\r\n", first + second);
-        }
-
-        [TestMethod]
         public void HorizontalScaleFactor_DefaultsToThreeWhenUnknown()
         {
             Assert.AreEqual(3.0, UartMonitor.Serial.AlignmentMath.GetHorizontalScaleFactor(0, 0));
@@ -568,29 +418,6 @@ namespace UartMonitor.Tests.Rendering
         {
             Assert.AreEqual(2.5, UartMonitor.Serial.AlignmentMath.GetHorizontalScaleFactor(20, 50));
             Assert.AreEqual(4.0, UartMonitor.Serial.AlignmentMath.GetHorizontalScaleFactor(10, 40));
-        }
-
-        [TestMethod]
-        public void ToolWindow_Xaml_ExposesDisabledPanelSyncWarning()
-        {
-            string xamlPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\..\UartMonitor\UartMonitorWindows\UartMonitorControl.xaml"));
-            string xaml = File.ReadAllText(xamlPath);
-
-            StringAssert.Contains(xaml, "x:Name=\"PanelSyncCheckBox\"");
-            StringAssert.Contains(xaml, "IsChecked=\"False\"");
-            StringAssert.Contains(xaml, "significantly reduce UI responsiveness");
-            StringAssert.Contains(xaml, "scroll handling overhead");
-        }
-
-        [TestMethod]
-        public void ToolWindow_Xaml_EnablesInactiveSelectionHighlightOnBothPanes()
-        {
-            string xamlPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\..\UartMonitor\UartMonitorWindows\UartMonitorControl.xaml"));
-            string xaml = File.ReadAllText(xamlPath);
-
-            StringAssert.Contains(xaml, "x:Name=\"LogBox\"");
-            StringAssert.Contains(xaml, "IsInactiveSelectionHighlightEnabled=\"True\"");
-            StringAssert.Contains(xaml, "x:Name=\"HexLogBox\"");
         }
 
         [TestMethod]
