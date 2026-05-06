@@ -1,4 +1,4 @@
-﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Text;
 using UartMonitor.Serial;
@@ -325,6 +325,20 @@ namespace UartMonitor.Tests.Serial
             Assert.AreEqual(1, index.Count);
             Assert.AreEqual("231Â¦ Â· mft.ixx#75:cmd()", index.GetLine(0).Text);
             Assert.AreEqual("32 33 31 A6 20 B7 20 6D 66 74 2E 69 78 78 23 37 35 3A 63 6D 64 28 29 0A 0D", index.GetLine(0).Hex);
+        }
+
+        [TestMethod]
+        public void CaptureLineIndex_CompleteVisualEmptyLineKeepsOnlyLineEndingHex()
+        {
+            CaptureLineIndex index = new CaptureLineIndex();
+
+            index.AppendLinePart("before", "62 65 66 6F 72 65 0A 0D", true, 2, "before");
+            index.AppendLinePart(string.Empty, "30 09 1B 5B 33 37 6D 1B 5B 33 32 6D 0A 0D", true, 2, string.Empty);
+            index.AppendLinePart("after", "61 66 74 65 72 0A 0D", true, 2, "after");
+
+            Assert.AreEqual(3, index.Count);
+            Assert.AreEqual(string.Empty, index.GetLine(1).Text);
+            Assert.AreEqual("0A 0D", index.GetLine(1).Hex);
         }
 
         private static string ExtractHexSpan(string hex, int startOffset, int endOffset)

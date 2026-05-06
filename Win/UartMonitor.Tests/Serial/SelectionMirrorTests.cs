@@ -98,5 +98,28 @@ namespace UartMonitor.Tests.Serial
             Assert.IsTrue(endOffset >= startOffset + 2);
             Assert.IsFalse(target.Substring(startOffset, endOffset - startOffset).Contains("1B 5B"));
         }
+        [TestMethod]
+        public void GetMirroredSelectionOffsets_LastSelectedHexByte_IncludesBothHexDigits()
+        {
+            string source = "ABC\r\n";
+            string target = "41 42 43\r\n";
+
+            (int startOffset, int endOffset) = SelectionMirror.GetMirroredSelectionOffsets(source, 2, 3, target);
+
+            Assert.AreEqual("43", target.Substring(startOffset, endOffset - startOffset));
+        }
+
+        [TestMethod]
+        public void GetMirroredSelectionOffsets_MultiLineSelection_IncludesRowsBetweenBoundaries()
+        {
+            string source = "trace\r\n\r\nsetup\r\n";
+            string target = "74 72 61 63 65 0D 0A\r\n0D 0A\r\n73 65 74 75 70 0D 0A\r\n";
+
+            (int startOffset, int endOffset) = SelectionMirror.GetMirroredSelectionOffsets(source, 2, 10, target);
+            string selected = target.Substring(startOffset, endOffset - startOffset);
+
+            StringAssert.Contains(selected, "0D 0A");
+            StringAssert.Contains(selected, "73 65");
+        }
     }
 }

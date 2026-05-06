@@ -27,7 +27,7 @@ namespace UartMonitor
         private readonly UartMonitorUserSettings _settings = UartMonitorUserSettings.Load();
         private readonly List<TextPointer> _textLineStarts = new List<TextPointer>();
         private readonly List<TextPointer> _hexLineStarts = new List<TextPointer>();
-        private readonly List<TextRange> _hexMirrorHighlights = new List<TextRange>();
+        private readonly List<TextRange> _mirrorHighlights = new List<TextRange>();
         private readonly DispatcherTimer _selectionDebounceTimer;
         private readonly object _processingGate = new object();
         private RichTextBox? _pendingSelectionSource;
@@ -139,7 +139,14 @@ namespace UartMonitor
             if (_syncingSelection || _suppressSelectionEvents)
                 return;
 
-            ClearHexMirrorHighlights();
+            ClearMirrorHighlights();
+            ClearSelection(HexLogBox);
+            if (LogBox.Selection.IsEmpty)
+            {
+                UpdateSelectionDebug();
+                return;
+            }
+
             QueueSelectionSync(LogBox, HexLogBox);
             UpdateSelectionDebug();
         }
@@ -149,7 +156,14 @@ namespace UartMonitor
             if (_syncingSelection || _suppressSelectionEvents)
                 return;
 
-            ClearHexMirrorHighlights();
+            ClearMirrorHighlights();
+            ClearSelection(LogBox);
+            if (HexLogBox.Selection.IsEmpty)
+            {
+                UpdateSelectionDebug();
+                return;
+            }
+
             QueueSelectionSync(HexLogBox, LogBox);
             UpdateSelectionDebug();
         }
@@ -508,7 +522,7 @@ namespace UartMonitor
 
             textDocument.Blocks.Clear();
             hexDocument.Blocks.Clear();
-            _hexMirrorHighlights.Clear();
+            _mirrorHighlights.Clear();
 
             Paragraph textParagraph = CreateParagraph(LogBox.FontSize);
             Paragraph hexParagraph = CreateParagraph(HexLogBox.FontSize);
@@ -555,7 +569,7 @@ namespace UartMonitor
         {
             _textLineStarts.Clear();
             _hexLineStarts.Clear();
-            _hexMirrorHighlights.Clear();
+            _mirrorHighlights.Clear();
             const double sharedFontSize = 16;
             const double sharedLineHeight = 16;
             FlowDocument document = new FlowDocument
@@ -755,7 +769,6 @@ namespace UartMonitor
                 if (firstTargetPointer == null || lastTargetPointer == null)
                     return;
 
-                target.Selection.Select(firstTargetPointer, lastTargetPointer);
                 ApplyMirrorHighlights(target, targetHighlightRanges);
                 targetScrollViewer?.ScrollToHorizontalOffset(targetHorizontalOffset);
                 targetScrollViewer?.ScrollToVerticalOffset(targetVerticalOffset);
@@ -769,10 +782,7 @@ namespace UartMonitor
 
         private void ApplyMirrorHighlights(RichTextBox target, IEnumerable<TextRange> ranges)
         {
-            if (!ReferenceEquals(target, HexLogBox))
-                return;
-
-            ClearHexMirrorHighlights();
+            ClearMirrorHighlights();
             SolidColorBrush brush = CreateBrush(Color.FromRgb(0x66, 0x66, 0x66));
 
             foreach (TextRange range in ranges)
@@ -781,22 +791,39 @@ namespace UartMonitor
                     continue;
 
                 range.ApplyPropertyValue(TextElement.BackgroundProperty, brush);
-                _hexMirrorHighlights.Add(range);
+                _mirrorHighlights.Add(range);
             }
         }
 
-        private void ClearHexMirrorHighlights()
+        private void ClearMirrorHighlights()
         {
-            if (_hexMirrorHighlights.Count == 0)
+            if (_mirrorHighlights.Count == 0)
                 return;
 
-            foreach (TextRange range in _hexMirrorHighlights)
+            foreach (TextRange range in _mirrorHighlights)
             {
                 if (!range.IsEmpty)
                     range.ApplyPropertyValue(TextElement.BackgroundProperty, null);
             }
 
-            _hexMirrorHighlights.Clear();
+            _mirrorHighlights.Clear();
+        }
+
+        private void ClearSelection(RichTextBox box)
+        {
+            if (box.Selection.IsEmpty)
+                return;
+
+            try
+            {
+                _suppressSelectionEvents = true;
+                TextPointer caret = box.Selection.End;
+                box.Selection.Select(caret, caret);
+            }
+            finally
+            {
+                _suppressSelectionEvents = false;
+            }
         }
 
         private void SelectOffsets(RichTextBox box, int lineIndex, int rowStartOffset, int rowEndOffset)

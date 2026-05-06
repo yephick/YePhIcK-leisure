@@ -167,6 +167,21 @@ namespace UartMonitor.Tests.Serial
         }
 
         [TestMethod]
+        public void Design_LeftToRight_FirstPrintableCharacterIncludesPrecedingAnsiSequence()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "B",
+                "1B 5B 33 36 6D 42",
+                true);
+
+            bool mapped = line.TryGetHexSelection(0, 1, encoding, out int start, out int end);
+            Assert.IsTrue(mapped);
+            Assert.AreEqual("1B 5B 33 36 6D 42", ExtractHexSpan(line.Hex, start, end));
+        }
+
+        [TestMethod]
         public void Design_LeftToRight_EmptySelectedRowsWithHexAreFullySelected()
         {
             Encoding encoding = Encoding.GetEncoding(28591);
@@ -179,6 +194,23 @@ namespace UartMonitor.Tests.Serial
             bool mapped = line.TryGetHexSelection(0, 0, encoding, out int start, out int end, includeLeadingBytes: true, includeTrailingBytes: true);
             Assert.IsTrue(mapped);
             Assert.AreEqual("1B 5B 33 32 6D 0A 0D", ExtractHexSpan(line.Hex, start, end));
+        }
+
+        [TestMethod]
+        public void Design_LeftToRight_EmptySelectedRowsDoNotMapWithoutBothBoundaries()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                string.Empty,
+                "1B 5B 33 32 6D 0A 0D",
+                true);
+
+            bool mappedWithoutTrailing = line.TryGetHexSelection(0, 0, encoding, out _, out _, includeLeadingBytes: true);
+            bool mappedWithoutLeading = line.TryGetHexSelection(0, 0, encoding, out _, out _, includeTrailingBytes: true);
+
+            Assert.IsFalse(mappedWithoutTrailing);
+            Assert.IsFalse(mappedWithoutLeading);
         }
 
         [TestMethod]

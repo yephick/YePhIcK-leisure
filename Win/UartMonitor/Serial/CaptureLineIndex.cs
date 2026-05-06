@@ -46,6 +46,9 @@ namespace UartMonitor.Serial
 
         public void AppendLinePart(string text, string hex, bool isComplete, int lineBreakLength, string ansiText)
         {
+            if (string.IsNullOrEmpty(text) && isComplete && lineBreakLength > 0)
+                hex = TrimHexToTrailingBytes(hex, lineBreakLength);
+
             int documentOffset = _lines.Count > 0
                 ? _lines[_lines.Count - 1].DocumentStartOffset + _lines[_lines.Count - 1].DocumentLength
                 : 0;
@@ -57,6 +60,18 @@ namespace UartMonitor.Serial
             }
 
             _lines.Add(new CaptureLine(_lines.Count, text, hex, isComplete, lineBreakLength, documentOffset, 0, ansiText));
+        }
+
+        private static string TrimHexToTrailingBytes(string hex, int byteCount)
+        {
+            if (string.IsNullOrWhiteSpace(hex) || byteCount <= 0)
+                return string.Empty;
+
+            string[] tokens = hex.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length <= byteCount)
+                return string.Join(" ", tokens);
+
+            return string.Join(" ", tokens.Skip(tokens.Length - byteCount));
         }
 
         public CaptureLine GetLine(int index)

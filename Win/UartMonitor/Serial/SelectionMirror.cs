@@ -85,21 +85,13 @@ namespace UartMonitor.Serial
             }
 
             int sourceLineStart = sourceLines[sourceStartLine].start;
-            int sourceLineEnd = sourceLines[sourceEndLine].end;
-            int sourceLineLength = Math.Max(1, sourceLineEnd - sourceLineStart);
 
             int targetLineStart = targetLines[targetStartLine].start;
             int targetLineEnd = targetLines[targetEndLine].end;
-            int targetLineLength = Math.Max(1, targetLineEnd - targetLineStart);
 
             int relativeStart = sourceStartOffset - sourceLineStart;
-            int relativeEnd = sourceEndOffset - sourceLineStart;
-
-            double startRatio = (double)Math.Max(0, relativeStart) / sourceLineLength;
-            double endRatio = (double)Math.Max(0, relativeEnd) / sourceLineLength;
-
-            int mirroredStart = targetLineStart + (int)Math.Round(startRatio * targetLineLength);
-            int mirroredEnd = targetLineStart + (int)Math.Round(endRatio * targetLineLength);
+            int mirroredStart = targetLineStart + Math.Max(0, relativeStart);
+            int mirroredEnd = targetLineEnd;
 
             mirroredStart = Math.Max(targetLineStart, Math.Min(mirroredStart, targetLineEnd));
             mirroredEnd = Math.Max(mirroredStart, Math.Min(mirroredEnd, targetLineEnd));
@@ -162,11 +154,32 @@ namespace UartMonitor.Serial
 
         private static byte[] ParseHexLine(string lineText)
         {
-            string[] tokens = lineText.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            return tokens
-                .Where(token => token.Length == 2 && byte.TryParse(token, System.Globalization.NumberStyles.HexNumber, null, out _))
-                .Select(token => byte.Parse(token, System.Globalization.NumberStyles.HexNumber))
-                .ToArray();
+            var bytes = new List<byte>();
+            ReadOnlySpan<char> span = lineText.AsSpan();
+            int index = 0;
+
+            while (index < span.Length)
+            {
+                while (index < span.Length && char.IsWhiteSpace(span[index]))
+                    index++;
+
+                if (index + 1 >= span.Length)
+                    break;
+
+                if (!IsHexDigit(span[index]) || !IsHexDigit(span[index + 1]))
+                {
+                    index++;
+                    continue;
+                }
+
+                string token = span.Slice(index, 2).ToString();
+                if (byte.TryParse(token, System.Globalization.NumberStyles.HexNumber, null, out byte value))
+                    bytes.Add(value);
+
+                index += 2;
+            }
+
+            return bytes.ToArray();
         }
 
         private static (string visibleText, List<int> byteMap) DecodeVisibleText(byte[] bytes, Encoding encoding)
@@ -264,6 +277,13 @@ namespace UartMonitor.Serial
         private static bool IsLineBreakPair(char first, char second)
         {
             return (first == '\r' && second == '\n') || (first == '\n' && second == '\r');
+        }
+
+        private static bool IsHexDigit(char value)
+        {
+            return (value >= '0' && value <= '9')
+                || (value >= 'a' && value <= 'f')
+                || (value >= 'A' && value <= 'F');
         }
     }
 }
