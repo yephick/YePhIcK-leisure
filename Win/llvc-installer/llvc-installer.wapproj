@@ -46,7 +46,7 @@
     <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
     <GenerateTestArtifacts>true</GenerateTestArtifacts>
     <AppxBundle>Always</AppxBundle>
-    <AppxBundlePlatforms>x86|x64</AppxBundlePlatforms>
+    <AppxBundlePlatforms>x86|x64|arm64</AppxBundlePlatforms>
     <NoWarn>$(NoWarn);NU1702</NoWarn>
     <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
     <AppxAutoIncrementPackageRevision>False</AppxAutoIncrementPackageRevision>
