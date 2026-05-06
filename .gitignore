@@ -8,3 +8,5 @@ AppPackages
 BundleArtifacts
 obj
 *.assets.cache
+Win/llvc-tests/last-run.txt
+Win/llvc-tests/last-test-run.txt

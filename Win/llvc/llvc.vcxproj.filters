@@ -10,16 +10,25 @@
     <Midl Include="MainWindow.idl" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="pch.cpp" />
-    <ClCompile Include="Generated Files\module.g.cpp" />
+    <ClCompile Include="EditorController.ixx" />
+    <ClCompile Include="EditorCommands.ixx" />
+    <ClCompile Include="ExportCoordinator.ixx" />
+    <ClCompile Include="Dialogs.ixx" />
     <ClCompile Include="Project.ixx" />
     <ClCompile Include="Timeline.ixx" />
+    <ClCompile Include="TimelineRenderer.ixx" />
     <ClCompile Include="Utils.ixx" />
+    <ClCompile Include="VideoStream.ixx" />
+    <ClCompile Include="VideoContainer.ixx" />
+    <ClCompile Include="VideoContainer.cpp" />
     <ClCompile Include="Export.ixx" />
     <ClCompile Include="Media.ixx" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="pch.h" />
+    <ClCompile Include="Generated Files\module.g.cpp">
+      <Filter>Meta</Filter>
+    </ClCompile>
+    <ClCompile Include="pch.cpp">
+      <Filter>Meta</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\Wide310x150Logo.png">
@@ -48,18 +57,42 @@
     <Filter Include="Assets">
       <UniqueIdentifier>{64a424dd-1f1e-46b5-92a8-449f64bf0458}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Meta">
+      <UniqueIdentifier>{397e4245-9af7-4231-8753-b9ff9980762a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <Text Include="readme.txt" />
+    <None Include="Package.StoreAssociation.xml">
+      <Filter>Meta</Filter>
+    </None>
+    <None Include="packages.config">
+      <Filter>Meta</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
-    <Manifest Include="app.manifest" />
+    <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natstepfilter">
+      <Filter>Meta</Filter>
+    </Natvis>
+    <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natvis">
+      <Filter>Meta</Filter>
+    </Natvis>
+  </ItemGroup>
+  <ItemGroup>
+    <Manifest Include="app.manifest">
+      <Filter>Meta</Filter>
+    </Manifest>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="pch.h">
+      <Filter>Meta</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="readme.txt">
+      <Filter>Meta</Filter>
+    </Text>
   </ItemGroup>
   <ItemGroup>
     <AppxManifest Include="Package.appxmanifest" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="packages.config" />
-    <None Include="Package.StoreAssociation.xml" />
   </ItemGroup>
 </Project>

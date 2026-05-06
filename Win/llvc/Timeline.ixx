@@ -11,9 +11,41 @@ vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(
     vector<pair<uint32_t, uint32_t>> intervals,
     size_t keyframeCount);
 
+struct Timeline;
+
 struct TimelineMajorTick final{
     double x{};
     wstring label{};
+};
+
+struct TimelineScrollbarAnchor final{
+    double ratio{};
+
+    static std::optional<TimelineScrollbarAnchor> capture(double currentOffset, double maximumOffset);
+    double restoreOffset(double maximumOffset) const;
+};
+
+struct TimelinePointerZoomAnchor final{
+    int64_t time100ns{};
+    double viewportPointerX{};
+
+    double restoreOffset(const Timeline& timeline, int64_t duration100ns, double totalWidth, double viewportWidth) const;
+};
+
+struct TimelineThumbnailStripPlan final{
+    double totalWidth{0.0};
+    int thumbnailCount{0};
+    double thumbnailWidth{0.0};
+};
+
+struct TimelineThumbnailIndexRange final{
+    int first{};
+    int last{};
+};
+
+struct TimelineRenderPostActions final{
+    bool shouldQueueRapLookup{false};
+    wstring readyStatus{};
 };
 
 struct TimelineCutOverlay final{
@@ -28,13 +60,17 @@ struct Timeline final{
     double timeToCanvasX(int64_t time100ns, int64_t duration100ns, double width) const;
     double dragTargetOffset(double dragStartOffset, double pointerDeltaX, double canvasWidth, double viewportWidth) const;
     std::optional<double> cursorOffsetToEnsureVisible(double cursorLeft, double currentOffset, double viewportWidth, double canvasWidth, double padding = 48.0) const;
-    vector<TimelineMajorTick> buildMajorTicks(double width, double durationSeconds) const;
+    vector<TimelineMajorTick> buildMajorTicks(double width, double durationSeconds, int desiredTickCount = 0) const;
     vector<double> buildKeyframeTickPositions(const vector<IndexedFrameSample>& frameIndex, double width, double durationSeconds) const;
     vector<TimelineCutOverlay> buildCutOverlays(const vector<pair<int64_t, int64_t>>& cutRanges100ns, double width, double durationSeconds) const;
     bool isTimeInsideRanges(int64_t time100ns, const vector<pair<int64_t, int64_t>>& ranges) const;
     int64_t frameStep100ns(uint32_t fpsNum, uint32_t fpsDen) const;
     int64_t applyFrameStep(int64_t current100ns, int delta, int64_t duration100ns, int64_t frameStep100ns) const;
     std::optional<int64_t> markerNavigationTarget100ns(const vector<IndexedFrameSample>& markers, int64_t current100ns, int direction) const;
+    TimelineThumbnailStripPlan buildThumbnailStripPlan(double durationSeconds, double zoomSetting) const;
+    TimelineThumbnailIndexRange visibleThumbnailRange(double viewportLeft, double viewportWidth, double thumbnailWidth, int thumbnailCount) const;
+    int chooseNextThumbnailIndex(const vector<bool>& thumbnailBuilt, TimelineThumbnailIndexRange visibleRange, bool allowOffscreenExpansion) const;
+    TimelineRenderPostActions buildRenderPostActions(const wstring& videoName, bool hasRequestedCuts, bool cachedRapLookupAttempted, bool isRapLookupInProgress) const;
 };
 
 }
@@ -86,6 +122,35 @@ vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(vector<pair<uin
     return merged;
 }
 
+std::optional<TimelineScrollbarAnchor> TimelineScrollbarAnchor::capture(double currentOffset, double maximumOffset){
+    if(maximumOffset < 0.0){
+        return std::nullopt;
+    }
+
+    if(maximumOffset == 0.0){
+        return TimelineScrollbarAnchor{.ratio = 0.0};
+    }
+
+    return TimelineScrollbarAnchor{.ratio = clamp(currentOffset / maximumOffset, 0.0, 1.0)};
+}
+
+double TimelineScrollbarAnchor::restoreOffset(double maximumOffset) const{
+    return clamp(ratio * max(0.0, maximumOffset), 0.0, max(0.0, maximumOffset));
+}
+
+double TimelinePointerZoomAnchor::restoreOffset(const Timeline& timeline, int64_t duration100ns, double totalWidth, double viewportWidth) const{
+    if(duration100ns <= 0 || totalWidth <= 0.0 || !isfinite(totalWidth) || !isfinite(viewportWidth) || !isfinite(viewportPointerX)){
+        return 0.0;
+    }
+
+    const auto safeViewportWidth{max(0.0, viewportWidth)};
+    const auto safeMaxOffset{max(0.0, totalWidth - safeViewportWidth)};
+    const auto safePointerX{clamp(viewportPointerX, 0.0, safeViewportWidth)};
+    const auto safeTime100ns{clamp<int64_t>(time100ns, 0, duration100ns)};
+    const auto anchorCanvasX{clamp(timeline.timeToCanvasX(safeTime100ns, duration100ns, totalWidth), 0.0, totalWidth)};
+    return clamp(anchorCanvasX - safePointerX, 0.0, safeMaxOffset);
+}
+
 std::optional<int64_t> Timeline::pointToTime100ns(double pointerX, double width, int64_t duration100ns) const{
     if(duration100ns <= 0 || width <= 0){
         return std::nullopt;
@@ -129,22 +194,36 @@ std::optional<double> Timeline::cursorOffsetToEnsureVisible(double cursorLeft, d
     return std::nullopt;
 }
 
-vector<TimelineMajorTick> Timeline::buildMajorTicks(double width, double durationSeconds) const{
+vector<TimelineMajorTick> Timeline::buildMajorTicks(double width, double durationSeconds, int desiredTickCount) const{
     vector<TimelineMajorTick> ticks;
     if(width <= 0 || durationSeconds <= 0){
         return ticks;
     }
 
-    const auto majorTickCount{clamp(static_cast<int>(ceil(width / 120.0)), 6, 36)};
+    const auto majorTickCount{desiredTickCount > 0
+        ? max(1, desiredTickCount)
+        : clamp(static_cast<int>(ceil(width / 120.0)), 6, 36)};
     ticks.reserve(static_cast<size_t>(majorTickCount + 1));
 
     for(int i{}; i <= majorTickCount; ++i){
         const auto ratio{static_cast<double>(i) / majorTickCount};
         const auto totalSeconds{static_cast<int>(ratio * durationSeconds + 0.5)};
-        const auto minutes{totalSeconds / 60};
+        const auto hours{totalSeconds / 3600};
+        const auto minutes{(totalSeconds % 3600) / 60};
         const auto seconds{totalSeconds % 60};
 
-        auto label{to_wstring(minutes)};
+        auto label{wstring{}};
+        if(hours > 0){
+            label = to_wstring(hours);
+            label += L":";
+            if(minutes < 10){
+                label += L"0";
+            }
+            label += to_wstring(minutes);
+        }else{
+            label = to_wstring(minutes);
+        }
+
         label += L":";
         if(seconds < 10){
             label += L"0";
@@ -249,6 +328,83 @@ std::optional<int64_t> Timeline::markerNavigationTarget100ns(const vector<Indexe
     }
 
     return it->time100ns;
+}
+
+TimelineThumbnailStripPlan Timeline::buildThumbnailStripPlan(double durationSeconds, double zoomSetting) const{
+    constexpr auto minTimelineWidth{800.0};
+    constexpr auto pixelsPerSecondAtBaseZoom{14.0};
+    constexpr auto baseZoom{4.0};
+    constexpr auto targetThumbnailWidth{153.0};
+
+    if(durationSeconds <= 0){
+        return TimelineThumbnailStripPlan{
+            .totalWidth = minTimelineWidth,
+            .thumbnailCount = 1,
+            .thumbnailWidth = minTimelineWidth,
+        };
+    }
+
+    const auto zoomScale{zoomSetting / baseZoom};
+    const auto totalWidth{max(minTimelineWidth, durationSeconds * pixelsPerSecondAtBaseZoom * zoomScale)};
+    const auto thumbnailCount{max(1, static_cast<int>(ceil(totalWidth / targetThumbnailWidth)))};
+    return TimelineThumbnailStripPlan{
+        .totalWidth = totalWidth,
+        .thumbnailCount = thumbnailCount,
+        .thumbnailWidth = totalWidth / thumbnailCount,
+    };
+}
+
+TimelineThumbnailIndexRange Timeline::visibleThumbnailRange(double viewportLeft, double viewportWidth, double thumbnailWidth, int thumbnailCount) const{
+    if(thumbnailCount <= 0 || thumbnailWidth <= 0.0){
+        return TimelineThumbnailIndexRange{};
+    }
+
+    const auto safeViewportLeft{max(0.0, viewportLeft)};
+    const auto viewportRight{safeViewportLeft + max(0.0, viewportWidth)};
+    return TimelineThumbnailIndexRange{
+        .first = clamp(static_cast<int>(floor(safeViewportLeft / thumbnailWidth)), 0, thumbnailCount - 1),
+        .last = clamp(static_cast<int>(floor(max(safeViewportLeft, viewportRight - 1.0) / thumbnailWidth)), 0, thumbnailCount - 1),
+    };
+}
+
+int Timeline::chooseNextThumbnailIndex(const vector<bool>& thumbnailBuilt, TimelineThumbnailIndexRange visibleRange, bool allowOffscreenExpansion) const{
+    const auto thumbnailCount{static_cast<int>(thumbnailBuilt.size())};
+    if(thumbnailCount <= 0){
+        return -1;
+    }
+
+    for(auto index{visibleRange.first}; index <= visibleRange.last; ++index){
+        if(index >= 0 && index < thumbnailCount && !thumbnailBuilt[index]){
+            return index;
+        }
+    }
+
+    if(!allowOffscreenExpansion){
+        return -1;
+    }
+
+    auto left{visibleRange.first - 1};
+    auto right{visibleRange.last + 1};
+    while(left >= 0 || right < thumbnailCount){
+        if(right < thumbnailCount && !thumbnailBuilt[right]){
+            return right;
+        }
+        ++right;
+
+        if(left >= 0 && !thumbnailBuilt[left]){
+            return left;
+        }
+        --left;
+    }
+
+    return -1;
+}
+
+TimelineRenderPostActions Timeline::buildRenderPostActions(const wstring& videoName, bool hasRequestedCuts, bool cachedRapLookupAttempted, bool isRapLookupInProgress) const{
+    return TimelineRenderPostActions{
+        .shouldQueueRapLookup = hasRequestedCuts && !cachedRapLookupAttempted && !isRapLookupInProgress,
+        .readyStatus = std::format(L"Loaded: {} (story line ready)", videoName),
+    };
 }
 
 }

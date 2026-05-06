@@ -1,8 +1,7 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "App.xaml.h"
 #include "MainWindow.xaml.h"
 
-#include <winrt/Windows.Storage.h>
 #include <shellapi.h>
 
 using namespace winrt;

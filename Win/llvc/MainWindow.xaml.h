@@ -14,7 +14,13 @@
 struct _GUID;
 import llvc.Project;
 import llvc.Timeline;
+import llvc.TimelineRenderer;
 import llvc.Media;
+import llvc.Utils;
+import llvc.EditorController;
+import llvc.EditorCommands;
+import llvc.Dialogs;
+import llvc.ExportCoordinator;
 
 namespace winrt::llvc::implementation{
 
@@ -118,6 +124,28 @@ struct MainWindow: MainWindowT<MainWindow>{
     void requestExportCancel();
 
 private:
+    struct TimelineInteractionState final{
+        bool isDragging{false};
+        bool dragMoved{false};
+        uint32_t dragPointerId{0};
+        double dragStartX{0};
+        double dragStartOffset{0};
+        std::optional<::llvc::TimelineScrollbarAnchor> pendingScrollbarAnchor{};
+        std::optional<::llvc::TimelinePointerZoomAnchor> pendingWheelZoomAnchor{};
+    };
+
+    struct SeparatePreviewState final{
+        bool isOpen{false};
+        bool isFullscreen{false};
+        RECT restoreRect{0, 0, 0, 0};
+        LONG_PTR restoreStyle{0};
+        LONG_PTR restoreExStyle{0};
+        winrt::Microsoft::UI::Xaml::Window window{nullptr};
+        winrt::Microsoft::UI::Xaml::Window::Closed_revoker closedRevoker{};
+        winrt::Microsoft::UI::Xaml::Controls::MediaPlayerElement player{nullptr};
+        winrt::Microsoft::UI::Xaml::Controls::Image splashImage{nullptr};
+    };
+
     MP m_player{nullptr};
     MPSession::NaturalDurationChanged_revoker m_naturalDurationChangedRevoker{};
     DTS m_positionTimer{nullptr};
@@ -132,16 +160,14 @@ private:
     bool m_cachedRapLookupSucceeded{false};
     bool m_isRapLookupInProgress{false};
     bool m_hasTimelineRenderCompleted{false};
+    bool m_isUiReadyForEvents{false};
+    bool m_isSyncingTimelineScrollBar{false};
+    bool m_pendingSeparatePreviewRestoreOnStartup{false};
     bool m_pendingReevaluateAfterRapLookup{false};
     bool m_pendingReevaluateWithoutUndoAfterRapLookup{false};
+    std::vector<int64_t> m_pendingAutoEvaluateMarkerTimes100ns{};
     int m_pendingNudgeDirectionAfterRapLookup{0};
-    vector<hstring> m_recentVideos{};
-    vector<hstring> m_recentProjects{};
-    uint32_t m_maxRecentVideos{5};
-    uint32_t m_maxRecentProjects{5};
-    bool m_deleteSourceAndProjectAfterExport{false};
-    bool m_autoReevaluateCutMarkersOnPlacement{false};
-    bool m_generateExportTimeReport{false};
+    ::llvc::AppSettingsState m_appSettings{};
     hstring m_projectPath{};
     bool m_isClosing{false};
     bool m_isExportInProgress{false};
@@ -160,42 +186,18 @@ private:
     std::chrono::steady_clock::time_point m_lastExportEtaRefreshAt{};
     std::optional<double> m_lastExportEtaProgress{};
     std::wstring m_exportEtaText{};
-    bool m_isTimelineDragging{false};
-    bool m_timelineDragMoved{false};
-    uint32_t m_timelineDragPointerId{0};
-    double m_timelineDragStartX{0};
-    double m_timelineDragStartOffset{0};
-    bool m_isApplyingUndoRedoState{false};
+    TimelineInteractionState m_timelineInteraction{};
     winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
-    bool m_isSeparatePreviewWindowOpen{false};
-    bool m_isSeparatePreviewFullscreen{false};
-    bool m_restorePreviewDetachedOnStartup{false};
-    bool m_hasSeparatePreviewPlacement{false};
-    bool m_restorePreviewFullscreenOnStartup{false};
-    int32_t m_separatePreviewLeft{0};
-    int32_t m_separatePreviewTop{0};
-    int32_t m_separatePreviewWidthDips{960};
-    int32_t m_separatePreviewHeightDips{540};
-    int32_t m_separatePreviewDpi{96};
-    RECT m_separatePreviewRestoreRect{0, 0, 0, 0};
-    LONG_PTR m_separatePreviewRestoreStyle{0};
-    LONG_PTR m_separatePreviewRestoreExStyle{0};
-    winrt::Microsoft::UI::Xaml::Window m_separatePreviewWindow{nullptr};
-    winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_separatePreviewClosedRevoker{};
-    winrt::Microsoft::UI::Xaml::Controls::MediaPlayerElement m_detachedPreviewPlayer{nullptr};
-    winrt::Microsoft::UI::Xaml::Controls::Image m_detachedPreviewSplashImage{nullptr};
+    SeparatePreviewState m_separatePreview{};
     ::llvc::Project m_prj{};
     ::llvc::Timeline m_tl{};
 
-    struct UndoRedoState final{
-        vector<::llvc::IndexedFrameSample> frameIndex{};
-        vector<uint32_t> cutScenes{};
-        bool keepAudio{true};
-        int32_t audioCrossfadeMs{0};
-        int32_t audioVolumePct{100};
-    };
-    vector<UndoRedoState> m_undoStack{};
-    vector<UndoRedoState> m_redoStack{};
+    ::llvc::EditorHistoryState m_editorHistory{};
+    std::optional<::llvc::EditorSnapshot> m_lastReevaluatedEditorSnapshot{};
+    hstring m_lastReevaluatedRapSourcePath{};
+    mutable std::optional<::llvc::EditorSnapshot> m_cachedEffectiveExportPlanSnapshot{};
+    mutable hstring m_cachedEffectiveExportPlanSourcePath{};
+    mutable std::optional<::llvc::EffectiveExportPlan> m_cachedEffectiveExportPlan{};
     winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_mainWindowClosedRevoker{};
 
 private:
@@ -209,6 +211,8 @@ private:
     std::optional<ExportOverlayStage> m_activeExportStage{};
     std::optional<double> m_activeExportStageProgress{};
     std::chrono::steady_clock::time_point m_activeExportStageStartedAt{};
+    std::array<bool, 4> m_exportStageActive{};
+    std::array<std::optional<double>, 4> m_exportStageProgress{};
 
     HWND getWindowHandle() const;
     void restoreWindowPlacement();
@@ -221,10 +225,7 @@ private:
     void addRecentVideo(const hstring& path);
     void addRecentProject(const hstring& path);
     void removeRecentPath(const hstring& path);
-    AAction showInfoDialogAsync(const hstring& title, const hstring& message);
     AAction openFromLaunchArgumentsAsync(const hstring& arguments);
-    AAction showOptionsDialogAsync();
-    AAction promptDeleteSourceAndProjectAfterExportAsync(const std::wstring& exportedPath);
     AAction openProjectFileAsync(const SFile& file);
     AAction saveProjectFileAsync(const SFile& file);
     void resetProjectState();
@@ -234,17 +235,21 @@ private:
     static MediaInspectionResult inspectMediaFile(const wstring& filePath);
     static wstring guidToCodecName(const _GUID& subtype, bool isVideo);
     AAction loadVideoFileAsync(const SFile& file);
+    AAction showOptionsDialogAsync();
     fire_and_forget renderTimelineAsync();
     void updateTimelineCursorFromPlayback();
+    void updateTimelineCursorFromPosition(int64_t position100ns);
+    int64_t currentNavigationTime100ns();
     void syncTimelineHorizontalScrollBar();
+    void updateTimelineCursorFromViewportOffset(double offset);
     void renderTimelineTicks();
     void seekTimelineToCanvasX(double pointerX);
     void renderKeyframeTicks();
     void renderCutOverlays();
-    bool hasCutMarkerNearTime100ns(int64_t time100ns) const;
     std::optional<int64_t> timelinePointToTime100ns(double pointerX, double width) const;
     bool toggleSelectedKeyframeAtTime100ns(int64_t time100ns);
-    AAction toggleSelectedKeyframeAtTime100nsAsync(int64_t time100ns);
+    bool evaluatePlacedMarkerAtTime100ns(int64_t time100ns);
+    fire_and_forget toggleSelectedKeyframeAtTime100nsAsync(int64_t time100ns);
     bool toggleCutBlockAtTime100ns(int64_t time100ns);
     bool setCutBlockAtTime100ns(int64_t time100ns, bool cutScene);
     bool toggleCutMarkerAtCursor();
@@ -253,29 +258,36 @@ private:
     bool trySkipCurrentCutDuringPlayback();
     void stepByFrame(int delta);
     bool seekBySeconds(int deltaSeconds);
+    bool seekBySeconds(double deltaSeconds);
     bool jumpToTimelinePercent(uint32_t percent);
     bool moveCursorToMarker(int direction);
     void ensureTimelineCursorVisible(double cursorLeft);
     void ensureCurrentTimelineCursorVisible();
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
-    bool projectHasRequestedCuts() const;
     std::optional<::llvc::EffectiveExportPlan> tryBuildEffectiveExportPlan(const std::function<void(double)>& progressCallback = {}) const;
     bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns) const;
     bool reevaluateClearCutMarkers(bool pushUndoState);
+    bool reevaluateAll(bool pushUndoState);
     void queueRapLookup(bool queueReevaluate, int nudgeDirection);
     IOpBool ensureRapMarkersAvailableAsync(const wstring& statusMessage, const std::function<void(double)>& progressCallback = {});
     fire_and_forget runRapLookupAsync();
-    UndoRedoState captureUndoRedoState() const;
-    bool isSameUndoRedoState(const UndoRedoState& a, const UndoRedoState& b) const;
     void clearUndoRedoHistory();
-    bool pushUndoStateIfChanged();
-    bool applyUndoRedoState(const UndoRedoState& state, bool fromUndo);
     bool undoLastEdit();
     bool redoLastEdit();
+    void applyEditorCommandResult(const ::llvc::EditorCommandResult& result);
+    void refreshEditorUiState();
     void updateAudioUiAndPlaybackState();
     void setVideoDetailsPanelExpanded(bool expanded);
     void refreshVideoDetailsPanel();
+    static wstring buildEstimatedOutputText(
+        const ::llvc::Project& project,
+        const MediaInspectionResult& mediaInfo,
+        bool hasTimelineRenderCompleted,
+        bool isRapLookupInProgress,
+        bool cachedRapLookupAttempted,
+        bool cachedRapLookupSucceeded,
+        const std::optional<::llvc::EffectiveExportPlan>& effectivePlan);
     wstring buildSourcePropertiesText() const;
     void applyAudioSettingsToPlayer();
     void syncAudioCrossfadeComboSelection();
@@ -299,6 +311,7 @@ private:
     std::chrono::seconds estimateStageDuration(ExportOverlayStage stage) const;
     static const wchar_t* exportStageDisplayName(ExportOverlayStage stage) noexcept;
     AAction deleteExportArtifactsAsync(bool deleteSource, bool deleteProject);
+    AAction promptDeleteSourceAndProjectAfterExportAsync(const std::wstring& exportedPath);
     void setOperationInProgress(bool active, bool indeterminate = false);
     void setOperationProgress(double percent);
     void refreshExportEta(double percent);
@@ -313,6 +326,9 @@ private:
     void adjustTimelineZoomBy(int delta);
     void saveSeparatePreviewPlacement(HWND previewHwnd);
     void restoreSeparatePreviewPlacement(HWND previewHwnd);
+    void resetProjectStateImpl();
+    bool handleStorylineKeyDownImpl(const KRArgs& args);
+    wstring buildSourcePropertiesTextImpl() const;
     static TS secondsToTimeSpan(double seconds);
 };
 

@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -17,8 +17,11 @@ struct IndexedFrameSample{
     int64_t time100ns{};
     int64_t duration100ns{};
     bool cleanPoint{};
+    bool evaluated{};
     uint32_t sampleIndex{};
 };
+
+struct Project;
 
 struct EffectiveExportPlan{
     vector<pair<int64_t, int64_t>> requestedCutRanges100ns{};
@@ -31,21 +34,48 @@ struct EffectiveExportPlan{
     bool materiallyDifferent{false};
 };
 
+struct ExportPreflightState{
+    bool canExport{};
+    wstring blockMessage{};
+    bool needsRapReevaluation{};
+    int64_t requestedOutputDuration100ns{};
+    size_t requestedCutBlockCount{};
+};
+
+struct EffectiveExportPlanSummary{
+    size_t repositionedMarkers{};
+    size_t shrunkCutScenes{};
+    int64_t shrunkTotal100ns{};
+};
+
+struct ExportOverlayEstimates{
+    uint64_t estimatedTargetBytes{};
+    uint64_t estimatedSavingsBytes{};
+    uint64_t estimatedDroppedAudioBytes{};
+};
+
 vector<int64_t> buildCleanKeyframeTimes100ns(const vector<IndexedFrameSample>& index);
 int64_t calculateOutputDuration100ns(int64_t totalDuration100ns, const vector<pair<int64_t, int64_t>>& cutRanges100ns);
+bool projectHasRequestedCuts(const Project& project);
+bool cutPlanUsesUnevaluatedSceneEdgeMarkers(const Project& project);
+bool effectiveExportPlanNeedsRapAlignment(const Project& project);
+EffectiveExportPlan buildDirectEffectiveExportPlan(const Project& project, int64_t sourceDuration100ns);
+ExportPreflightState buildExportPreflightState(const Project& project, bool hasMedia, bool supportsLosslessExport, bool hasSupportedExportExtensions, bool sourceHasAudio, bool supportsAudioExport);
+EffectiveExportPlanSummary summarizeEffectiveExportPlan(const EffectiveExportPlan& plan);
+ExportOverlayEstimates buildExportOverlayEstimates(uint64_t sourceSizeBytes, int64_t sourceDuration100ns, int64_t outputDuration100ns, bool keepAudio, bool sourceHasAudio, uint64_t audioBitrateBytesPerSecond);
 
 struct Project final{
     using AAction = ::winrt::Windows::Foundation::IAsyncAction;
-    using SFile = ::winrt::Windows::Storage::StorageFile;
 
     Project(): m_lastSavedProjectSnapshot{_buildProjectSnapshot()} {}
 
     void reset(){ new (this) Project; }
+    void setZoomWithoutDirty(double v);
     void clearTimeline();
-    AAction open(const SFile& file);
-    AAction save(const SFile& file);
+    AAction open(const ::winrt::Windows::Storage::StorageFile& file);
+    AAction save(const ::winrt::Windows::Storage::StorageFile& file);
     bool isDirty() const;
-    void videoFile(const SFile& f);
+    void videoFilePath(const ::winrt::hstring& path);
     void setZoom(double v);
     void keepAudio(bool v);
     void audioXfadeMs(int32_t valueMs);
@@ -53,7 +83,9 @@ struct Project final{
     void frameIndex(const vector<IndexedFrameSample>& v);
     void cutScenes(const vector<uint32_t>& v);
 
-    inline auto& videoFile()    const{ return m_loadedFile; }
+    inline bool hasVideoFile() const{ return !m_loadedFilePath.empty(); }
+    inline auto const& videoFilePath() const{ return m_loadedFilePath; }
+    ::winrt::hstring videoFileName() const;
     inline auto  zoom()         const{ return m_zoom; }
     inline bool  keepAudio()    const{ return m_keepAudio; }
     inline auto  audioXfadeMs() const{ return m_audioCrossfadeMs; }
@@ -85,7 +117,7 @@ private:
 
 private:
     // these are persisted on disk
-    SFile m_loadedFile{nullptr};
+    ::winrt::hstring m_loadedFilePath{};
     double m_zoom{4};
     bool m_keepAudio{true};
     int32_t m_audioCrossfadeMs{0};
@@ -106,11 +138,11 @@ namespace llvc{
 
 using namespace std;
 
-vector<int64_t> buildCleanKeyframeTimes100ns(const vector<IndexedFrameSample>& index){
+vector<int64_t> buildEvaluatedKeyframeTimes100ns(const vector<IndexedFrameSample>& index){
     vector<int64_t> times;
     times.reserve(index.size());
     for(const auto& sample: index){
-        if(sample.cleanPoint){
+        if(sample.evaluated){
             times.push_back(sample.time100ns);
         }
     }
@@ -127,6 +159,128 @@ int64_t calculateOutputDuration100ns(int64_t totalDuration100ns, const vector<pa
     return max<int64_t>(0, totalDuration100ns - removedTotal100ns);
 }
 
+bool projectHasRequestedCuts(const Project& project){
+    return !project.buildCutRanges100ns().empty();
+}
+
+bool cutPlanUsesUnevaluatedSceneEdgeMarkers(const Project& project){
+    const auto& markers{project.frameIndex()};
+    if(markers.empty()){
+        return false;
+    }
+
+    const auto sceneCount{markers.size() + 1};
+    vector<bool> isCut(sceneCount, false);
+    for(const auto sceneIndex: project.cutScenes()){
+        if(sceneIndex < sceneCount){
+            isCut[sceneIndex] = true;
+        }
+    }
+
+    for(size_t boundaryIndex{1}; boundaryIndex < sceneCount; ++boundaryIndex){
+        if(isCut[boundaryIndex - 1] == isCut[boundaryIndex]){
+            continue;
+        }
+        if(!markers[boundaryIndex - 1].cleanPoint){
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool effectiveExportPlanNeedsRapAlignment(const Project& project){
+    return projectHasRequestedCuts(project) && cutPlanUsesUnevaluatedSceneEdgeMarkers(project);
+}
+
+EffectiveExportPlan buildDirectEffectiveExportPlan(const Project& project, int64_t sourceDuration100ns){
+    const auto cutRanges{project.buildCutRanges100ns()};
+    const auto outputDuration{project.outputDuration100ns()};
+    return EffectiveExportPlan{
+        .requestedCutRanges100ns = cutRanges,
+        .effectiveCutRanges100ns = cutRanges,
+        .sourceDuration100ns = sourceDuration100ns,
+        .requestedOutputDuration100ns = outputDuration,
+        .effectiveOutputDuration100ns = outputDuration,
+        .hasRequestedCuts = !cutRanges.empty(),
+        .emptyAfterAlignment = false,
+        .materiallyDifferent = false,
+    };
+}
+
+ExportPreflightState buildExportPreflightState(const Project& project, bool hasMedia, bool supportsLosslessExport, bool hasSupportedExportExtensions, bool sourceHasAudio, bool supportsAudioExport){
+    ExportPreflightState state{
+        .requestedOutputDuration100ns = project.outputDuration100ns(),
+        .requestedCutBlockCount = project.buildCutRanges100ns().size(),
+    };
+
+    if(!project.hasVideoFile() || project.videoFilePath().empty()){
+        state.blockMessage = L"Load a video before exporting.";
+        return state;
+    }
+    if(!hasMedia){
+        state.blockMessage = L"The current source is not ready for export yet.";
+        return state;
+    }
+    if(!supportsLosslessExport || !hasSupportedExportExtensions){
+        state.blockMessage = L"Lossless export is not supported for the current source.";
+        return state;
+    }
+    if(project.keepAudio() && sourceHasAudio && !supportsAudioExport){
+        state.blockMessage = L"Audio export is not supported for the current source.";
+        return state;
+    }
+
+    state.canExport = true;
+    state.needsRapReevaluation = effectiveExportPlanNeedsRapAlignment(project);
+    return state;
+}
+
+EffectiveExportPlanSummary summarizeEffectiveExportPlan(const EffectiveExportPlan& plan){
+    EffectiveExportPlanSummary summary{};
+    const auto comparableCount{min(plan.requestedCutRanges100ns.size(), plan.effectiveCutRanges100ns.size())};
+    for(size_t i{}; i < comparableCount; ++i){
+        const auto& requested{plan.requestedCutRanges100ns[i]};
+        const auto& effective{plan.effectiveCutRanges100ns[i]};
+        if(requested.first != effective.first){
+            ++summary.repositionedMarkers;
+        }
+        if(requested.second != effective.second){
+            ++summary.repositionedMarkers;
+        }
+
+        const auto requestedDuration{max<int64_t>(0, requested.second - requested.first)};
+        const auto effectiveDuration{max<int64_t>(0, effective.second - effective.first)};
+        if(effectiveDuration < requestedDuration){
+            ++summary.shrunkCutScenes;
+            summary.shrunkTotal100ns += (requestedDuration - effectiveDuration);
+        }
+    }
+    return summary;
+}
+
+ExportOverlayEstimates buildExportOverlayEstimates(uint64_t sourceSizeBytes, int64_t sourceDuration100ns, int64_t outputDuration100ns, bool keepAudio, bool sourceHasAudio, uint64_t audioBitrateBytesPerSecond){
+    ExportOverlayEstimates estimates{};
+    if(sourceSizeBytes == 0 || sourceDuration100ns <= 0){
+        return estimates;
+    }
+
+    estimates.estimatedTargetBytes = static_cast<uint64_t>(llround(
+        static_cast<long double>(sourceSizeBytes)
+        * static_cast<long double>(max<int64_t>(0, outputDuration100ns))
+        / static_cast<long double>(sourceDuration100ns)));
+    estimates.estimatedSavingsBytes = sourceSizeBytes > estimates.estimatedTargetBytes ? (sourceSizeBytes - estimates.estimatedTargetBytes) : uint64_t{};
+
+    if(!keepAudio && sourceHasAudio && audioBitrateBytesPerSecond > 0 && outputDuration100ns > 0){
+        estimates.estimatedDroppedAudioBytes = static_cast<uint64_t>(llround(
+            static_cast<long double>(audioBitrateBytesPerSecond)
+            * static_cast<long double>(outputDuration100ns)
+            / 10000000.0L));
+    }
+
+    return estimates;
+}
+
 using namespace winrt;
 using namespace winrt::Windows::Storage;
 
@@ -136,6 +290,7 @@ constexpr auto P_KEEP_AUDIO{L"keep_audio"};
 constexpr auto P_AUDIO_CROSSFADE_MS{L"audio_crossfade_ms"};
 constexpr auto P_AUDIO_VOLUME_PCT{L"audio_volume_pct"};
 constexpr auto P_CUT_MARKERS{L"cut_markers"};
+constexpr auto P_RAP_CUT_MARKERS{L"RAP_cut_markers"};
 constexpr auto P_CUT_SCENES{L"cut_scenes"};
 
 struct LoadedProjectData{
@@ -145,6 +300,7 @@ struct LoadedProjectData{
     wstring audioXfadeMs;
     wstring audioVolumePct;
     wstring markers;
+    wstring rapMarkers;
     wstring cutScenes;
 };
 
@@ -169,6 +325,7 @@ LoadedProjectData _parseProjectLines(const Windows::Foundation::Collections::IVe
         if(key == P_FILE_PATH)          { data.loadedFilePath = value; } else
         if(key == P_STORYLINE_ZOOM)     { data.zoomLevel      = value; } else
         if(key == P_CUT_MARKERS)        { data.markers        = value; } else
+        if(key == P_RAP_CUT_MARKERS)    { data.rapMarkers     = value; } else
         if(key == P_CUT_SCENES)         { data.cutScenes      = value; } else
         if(key == P_KEEP_AUDIO)         { data.keepAudio      = value; } else
         if(key == P_AUDIO_CROSSFADE_MS) { data.audioXfadeMs   = value; }
@@ -185,23 +342,32 @@ void Project::clearTimeline(){
     m_timelineDuration100ns = 0;
 }
 
-Project::AAction Project::open(const SFile& file){
+Project::AAction Project::open(const ::winrt::Windows::Storage::StorageFile& file){
     const auto lines{co_await FileIO::ReadLinesAsync(file)};
     auto projectData{_parseProjectLines(lines)};
 
-    m_loadedFile = co_await StorageFile::GetFileFromPathAsync(projectData.loadedFilePath);
+    m_loadedFilePath = winrt::hstring(projectData.loadedFilePath);
     m_keepAudio = projectData.keepAudio != L"0";
     try{ audioXfadeMs(stoi(projectData.audioXfadeMs)); } catch(...){}
     try{ audioVolumePct(stoi(projectData.audioVolumePct)); } catch(...){}
     try{ m_zoom = stod(projectData.zoomLevel); } catch(...){}
 
     m_frameIndex = std::move(_parseKeyframeVector(projectData.markers));
+    auto evaluatedMarkerTimes{parseInt64List(projectData.rapMarkers)};
+    sort(evaluatedMarkerTimes.begin(), evaluatedMarkerTimes.end());
+    evaluatedMarkerTimes.erase(unique(evaluatedMarkerTimes.begin(), evaluatedMarkerTimes.end()), evaluatedMarkerTimes.end());
+    for(auto& marker: m_frameIndex){
+        const auto evaluated{binary_search(evaluatedMarkerTimes.begin(), evaluatedMarkerTimes.end(), marker.time100ns)};
+        marker.evaluated = evaluated;
+        marker.cleanPoint = evaluated;
+    }
     sort(m_frameIndex.begin(), m_frameIndex.end(), [](const auto& a, const auto& b){ return a.time100ns < b.time100ns; });
     refreshSelectedMarkers();
 
     const auto markerCount{m_frameIndex.size()};
     const auto sceneCount{static_cast<uint32_t>(markerCount + 1)};
     const auto cutScenes{parseIndexList(projectData.cutScenes)};
+    m_cutScenes.clear();
     for(const auto sceneIndex: cutScenes){
         if(sceneIndex < sceneCount){
             m_cutScenes.push_back(sceneIndex);
@@ -214,15 +380,16 @@ Project::AAction Project::open(const SFile& file){
     m_isDirty = false;
 }
 
-Project::AAction Project::save(const SFile& file){
+Project::AAction Project::save(const ::winrt::Windows::Storage::StorageFile& file){
     vector<hstring> lines;
     lines.emplace_back(L"# llvc project file");
-    lines.emplace_back(wstring(P_FILE_PATH) + L"=" + wstring(m_loadedFile ? m_loadedFile.Path().c_str() : L""));
+    lines.emplace_back(wstring(P_FILE_PATH) + L"=" + wstring(m_loadedFilePath.c_str()));
     lines.emplace_back(wstring(P_STORYLINE_ZOOM) + L"=" + to_wstring(m_zoom));
     lines.emplace_back(wstring(P_KEEP_AUDIO) + L"=" + wstring(m_keepAudio ? L"1" : L"0"));
     lines.emplace_back(wstring(P_AUDIO_CROSSFADE_MS) + L"=" + to_wstring(m_audioCrossfadeMs));
     lines.emplace_back(wstring(P_AUDIO_VOLUME_PCT) + L"=" + to_wstring(m_audioVolumePct));
     lines.emplace_back(wstring(P_CUT_MARKERS) + L"=" + _serializeCutMarkers());
+    lines.emplace_back(wstring(P_RAP_CUT_MARKERS) + L"=" + serializeInt64List(buildEvaluatedKeyframeTimes100ns(m_frameIndex)));
     lines.emplace_back(wstring(P_CUT_SCENES) + L"=" + serializeIndexList(m_cutScenes));
 
     co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(move(lines)));
@@ -236,14 +403,27 @@ bool Project::isDirty() const{
     return v;
 }
 
-void Project::videoFile(const SFile& f){
+void Project::videoFilePath(const ::winrt::hstring& path){
     m_isDirty = false;
-    m_loadedFile = f;
+    m_loadedFilePath = path;
+}
+
+::winrt::hstring Project::videoFileName() const{
+    if(m_loadedFilePath.empty()){
+        return {};
+    }
+    return ::winrt::hstring{::std::filesystem::path(m_loadedFilePath.c_str()).filename().wstring()};
 }
 
 void Project::setZoom(double v){
     m_isDirty = (m_isDirty || m_zoom != v);
     m_zoom = v;
+}
+
+void Project::setZoomWithoutDirty(double v){
+    m_zoom = v;
+    m_lastSavedProjectSnapshot = _buildProjectSnapshot();
+    m_isDirty = false;
 }
 
 void Project::keepAudio(bool v){
@@ -280,13 +460,7 @@ void Project::cutScenes(const vector<uint32_t>& v){
 }
 
 vector<IndexedFrameSample> Project::buildRapMarkersFromSelection() const{
-    vector<IndexedFrameSample> rapMarkers;
-    rapMarkers.reserve(m_selectedKeyFrames.size());
-    for(const auto index: m_selectedKeyFrames){
-        if(index < m_frameIndex.size()){
-            rapMarkers.push_back(m_frameIndex[index]);
-        }
-    }
+    auto rapMarkers{m_frameIndex};
     sort(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){ return a.time100ns < b.time100ns; });
     rapMarkers.erase(unique(rapMarkers.begin(), rapMarkers.end(), [](const IndexedFrameSample& a, const IndexedFrameSample& b){ return a.time100ns == b.time100ns; }), rapMarkers.end());
     return rapMarkers;
@@ -571,7 +745,7 @@ bool Project::toggleSelectedKeyframeAtTime100ns(int64_t time100ns, double fps){
         remapCutScenesAfterMarkerInsertion(insertPos);
 
         const auto frameNumber{static_cast<uint32_t>(clicked100ns / 10'000'000.0 * fps)};
-        m_frameIndex.insert(insertIt, IndexedFrameSample{.time100ns = clicked100ns, .duration100ns = 0, .cleanPoint = true, .sampleIndex = frameNumber});
+        m_frameIndex.insert(insertIt, IndexedFrameSample{.time100ns = clicked100ns, .duration100ns = 0, .cleanPoint = false, .evaluated = false, .sampleIndex = frameNumber});
     }
 
     refreshSelectedMarkers();
@@ -640,7 +814,7 @@ std::optional<size_t> Project::_sceneIndexAtTime100ns(int64_t time100ns) const{
 
 wstring Project::_buildProjectSnapshot() const{
     const auto snapshot{std::format(
-        L"{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n",
+        L"{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n",
         P_STORYLINE_ZOOM,
         m_zoom,
         P_KEEP_AUDIO,
@@ -651,6 +825,8 @@ wstring Project::_buildProjectSnapshot() const{
         m_audioVolumePct,
         P_CUT_MARKERS,
         _serializeCutMarkers(),
+        P_RAP_CUT_MARKERS,
+        serializeInt64List(buildEvaluatedKeyframeTimes100ns(m_frameIndex)),
         P_CUT_SCENES,
         serializeIndexList(m_cutScenes)
     )};
@@ -658,11 +834,9 @@ wstring Project::_buildProjectSnapshot() const{
 }
 
 wstring Project::_serializeCutMarkers() const{
-    const auto markers{buildRapMarkersFromSelection()};
     wstring out;
     bool first{true};
-    for(const auto& k: markers){
-        if(!k.cleanPoint){ continue; }
+    for(const auto& k: m_frameIndex){
         if(!first){ out += L";"; }
         first = false;
         out += std::format(L"{}", k.time100ns);
@@ -686,7 +860,7 @@ vector<IndexedFrameSample> Project::_parseKeyframeVector(const wstring& text){
                 if(!sampleToken.empty()){
                     sampleIndex = stoul(sampleToken);
                 }
-                out.push_back(IndexedFrameSample{.time100ns = t, .duration100ns = 0, .cleanPoint = true, .sampleIndex = sampleIndex});
+                out.push_back(IndexedFrameSample{.time100ns = t, .duration100ns = 0, .cleanPoint = false, .evaluated = false, .sampleIndex = sampleIndex});
             }catch(...){}
         }
         if(sep == wstring::npos){ break; }
