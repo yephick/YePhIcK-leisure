@@ -522,6 +522,24 @@ namespace UartMonitor.Tests.Rendering
             }
         }
 
+        [TestMethod]
+        public void Settings_DefaultFontFamily_UsesUbuntuMono()
+        {
+            UartMonitorUserSettings settings = new UartMonitorUserSettings();
+
+            Assert.AreEqual("Ubuntu Mono", settings.FontFamily);
+        }
+
+        [TestMethod]
+        public void PortSelection_PrefersCurrentThenSavedThenNothing()
+        {
+            string[] ports = new[] { "COM3", "COM7" };
+
+            Assert.AreEqual("COM3", PortSelection.ChoosePortSelection("COM3", "COM7", ports));
+            Assert.AreEqual("COM7", PortSelection.ChoosePortSelection("COM9", "COM7", ports));
+            Assert.IsNull(PortSelection.ChoosePortSelection("COM9", "COM11", ports));
+        }
+
         private static void AssertBrushColor(Color expected, Brush brush)
         {
             SolidColorBrush solidColorBrush = (SolidColorBrush)brush;

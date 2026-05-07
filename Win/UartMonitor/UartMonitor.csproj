@@ -62,6 +62,7 @@
     <Compile Include="Serial\HexStreamFormatter.cs" />
     <Compile Include="Serial\RawLineSplitter.cs" />
     <Compile Include="Serial\AlignmentMath.cs" />
+    <Compile Include="Serial\PortSelection.cs" />
     <Compile Include="Serial\CaptureLineIndex.cs" />
     <Compile Include="Serial\SelectionMirror.cs" />
     <Compile Include="Serial\TestSample.cs" />
@@ -111,6 +112,7 @@
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Design" />
+    <Reference Include="System.Management" />
     <Reference Include="System.Xaml" />
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />

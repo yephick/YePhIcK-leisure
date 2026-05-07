@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO.Ports;
+using System.Management;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -52,10 +53,14 @@ namespace UartMonitor
         private readonly List<HoverHighlightRange> _hexHoverHighlights = new List<HoverHighlightRange>();
         private ToolTip? _hexHoverToolTip;
         private ToolTip? _timestampToolTip;
+        private ManagementEventWatcher? _deviceChangeWatcher;
+        private Window? _settingsDialog;
+        private ComboBox? _settingsPortComboBox;
         private int _hexHoverLineIndex = -1;
         private int _hexHoverStartOffset = -1;
         private int _hexHoverEndOffset = -1;
         private readonly DispatcherTimer _selectionDebounceTimer;
+        private readonly DispatcherTimer _portRefreshDebounceTimer;
         private readonly object _processingGate = new object();
         private RichTextBox? _pendingSelectionSource;
         private RichTextBox? _pendingSelectionTarget;
@@ -68,6 +73,7 @@ namespace UartMonitor
         private DateTime _connectTimestamp = DateTime.MinValue;
         private double _visibleTextColumns;
         private double _hexColumns;
+        private bool _isDisposed;
 
         public MyToolWindowControl()
         {
@@ -79,6 +85,11 @@ namespace UartMonitor
                 Interval = TimeSpan.FromMilliseconds(100)
             };
             _selectionDebounceTimer.Tick += SelectionDebounceTimer_Tick;
+            _portRefreshDebounceTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(250)
+            };
+            _portRefreshDebounceTimer.Tick += PortRefreshDebounceTimer_Tick;
             LogBox.MouseMove += LogBox_MouseMove;
             LogBox.MouseLeave += LogBox_MouseLeave;
             HexLogBox.MouseMove += HexLogBox_MouseMove;
@@ -102,6 +113,7 @@ namespace UartMonitor
             UpdateSelectedEncodingSnapshot();
             RefreshPorts();
             ApplySavedPort();
+            StartDeviceChangeWatcher();
         }
 
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
@@ -130,8 +142,6 @@ namespace UartMonitor
             refreshButton.Click += (buttonSender, buttonArgs) =>
             {
                 RefreshPorts();
-                portComboBox.ItemsSource = PortComboBox.ItemsSource;
-                portComboBox.SelectedItem = PortComboBox.SelectedItem;
             };
 
             StackPanel portPanel = new StackPanel { Orientation = Orientation.Horizontal };
@@ -170,31 +180,41 @@ namespace UartMonitor
             }));
 
             Window dialog = CreateSettingsDialog("Settings", tabs);
-            if (dialog.ShowDialog() != true)
-                return;
+            _settingsDialog = dialog;
+            _settingsPortComboBox = portComboBox;
+            try
+            {
+                if (dialog.ShowDialog() != true)
+                    return;
 
-            _state.PortName = portComboBox.SelectedItem as string;
-            if (!string.IsNullOrWhiteSpace(_state.PortName))
-                PortComboBox.SelectedItem = _state.PortName;
-            _state.BaudRate = baudComboBox.Text?.Trim() ?? _state.BaudRate;
-            _state.DataBits = dataBitsComboBox.SelectedItem is int dataBits ? dataBits : _state.DataBits;
-            _state.StopBitsChoice = stopBitsComboBox.SelectedItem as StopBitsChoice ?? _state.StopBitsChoice;
-            _state.Parity = parityComboBox.SelectedItem is Parity parity ? parity : _state.Parity;
-            _state.FlowControlChoice = flowControlComboBox.SelectedItem as FlowControlChoice ?? _state.FlowControlChoice;
-            _state.FontFamilyChoice = fontFamilyComboBox.SelectedItem as FontFamilyChoice ?? _state.FontFamilyChoice;
-            _state.FontSize = fontSizeComboBox.Text?.Trim() ?? _state.FontSize;
-            _state.TabSize = tabSizeComboBox.SelectedItem is int tabSize ? GetAllowedTabSize(tabSize) : _state.TabSize;
-            _state.AutoScroll = autoScrollCheckBox.IsChecked == true;
-            _state.HexBytes = hexBytesCheckBox.IsChecked == true;
-            _state.PanelSync = panelSyncCheckBox.IsChecked == true;
-            _state.HexMouseOverToolTips = hexToolTipsCheckBox.IsChecked == true;
-            _state.Timestamps = timestampsCheckBox.IsChecked == true;
-            _state.Save();
+                _state.PortName = portComboBox.SelectedItem as string;
+                if (!string.IsNullOrWhiteSpace(_state.PortName))
+                    PortComboBox.SelectedItem = _state.PortName;
+                _state.BaudRate = baudComboBox.Text?.Trim() ?? _state.BaudRate;
+                _state.DataBits = dataBitsComboBox.SelectedItem is int dataBits ? dataBits : _state.DataBits;
+                _state.StopBitsChoice = stopBitsComboBox.SelectedItem as StopBitsChoice ?? _state.StopBitsChoice;
+                _state.Parity = parityComboBox.SelectedItem is Parity parity ? parity : _state.Parity;
+                _state.FlowControlChoice = flowControlComboBox.SelectedItem as FlowControlChoice ?? _state.FlowControlChoice;
+                _state.FontFamilyChoice = fontFamilyComboBox.SelectedItem as FontFamilyChoice ?? _state.FontFamilyChoice;
+                _state.FontSize = fontSizeComboBox.Text?.Trim() ?? _state.FontSize;
+                _state.TabSize = tabSizeComboBox.SelectedItem is int tabSize ? GetAllowedTabSize(tabSize) : _state.TabSize;
+                _state.AutoScroll = autoScrollCheckBox.IsChecked == true;
+                _state.HexBytes = hexBytesCheckBox.IsChecked == true;
+                _state.PanelSync = panelSyncCheckBox.IsChecked == true;
+                _state.HexMouseOverToolTips = hexToolTipsCheckBox.IsChecked == true;
+                _state.Timestamps = timestampsCheckBox.IsChecked == true;
+                _state.Save();
 
-            ApplyStateToQuickControls();
-            ApplyFontSettings();
-            ApplyHexPaneVisibility();
-            RefreshRenderedDocuments();
+                ApplyStateToQuickControls();
+                ApplyFontSettings();
+                ApplyHexPaneVisibility();
+                RefreshRenderedDocuments();
+            }
+            finally
+            {
+                _settingsPortComboBox = null;
+                _settingsDialog = null;
+            }
         }
         private ComboBox CreateDialogComboBox(System.Collections.IEnumerable? itemsSource, object? selectedItem, double width, bool isEditable = false, string? toolTip = null)
         {
@@ -536,18 +556,37 @@ namespace UartMonitor
         {
             string? selected = PortComboBox.SelectedItem as string;
             string[] ports = SerialPort.GetPortNames().OrderBy(port => port).ToArray();
+            string? nextSelection = PortSelection.ChoosePortSelection(selected, _state.PortName, ports);
 
             PortComboBox.ItemsSource = ports;
 
-            if (!string.IsNullOrEmpty(selected) && ports.Contains(selected))
-                PortComboBox.SelectedItem = selected;
-            else if (!string.IsNullOrWhiteSpace(_state.PortName) && ports.Contains(_state.PortName))
-                PortComboBox.SelectedItem = _state.PortName;
+            if (!string.IsNullOrEmpty(nextSelection))
+                PortComboBox.SelectedItem = nextSelection;
             else if (ports.Length > 0)
                 PortComboBox.SelectedIndex = 0;
+            else
+                PortComboBox.SelectedItem = null;
 
             _state.PortName = PortComboBox.SelectedItem as string ?? _state.PortName;
+            SyncSettingsDialogPorts(ports);
             UpdateConnectionButtons();
+        }
+
+        private void SyncSettingsDialogPorts(string[] ports)
+        {
+            if (_settingsDialog == null || _settingsPortComboBox == null || !_settingsDialog.IsVisible)
+                return;
+
+            string? selected = _settingsPortComboBox.SelectedItem as string;
+            string? nextSelection = PortSelection.ChoosePortSelection(selected, PortComboBox.SelectedItem as string ?? _state.PortName, ports);
+            _settingsPortComboBox.ItemsSource = ports;
+
+            if (!string.IsNullOrEmpty(nextSelection))
+                _settingsPortComboBox.SelectedItem = nextSelection;
+            else if (ports.Length > 0)
+                _settingsPortComboBox.SelectedIndex = 0;
+            else
+                _settingsPortComboBox.SelectedItem = null;
         }
 
         private void UpdateConnectionButtons()
@@ -1036,8 +1075,79 @@ namespace UartMonitor
 
         public void Dispose()
         {
+            _isDisposed = true;
+            StopDeviceChangeWatcher();
+            _portRefreshDebounceTimer.Stop();
+            _selectionDebounceTimer.Stop();
             SaveSettings();
             _reader.Dispose();
+        }
+
+        private void StartDeviceChangeWatcher()
+        {
+            try
+            {
+                _deviceChangeWatcher = new ManagementEventWatcher(new WqlEventQuery("SELECT * FROM Win32_DeviceChangeEvent"));
+                _deviceChangeWatcher.EventArrived += DeviceChangeWatcher_EventArrived;
+                _deviceChangeWatcher.Start();
+            }
+            catch
+            {
+                StopDeviceChangeWatcher();
+            }
+        }
+
+        private void StopDeviceChangeWatcher()
+        {
+            if (_deviceChangeWatcher == null)
+                return;
+
+            try
+            {
+                _deviceChangeWatcher.EventArrived -= DeviceChangeWatcher_EventArrived;
+                _deviceChangeWatcher.Stop();
+            }
+            catch
+            {
+                // Ignore watcher teardown failures.
+            }
+            finally
+            {
+                _deviceChangeWatcher.Dispose();
+                _deviceChangeWatcher = null;
+            }
+        }
+
+        private void DeviceChangeWatcher_EventArrived(object sender, EventArrivedEventArgs e)
+        {
+            if (_isDisposed || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+                return;
+
+#pragma warning disable VSSDK007
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+#pragma warning restore VSSDK007
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                QueuePortRefresh();
+            });
+        }
+
+        private void QueuePortRefresh()
+        {
+            if (_isDisposed)
+                return;
+
+            _portRefreshDebounceTimer.Stop();
+            _portRefreshDebounceTimer.Start();
+        }
+
+        private void PortRefreshDebounceTimer_Tick(object? sender, EventArgs e)
+        {
+            _portRefreshDebounceTimer.Stop();
+            if (_isDisposed)
+                return;
+
+            RefreshPorts();
         }
 
         private void ApplySavedPort()
@@ -1562,6 +1672,7 @@ namespace UartMonitor
         private sealed class MonitorSettingsState
         {
             private readonly UartMonitorUserSettings _settings;
+            private static readonly string[] PreferredFontFamilies = { "Ubuntu Mono", "Lucida Console", "Courier New" };
 
             private MonitorSettingsState(UartMonitorUserSettings settings)
             {
@@ -1600,7 +1711,7 @@ namespace UartMonitor
                         ?? encodingOptions.FirstOrDefault(choice => choice.Encoding.CodePage == 28591)
                         ?? encodingOptions.First(),
                     FontFamilyChoice = fontFamilyOptions.FirstOrDefault(choice => choice.FontFamily.Source.Equals(settings.FontFamily, StringComparison.OrdinalIgnoreCase))
-                        ?? fontFamilyOptions.FirstOrDefault(choice => choice.FontFamily.Source.Equals("Consolas", StringComparison.OrdinalIgnoreCase))
+                        ?? GetPreferredFontFamilyChoice(fontFamilyOptions)
                         ?? fontFamilyOptions.FirstOrDefault(choice => choice.IsMonospace)
                         ?? fontFamilyOptions.First(),
                     FontSize = settings.FontSize,
@@ -1638,6 +1749,18 @@ namespace UartMonitor
                 _settings.Timestamps = Timestamps;
                 _settings.PanelSync = PanelSync;
                 _settings.Save();
+            }
+
+            private static FontFamilyChoice? GetPreferredFontFamilyChoice(IReadOnlyList<FontFamilyChoice> fontFamilyOptions)
+            {
+                foreach (string fontFamily in PreferredFontFamilies)
+                {
+                    FontFamilyChoice? match = fontFamilyOptions.FirstOrDefault(choice => choice.FontFamily.Source.Equals(fontFamily, StringComparison.OrdinalIgnoreCase));
+                    if (match != null)
+                        return match;
+                }
+
+                return null;
             }
         }
 

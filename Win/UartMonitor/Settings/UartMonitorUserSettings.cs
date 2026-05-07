@@ -12,7 +12,7 @@ namespace UartMonitor.Settings
         public string? PortName { get; set; }
         public string BaudRate { get; set; } = "115200";
         public string EncodingDisplayName { get; set; } = "ISO-8859-1: 1998 (Latin-1, West Europe)";
-        public string FontFamily { get; set; } = "Consolas";
+        public string FontFamily { get; set; } = "Ubuntu Mono";
         public string FontSize { get; set; } = "16";
         public int TabSize { get; set; } = 8;
         public int DataBits { get; set; } = 8;
