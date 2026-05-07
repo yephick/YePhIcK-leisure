@@ -699,8 +699,6 @@ namespace UartMonitor.Serial
                 {
                     List<HexToken> chunkTokens = ParseHexTokens(chunk.Hex, chunk.HexStartOffset);
                     int chunkTextOffset = 0;
-                    bool sawEscape = false;
-
                     for (int index = 0; index < chunkTokens.Count; index++)
                     {
                         byte value = chunkTokens[index].Value;
@@ -708,13 +706,6 @@ namespace UartMonitor.Serial
                         if (value == 0x1B)
                         {
                             int ansiStart = tokenBaseIndex + index;
-                            if (!sawEscape && chunkTextOffset < chunk.Text.Length)
-                            {
-                                RemoveChunkSpans(spans, chunk.TextStartOffset);
-                                chunkTextOffset = 0;
-                            }
-
-                            sawEscape = true;
                             SkipEscape(chunkTokens, ref index);
                             ansiSpans.Add(new TokenRange(ansiStart, tokenBaseIndex + Math.Min(chunkTokens.Count, index + 1)));
                             continue;
@@ -840,15 +831,6 @@ namespace UartMonitor.Serial
                     && left.Underline == right.Underline
                     && left.Blink == right.Blink
                     && left.Strikeout == right.Strikeout;
-            }
-
-            private static void RemoveChunkSpans(List<VisibleByteSpan> spans, int chunkTextStartOffset)
-            {
-                for (int index = spans.Count - 1; index >= 0; index--)
-                {
-                    if (spans[index].TextStartOffset >= chunkTextStartOffset)
-                        spans.RemoveAt(index);
-                }
             }
 
             private static bool MatchesVisibleTextAtOffset(string lineText, string value, int startOffset)

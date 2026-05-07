@@ -52,6 +52,7 @@
     <Compile Include="Rendering\AnsiStyle.cs" />
     <Compile Include="Rendering\LogLine.cs" />
     <Compile Include="Rendering\TabExpansion.cs" />
+    <Compile Include="Rendering\TextPointerNavigation.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Commands\MyToolWindowCommand.cs" />
     <Compile Include="Serial\SerialPortOptions.cs" />

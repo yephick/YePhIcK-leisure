@@ -800,8 +800,8 @@ namespace UartMonitor
                     int safeEnd = Math.Max(safeStart, Math.Min(targetEndOffset, targetLineLength));
                     int pointerStart = GetPointerOffset(target, targetLine, safeStart);
                     int pointerEnd = GetPointerOffset(target, targetLine, safeEnd);
-                    TextPointer startPointer = lineStartPointer.GetPositionAtOffset(pointerStart, LogicalDirection.Forward) ?? lineStartPointer;
-                    TextPointer endPointer = lineStartPointer.GetPositionAtOffset(pointerEnd, LogicalDirection.Forward) ?? startPointer;
+                    TextPointer startPointer = TextPointerNavigation.GetAtTextOffset(lineStartPointer, pointerStart);
+                    TextPointer endPointer = TextPointerNavigation.GetAtTextOffset(lineStartPointer, pointerEnd);
 
                     firstTargetPointer ??= startPointer;
                     lastTargetPointer = endPointer;
@@ -878,8 +878,8 @@ namespace UartMonitor
             int lineLength = ReferenceEquals(box, HexLogBox) ? line.HexLength : line.TextLength;
             int startOffset = Math.Max(0, Math.Min(rowStartOffset, lineLength));
             int endOffset = Math.Max(startOffset, Math.Min(rowEndOffset, lineLength));
-            TextPointer start = lineStart.GetPositionAtOffset(GetPointerOffset(box, line, startOffset), LogicalDirection.Forward) ?? lineStart;
-            TextPointer end = lineStart.GetPositionAtOffset(GetPointerOffset(box, line, endOffset), LogicalDirection.Forward) ?? start;
+            TextPointer start = TextPointerNavigation.GetAtTextOffset(lineStart, GetPointerOffset(box, line, startOffset));
+            TextPointer end = TextPointerNavigation.GetAtTextOffset(lineStart, GetPointerOffset(box, line, endOffset));
 
             if (start != null && end != null)
                 box.Selection.Select(start, end);
@@ -972,43 +972,6 @@ namespace UartMonitor
         private static int GetTextOffset(TextPointer documentStart, TextPointer position)
         {
             return new TextRange(documentStart, position).Text.Length;
-        }
-
-        private static TextPointer GetTextPointerAtTextOffset(TextPointer documentStart, int textOffset)
-        {
-            TextPointer current = documentStart;
-            int remaining = Math.Max(0, textOffset);
-
-            while (current != null)
-            {
-                if (current.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
-                {
-                    string run = current.GetTextInRun(LogicalDirection.Forward);
-                    if (remaining <= run.Length)
-                        return current.GetPositionAtOffset(remaining, LogicalDirection.Forward) ?? current;
-
-                    remaining -= run.Length;
-                    current = current.GetPositionAtOffset(run.Length, LogicalDirection.Forward);
-                    continue;
-                }
-
-                TextPointer next = current.GetNextContextPosition(LogicalDirection.Forward);
-                if (next == null)
-                    return current;
-
-                string skippedText = new TextRange(current, next).Text;
-                if (skippedText.Length > 0)
-                {
-                    if (remaining <= skippedText.Length)
-                        return next;
-
-                    remaining -= skippedText.Length;
-                }
-
-                current = next;
-            }
-
-            return documentStart.DocumentEnd;
         }
 
         private int ParseBaudRate()

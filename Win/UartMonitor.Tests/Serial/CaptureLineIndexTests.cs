@@ -140,6 +140,35 @@ namespace UartMonitor.Tests.Serial
         }
 
         [TestMethod]
+        public void CaptureLine_TryGetHexSelection_MapsPrintableTabPrefixBeforeAnsi()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            AnsiStyle green = new AnsiStyle { Foreground = Color.FromRgb(0x00, 0xff, 0x00) };
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "0\t02!",
+                "30 09 1B 5B 33 32 6D 30 32 21",
+                true,
+                0,
+                0,
+                0,
+                "0\t\x1b[32m02!",
+                new[]
+                {
+                    new LogSegment("0\t", new AnsiStyle()),
+                    new LogSegment("02!", green)
+                });
+
+            bool prefixMatched = line.TryGetHexSelection(0, 2, encoding, out int prefixStart, out int prefixEnd);
+            bool styledMatched = line.TryGetHexSelection(2, 4, encoding, out int styledStart, out int styledEnd);
+
+            Assert.IsTrue(prefixMatched);
+            Assert.AreEqual("30 09", ExtractHexSpan(line.Hex, prefixStart, prefixEnd));
+            Assert.IsTrue(styledMatched);
+            Assert.AreEqual("1B 5B 33 32 6D 30 32", ExtractHexSpan(line.Hex, styledStart, styledEnd));
+        }
+
+        [TestMethod]
         public void CaptureLine_TryGetHexSelection_IncludesHiddenBytesInsideVisibleSelection()
         {
             Encoding encoding = Encoding.GetEncoding(28591);
@@ -402,11 +431,76 @@ namespace UartMonitor.Tests.Serial
             Assert.AreEqual(Color.FromRgb(0xff, 0x00, 0x00), segments[1].Style.Foreground);
         }
 
+        [TestMethod]
+        public void CaptureLine_HexRenderSegments_KeepPrintableTabPrefixDefaultAndAnsiTextStyled()
+        {
+            AnsiStyle green = new AnsiStyle { Foreground = Color.FromRgb(0x00, 0xff, 0x00) };
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "0\t02!",
+                "30 09 1B 5B 33 32 6D 30 32 21",
+                true,
+                0,
+                0,
+                0,
+                "0\t\x1b[32m02!",
+                new[]
+                {
+                    new LogSegment("0\t", new AnsiStyle()),
+                    new LogSegment("02!", green)
+                });
+
+            CaptureLineIndex.CaptureLine.HexRenderSegment[] segments = line.GetHexRenderSegments(Encoding.GetEncoding(28591)).ToArray();
+
+            Assert.AreEqual("30 09 1B 5B 33 32 6D 30 32 21", string.Concat(segments.Select(segment => segment.Text)));
+            Assert.IsNull(segments[0].Style.Foreground);
+            Assert.IsFalse(segments[0].IsAnsiSequence);
+            Assert.IsTrue(segments.Any(segment => segment.IsAnsiSequence && segment.Style.Foreground == Color.FromRgb(0x00, 0xff, 0x00)));
+            Assert.IsTrue(segments.Any(segment => !segment.IsAnsiSequence && segment.Text.Contains("30 32 21") && segment.Style.Foreground == Color.FromRgb(0x00, 0xff, 0x00)));
+        }
+
+        [TestMethod]
+        public void CaptureLine_HexRenderSegments_MatchVisibleTextColors()
+        {
+            AnsiStyle red = new AnsiStyle { Foreground = Color.FromRgb(0xff, 0x00, 0x00) };
+            AnsiStyle yellow = new AnsiStyle { Foreground = Color.FromRgb(0xff, 0xff, 0x00) };
+            AnsiStyle green = new AnsiStyle { Foreground = Color.FromRgb(0x00, 0xff, 0x00) };
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "RYG",
+                "1B 5B 33 31 6D 52 1B 5B 33 33 6D 59 1B 5B 33 32 6D 47",
+                true,
+                0,
+                0,
+                0,
+                "\x1b[31mR\x1b[33mY\x1b[32mG",
+                new[]
+                {
+                    new LogSegment("R", red),
+                    new LogSegment("Y", yellow),
+                    new LogSegment("G", green)
+                });
+
+            CaptureLineIndex.CaptureLine.HexRenderSegment[] segments = line.GetHexRenderSegments(Encoding.ASCII).ToArray();
+
+            AssertVisibleHexColor(segments, "52", Color.FromRgb(0xff, 0x00, 0x00));
+            AssertVisibleHexColor(segments, "59", Color.FromRgb(0xff, 0xff, 0x00));
+            AssertVisibleHexColor(segments, "47", Color.FromRgb(0x00, 0xff, 0x00));
+        }
+
         private static string ExtractHexSpan(string hex, int startOffset, int endOffset)
         {
             int startIndex = Math.Max(0, Math.Min(startOffset, hex.Length));
             int endIndex = Math.Max(startIndex, Math.Min(endOffset, hex.Length));
             return hex.Substring(startIndex, endIndex - startIndex).Trim();
+        }
+
+        private static void AssertVisibleHexColor(CaptureLineIndex.CaptureLine.HexRenderSegment[] segments, string hexToken, Color expected)
+        {
+            CaptureLineIndex.CaptureLine.HexRenderSegment? segment = segments.FirstOrDefault(item => !item.IsAnsiSequence && item.Text.Contains(hexToken));
+
+            Assert.IsNotNull(segment, $"Missing visible HEX token {hexToken}");
+            Assert.AreEqual(expected, segment!.Style.Foreground);
         }
 
         private static string BytesToHex(byte[] bytes)
