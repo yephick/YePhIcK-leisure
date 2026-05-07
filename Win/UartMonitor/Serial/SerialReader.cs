@@ -13,7 +13,6 @@ public sealed class SerialReader : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _readerTask;
     private Encoding _encoding = Encoding.UTF8;
-    private bool _mergeLineEndings = true;
     private readonly LineEndingNormalizer _lineEndingNormalizer = new LineEndingNormalizer();
 
     public sealed class ChunkReceivedEventArgs : EventArgs
@@ -49,7 +48,6 @@ public sealed class SerialReader : IDisposable
             return;
 
         _encoding = options.Encoding;
-        _mergeLineEndings = options.MergeLineEndings;
 
         SerialPort port = new SerialPort(options.PortName, options.BaudRate, options.Parity, options.DataBits, options.StopBits)
         {
@@ -156,7 +154,7 @@ public sealed class SerialReader : IDisposable
                 BytesReceived?.Invoke(this, chunk);
 
                 string text = _encoding.GetString(buffer, 0, count);
-                text = _lineEndingNormalizer.Normalize(text, _mergeLineEndings);
+                text = _lineEndingNormalizer.Normalize(text);
                 ChunkReceived?.Invoke(this, new ChunkReceivedEventArgs(chunk, text));
                 TextReceived?.Invoke(this, text);
             }

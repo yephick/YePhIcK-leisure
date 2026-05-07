@@ -52,16 +52,17 @@ namespace UartMonitor.Tests.Rendering
         }
 
         [TestMethod]
-        public void Parse_UnsupportedAnsiAfterPrintablePrefix_PreservesPrefix()
+        public void Parse_ClearScreenAfterPrintablePrefix_RendersMarker()
         {
             AnsiParser parser = new AnsiParser();
 
             LogSegment[] segments = parser.Parse("0\t\x1b[2Jready").ToArray();
 
-            Assert.AreEqual(2, segments.Length);
+            Assert.AreEqual(3, segments.Length);
             Assert.AreEqual("0\t", segments[0].Text);
-            Assert.AreEqual("ready", segments[1].Text);
-            Assert.AreEqual("0\tready", string.Concat(segments.Select(segment => segment.Text)));
+            Assert.AreEqual("<ANSI clear screen>", segments[1].Text);
+            Assert.AreEqual("ready", segments[2].Text);
+            Assert.AreEqual("0\t<ANSI clear screen>ready", string.Concat(segments.Select(segment => segment.Text)));
         }
 
         [TestMethod]
@@ -237,17 +238,19 @@ namespace UartMonitor.Tests.Rendering
         }
 
         [TestMethod]
-        public void Parse_UnsupportedEscapeSequence_MixedWithStyledText_IsIgnored()
+        public void Parse_ClearScreenSequence_MixedWithStyledText_RendersMarker()
         {
             AnsiParser parser = new AnsiParser();
 
             LogSegment[] segments = parser.Parse("\x1b[32mready\x1b[2Jset").ToArray();
 
-            Assert.AreEqual(2, segments.Length);
+            Assert.AreEqual(3, segments.Length);
             Assert.AreEqual("ready", segments[0].Text);
             Assert.AreEqual(Color.FromRgb(0x00, 0xff, 0x00), segments[0].Style.Foreground);
-            Assert.AreEqual("set", segments[1].Text);
+            Assert.AreEqual("<ANSI clear screen>", segments[1].Text);
             Assert.AreEqual(Color.FromRgb(0x00, 0xff, 0x00), segments[1].Style.Foreground);
+            Assert.AreEqual("set", segments[2].Text);
+            Assert.AreEqual(Color.FromRgb(0x00, 0xff, 0x00), segments[2].Style.Foreground);
         }
 
         [TestMethod]
@@ -337,25 +340,26 @@ namespace UartMonitor.Tests.Rendering
         }
 
         [TestMethod]
-        public void Parse_AnsiCursorSequence_IsIgnored()
+        public void Parse_ClearScreenSequence_RendersMarker()
         {
             AnsiParser parser = new AnsiParser();
 
-            LogSegment segment = parser.Parse("\x1b[32m\x1b[2Jready").Single();
+            LogSegment[] segments = parser.Parse("\x1b[32m\x1b[2Jready").ToArray();
 
-            Assert.AreEqual("ready", segment.Text);
-            AssertBrushColor(Color.FromRgb(0x00, 0xff, 0x00), segment.Style.ForegroundBrush);
+            Assert.AreEqual("<ANSI clear screen>ready", string.Concat(segments.Select(item => item.Text)));
+            AssertBrushColor(Color.FromRgb(0x00, 0xff, 0x00), segments[0].Style.ForegroundBrush);
+            AssertBrushColor(Color.FromRgb(0x00, 0xff, 0x00), segments[1].Style.ForegroundBrush);
         }
 
         [TestMethod]
-        public void Parse_EscapeReset_IsIgnored()
+        public void Parse_EscapeReset_RendersInlineMarker()
         {
             AnsiParser parser = new AnsiParser();
 
-            LogSegment segment = parser.Parse("\u001bc\x1b[32mready").Single();
+            LogSegment[] segments = parser.Parse("\u001bc\x1b[32mready").ToArray();
 
-            Assert.AreEqual("ready", segment.Text);
-            AssertBrushColor(Color.FromRgb(0x00, 0xff, 0x00), segment.Style.ForegroundBrush);
+            Assert.AreEqual("<ANSI reset terminal>ready", string.Concat(segments.Select(item => item.Text)));
+            AssertBrushColor(Color.FromRgb(0x00, 0xff, 0x00), segments[1].Style.ForegroundBrush);
         }
 
         [TestMethod]
@@ -372,10 +376,12 @@ namespace UartMonitor.Tests.Rendering
             };
 
             string text = System.Text.Encoding.GetEncoding(28591).GetString(bytes);
-            LogSegment segment = parser.Parse(text).First();
+            LogSegment[] segments = parser.Parse(text).ToArray();
 
-            StringAssert.StartsWith(segment.Text, "UART initialized");
-            Assert.AreEqual(Color.FromRgb(0x00, 0xff, 0x00), segment.Style.Foreground);
+            Assert.AreEqual("<ANSI reset terminal>", segments[0].Text);
+            Assert.AreEqual("<ANSI clear screen>", segments[1].Text);
+            StringAssert.StartsWith(segments[2].Text, "UART initialized");
+            Assert.AreEqual(Color.FromRgb(0x00, 0xff, 0x00), segments[2].Style.Foreground);
         }
 
         [TestMethod]
@@ -403,8 +409,8 @@ namespace UartMonitor.Tests.Rendering
         {
             LineEndingNormalizer normalizer = new LineEndingNormalizer();
 
-            Assert.AreEqual("a", normalizer.Normalize("a\r", true));
-            Assert.AreEqual("\nb", normalizer.Normalize("\nb", true));
+            Assert.AreEqual("a", normalizer.Normalize("a\r"));
+            Assert.AreEqual("\nb", normalizer.Normalize("\nb"));
         }
 
         [TestMethod]
@@ -412,8 +418,8 @@ namespace UartMonitor.Tests.Rendering
         {
             LineEndingNormalizer normalizer = new LineEndingNormalizer();
 
-            Assert.AreEqual("a", normalizer.Normalize("a", true));
-            Assert.AreEqual("\nb", normalizer.Normalize("\rb", true));
+            Assert.AreEqual("a", normalizer.Normalize("a"));
+            Assert.AreEqual("\nb", normalizer.Normalize("\rb"));
         }
 
         [TestMethod]
@@ -421,8 +427,8 @@ namespace UartMonitor.Tests.Rendering
         {
             LineEndingNormalizer normalizer = new LineEndingNormalizer();
 
-            Assert.AreEqual("a", normalizer.Normalize("a\n", true));
-            Assert.AreEqual("\nb", normalizer.Normalize("\rb", true));
+            Assert.AreEqual("a", normalizer.Normalize("a\n"));
+            Assert.AreEqual("\nb", normalizer.Normalize("\rb"));
         }
 
         [TestMethod]
@@ -430,7 +436,7 @@ namespace UartMonitor.Tests.Rendering
         {
             LineEndingNormalizer normalizer = new LineEndingNormalizer();
 
-            Assert.AreEqual("a\nb", normalizer.Normalize("a\nb", true));
+            Assert.AreEqual("a\nb", normalizer.Normalize("a\nb"));
         }
 
         [TestMethod]
@@ -484,8 +490,8 @@ namespace UartMonitor.Tests.Rendering
                     StopBits = "1",
                     Parity = "None",
                     FlowControl = "XON/XOFF",
-                    MergeLineEndings = true,
                     AutoScroll = false,
+                    HexBytes = false,
                     PanelSync = true
                 };
 
@@ -499,8 +505,8 @@ namespace UartMonitor.Tests.Rendering
                 Assert.AreEqual("16", loaded.FontSize);
                 Assert.AreEqual(6, loaded.TabSize);
                 Assert.AreEqual(8, loaded.DataBits);
-                Assert.IsTrue(loaded.MergeLineEndings);
                 Assert.IsFalse(loaded.AutoScroll);
+                Assert.IsFalse(loaded.HexBytes);
                 Assert.IsTrue(loaded.PanelSync);
             }
             finally

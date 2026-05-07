@@ -47,8 +47,9 @@
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
-  <ItemGroup>
+    <ItemGroup>
     <Compile Include="Rendering\AnsiParser.cs" />
+    <Compile Include="Rendering\AnsiSequenceInfo.cs" />
     <Compile Include="Rendering\AnsiStyle.cs" />
     <Compile Include="Rendering\LogLine.cs" />
     <Compile Include="Rendering\TabExpansion.cs" />

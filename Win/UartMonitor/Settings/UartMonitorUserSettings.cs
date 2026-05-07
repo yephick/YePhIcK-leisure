@@ -19,8 +19,8 @@ namespace UartMonitor.Settings
         public string StopBits { get; set; } = "1";
         public string Parity { get; set; } = "None";
         public string FlowControl { get; set; } = "XON/XOFF";
-        public bool MergeLineEndings { get; set; } = true;
         public bool AutoScroll { get; set; } = true;
+        public bool HexBytes { get; set; } = true;
         public bool PanelSync { get; set; } = false;
 
         public static string FilePath =>
@@ -56,8 +56,8 @@ namespace UartMonitor.Settings
                 settings.StopBits = GetString(values, nameof(StopBits), settings.StopBits);
                 settings.Parity = GetString(values, nameof(Parity), settings.Parity);
                 settings.FlowControl = GetString(values, nameof(FlowControl), settings.FlowControl);
-                settings.MergeLineEndings = GetBool(values, nameof(MergeLineEndings), settings.MergeLineEndings);
                 settings.AutoScroll = GetBool(values, nameof(AutoScroll), settings.AutoScroll);
+                settings.HexBytes = GetBool(values, nameof(HexBytes), settings.HexBytes);
                 settings.PanelSync = GetBool(values, nameof(PanelSync), settings.PanelSync);
                 return settings;
             }
@@ -82,8 +82,8 @@ namespace UartMonitor.Settings
                 $"StopBits={StopBits}",
                 $"Parity={Parity}",
                 $"FlowControl={FlowControl}",
-                $"MergeLineEndings={MergeLineEndings}",
                 $"AutoScroll={AutoScroll}",
+                $"HexBytes={HexBytes}",
                 $"PanelSync={PanelSync}",
             });
         }

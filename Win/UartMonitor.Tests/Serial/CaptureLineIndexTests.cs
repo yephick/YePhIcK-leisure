@@ -335,15 +335,11 @@ namespace UartMonitor.Tests.Serial
             RawLinePart[] first = new System.Collections.Generic.List<RawLinePart>(splitter.Append(new byte[] { 0x32, 0x33, 0x31 })).ToArray();
             RawLinePart[] second = new System.Collections.Generic.List<RawLinePart>(splitter.Append(new byte[] { 0x0A, 0x0D, 0x34 })).ToArray();
 
-            Assert.AreEqual(1, first.Length);
-            Assert.IsFalse(first[0].IsComplete);
-            Assert.AreEqual("32 33 31", BytesToHex(first[0].Bytes));
-            Assert.AreEqual(2, second.Length);
+            Assert.AreEqual(0, first.Length);
+            Assert.AreEqual(1, second.Length);
             Assert.IsTrue(second[0].IsComplete);
-            Assert.AreEqual("0A 0D", BytesToHex(second[0].Bytes));
+            Assert.AreEqual("32 33 31 0A 0D", BytesToHex(second[0].Bytes));
             Assert.AreEqual(2, second[0].LineEndingLength);
-            Assert.IsFalse(second[1].IsComplete);
-            Assert.AreEqual("34", BytesToHex(second[1].Bytes));
         }
 
         [TestMethod]

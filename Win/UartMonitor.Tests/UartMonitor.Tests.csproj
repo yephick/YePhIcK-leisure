@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <Compile Include="..\UartMonitor\Rendering\AnsiParser.cs" Link="Rendering\AnsiParser.cs" />
+    <Compile Include="..\UartMonitor\Rendering\AnsiSequenceInfo.cs" Link="Rendering\AnsiSequenceInfo.cs" />
     <Compile Include="..\UartMonitor\Rendering\AnsiStyle.cs" Link="Rendering\AnsiStyle.cs" />
     <Compile Include="..\UartMonitor\Rendering\LogLine.cs" Link="Rendering\LogLine.cs" />
     <Compile Include="..\UartMonitor\Rendering\TabExpansion.cs" Link="Rendering\TabExpansion.cs" />

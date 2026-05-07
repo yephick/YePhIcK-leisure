@@ -104,8 +104,8 @@ namespace UartMonitor
             FlowControlComboBox.SelectedItem = FlowControlComboBox.Items.OfType<FlowControlChoice>().FirstOrDefault(choice => choice.DisplayName == _settings.FlowControl)
                 ?? FlowControlComboBox.Items.OfType<FlowControlChoice>().First(choice => choice.Handshake == Handshake.XOnXOff);
 
-            MergeLineEndingsCheckBox.IsChecked = _settings.MergeLineEndings;
             AutoScrollCheckBox.IsChecked = _settings.AutoScroll;
+            HexBytesCheckBox.IsChecked = _settings.HexBytes;
             PanelSyncCheckBox.IsChecked = _settings.PanelSync;
 
             _reader.ChunkReceived += Reader_ChunkReceived;
@@ -113,6 +113,7 @@ namespace UartMonitor
             _reader.Error += Reader_Error;
 
             ApplyFontSettings();
+            ApplyHexPaneVisibility();
             UpdateSelectedEncodingSnapshot();
             RefreshPorts();
             ApplySavedPort();
@@ -143,6 +144,11 @@ namespace UartMonitor
             RefreshRenderedDocuments();
         }
 
+        private void HexBytesCheckBox_CheckedChanged(object sender, RoutedEventArgs e)
+        {
+            ApplyHexPaneVisibility();
+        }
+
         private void EncodingComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             UpdateSelectedEncodingSnapshot();
@@ -155,7 +161,7 @@ namespace UartMonitor
 
             ClearMirrorHighlights();
             ClearSelection(HexLogBox);
-            if (LogBox.Selection.IsEmpty)
+            if (LogBox.Selection.IsEmpty || HexBytesCheckBox.IsChecked != true)
                 return;
 
             QueueSelectionSync(LogBox, HexLogBox);
@@ -216,8 +222,7 @@ namespace UartMonitor
                 Parity = parity,
                 StopBits = stopBits,
                 Handshake = handshake,
-                Encoding = encoding,
-                MergeLineEndings = MergeLineEndingsCheckBox.IsChecked == true
+                Encoding = encoding
             };
 
             try
@@ -381,18 +386,58 @@ namespace UartMonitor
         {
             lock (_processingGate)
             {
-            foreach (RawLinePart part in _rawLineSplitter.Append(bytes))
+                foreach (RawLinePart part in _rawLineSplitter.Append(bytes))
+                {
+                    foreach (RawLinePart logicalPart in SplitClearScreenParts(part))
+                    {
+                        byte[] textBytes = logicalPart.LineEndingLength > 0
+                            ? logicalPart.Bytes.Take(logicalPart.Bytes.Length - logicalPart.LineEndingLength).ToArray()
+                            : logicalPart.Bytes;
+                        string text = encoding.GetString(textBytes);
+                        LogSegment[] segments = _ansiParser.Parse(text).ToArray();
+                        string renderedText = string.Concat(segments.Select(segment => segment.Text));
+                        string hex = FormatHexLine(logicalPart.Bytes);
+                        _lineIndex.AppendLinePart(renderedText, hex, logicalPart.IsComplete, logicalPart.LineEndingLength, text, segments);
+                    }
+                }
+            }
+        }
+
+        private static IEnumerable<RawLinePart> SplitClearScreenParts(RawLinePart part)
+        {
+            byte[] bytes = part.Bytes;
+            int start = 0;
+
+            while (start < bytes.Length)
             {
-                byte[] textBytes = part.LineEndingLength > 0
-                    ? part.Bytes.Take(part.Bytes.Length - part.LineEndingLength).ToArray()
-                    : part.Bytes;
-                string text = encoding.GetString(textBytes);
-                LogSegment[] segments = _ansiParser.Parse(text).ToArray();
-                string renderedText = string.Concat(segments.Select(segment => segment.Text));
-                string hex = FormatHexLine(part.Bytes);
-                _lineIndex.AppendLinePart(renderedText, hex, part.IsComplete, part.LineEndingLength, text, segments);
+                int clearEnd = FindClearScreenEnd(bytes, start);
+                if (clearEnd < 0)
+                    break;
+
+                int count = clearEnd - start;
+                byte[] clearBytes = new byte[count];
+                Buffer.BlockCopy(bytes, start, clearBytes, 0, count);
+                yield return new RawLinePart(clearBytes, isComplete: true, lineEndingLength: 0);
+                start = clearEnd;
             }
+
+            if (start < bytes.Length)
+            {
+                byte[] remaining = new byte[bytes.Length - start];
+                Buffer.BlockCopy(bytes, start, remaining, 0, remaining.Length);
+                yield return new RawLinePart(remaining, part.IsComplete, part.LineEndingLength);
             }
+        }
+
+        private static int FindClearScreenEnd(byte[] bytes, int start)
+        {
+            for (int index = start; index + 3 < bytes.Length; index++)
+            {
+                if (bytes[index] == 0x1B && bytes[index + 1] == 0x5B && bytes[index + 2] == 0x32 && bytes[index + 3] == 0x4A)
+                    return index + 4;
+            }
+
+            return -1;
         }
 
         private void RefreshRenderedDocuments()
@@ -654,6 +699,26 @@ namespace UartMonitor
                     paragraph.LineHeight = fontSize;
                 if (HexLogBox.Document?.Blocks.LastBlock is Paragraph hexParagraph)
                     hexParagraph.LineHeight = fontSize;
+            }
+        }
+
+        private void ApplyHexPaneVisibility()
+        {
+            if (HexPane == null || HexGridSplitter == null || SplitterColumn == null || HexColumn == null || PanelSyncCheckBox == null)
+                return;
+
+            bool showHex = HexBytesCheckBox.IsChecked == true;
+            HexPane.Visibility = showHex ? Visibility.Visible : Visibility.Collapsed;
+            HexGridSplitter.Visibility = showHex ? Visibility.Visible : Visibility.Collapsed;
+            SplitterColumn.Width = showHex ? new GridLength(4) : new GridLength(0);
+            HexColumn.Width = showHex ? new GridLength(2, GridUnitType.Star) : new GridLength(0);
+            PanelSyncCheckBox.IsEnabled = showHex;
+
+            if (!showHex)
+            {
+                ClearHexHover();
+                ClearMirrorHighlights();
+                ClearSelection(HexLogBox);
             }
         }
 
@@ -1121,8 +1186,8 @@ namespace UartMonitor
             _settings.StopBits = (StopBitsComboBox.SelectedItem as StopBitsChoice)?.DisplayName ?? _settings.StopBits;
             _settings.Parity = GetSelectedParity().ToString();
             _settings.FlowControl = (FlowControlComboBox.SelectedItem as FlowControlChoice)?.DisplayName ?? _settings.FlowControl;
-            _settings.MergeLineEndings = MergeLineEndingsCheckBox.IsChecked == true;
             _settings.AutoScroll = AutoScrollCheckBox.IsChecked == true;
+            _settings.HexBytes = HexBytesCheckBox.IsChecked == true;
             _settings.PanelSync = PanelSyncCheckBox.IsChecked == true;
 
             _settings.Save();
@@ -1194,7 +1259,7 @@ namespace UartMonitor
 
         private void Pane_ScrollChanged(object sender, ScrollChangedEventArgs e)
         {
-            if (PanelSyncCheckBox.IsChecked != true)
+            if (PanelSyncCheckBox.IsChecked != true || HexBytesCheckBox.IsChecked != true)
                 return;
 
             if (_syncingScroll)

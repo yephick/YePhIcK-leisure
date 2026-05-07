@@ -1039,8 +1039,8 @@ namespace UartMonitor.Serial
                     .Select(token => token.Value)
                     .ToArray();
 
-                if (bytes.Length == 2 && bytes[0] == 0x1B && bytes[1] == (byte)'c')
-                    return "ANSI reset terminal";
+                if (AnsiSequenceInfo.TryGetLabel(bytes, out string label))
+                    return label;
 
                 if (bytes.Length >= 3 && bytes[0] == 0x1B && bytes[1] == (byte)'[')
                 {
@@ -1048,13 +1048,9 @@ namespace UartMonitor.Serial
                     string parameters = Encoding.ASCII.GetString(bytes, 2, bytes.Length - 3);
                     if (final == 'm')
                         return DescribeSgr(parameters);
-                    if (final == 'J')
-                        return parameters == "2" ? "ANSI clear screen" : "ANSI erase display";
-                    if (final == 'K')
-                        return "ANSI erase line";
                 }
 
-                return "ANSI sequence ignored";
+                return AnsiSequenceInfo.Ignored;
             }
 
             private static string DescribeSgr(string parameters)

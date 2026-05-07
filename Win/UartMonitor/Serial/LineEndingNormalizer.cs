@@ -6,9 +6,9 @@ namespace UartMonitor.Serial
     {
         private char _pendingLineEnding = '\0';
 
-        public string Normalize(string text, bool mergeLineEndings)
+        public string Normalize(string text)
         {
-            if (!mergeLineEndings || string.IsNullOrEmpty(text))
+            if (string.IsNullOrEmpty(text))
                 return text;
 
             StringBuilder output = new StringBuilder(text.Length + 1);

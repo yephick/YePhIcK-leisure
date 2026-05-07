@@ -37,12 +37,6 @@ namespace UartMonitor.Serial
                     _pendingLineEnding = value;
             }
 
-            if (_currentLine.Count > _emittedCount && !_pendingLineEnding.HasValue)
-            {
-                RawLinePart part = CreatePart(_emittedCount, _currentLine.Count - _emittedCount, isComplete: false);
-                _emittedCount = _currentLine.Count;
-                yield return part;
-            }
         }
 
         public RawLinePart? Flush()

@@ -64,6 +64,7 @@ namespace UartMonitor.Rendering
                     _style.Reset();
                     sawEscape = true;
                     prefixBuffer.Clear();
+                    segments.Add(new LogSegment(AnsiSequenceInfo.ToVisibleMarker(AnsiSequenceInfo.ResetTerminal), _style.Clone()));
                     index++;
                     continue;
                 }
@@ -102,6 +103,8 @@ namespace UartMonitor.Rendering
 
                 if (input[end] == 'm')
                     ApplySgr(input.Substring(index + 2, end - index - 2));
+                else if (AnsiSequenceInfo.TryGetControlLabel(input.Substring(index + 2, end - index - 2), input[end], out string label))
+                    segments.Add(new LogSegment(AnsiSequenceInfo.ToVisibleMarker(label), _style.Clone()));
 
                 index = end;
             }
