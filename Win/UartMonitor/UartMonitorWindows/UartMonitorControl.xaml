@@ -66,6 +66,62 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="ActionToggleButtonStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="MinWidth" Value="0"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#d6d6d6"/>
+            <Setter Property="Background" Value="#2a2a2a"/>
+            <Setter Property="BorderBrush" Value="#3b3b3b"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter x:Name="ButtonContent"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#343434"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#5a5a5a"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#3d3d3d"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#8a8a8a"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#505050"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#8a8a8a"/>
+                                <Setter TargetName="ButtonContent" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <TranslateTransform X="1" Y="1"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Cursor" Value="Arrow"/>
+                                <Setter Property="Foreground" Value="#777777"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#202020"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#2b2b2b"/>
+                                <Setter TargetName="ButtonContent" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
     <DockPanel Background="#1c1c1c">
 
@@ -88,9 +144,24 @@
                     <Button x:Name="ClearButton" Style="{StaticResource ActionButtonStyle}" Margin="0,0,8,0" Click="ClearButton_Click" ToolTip="Clear log">
                         <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.ClearWindowContent}" Width="16" Height="16"/>
                     </Button>
-                </WrapPanel>
-
-                <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Top">
+                    <ToggleButton x:Name="TimestampsButton" Style="{StaticResource ActionToggleButtonStyle}" Margin="0,0,4,0" Click="TimestampsButton_Click" ToolTip="Show timestamps">
+                        <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.Time}" Width="16" Height="16"/>
+                    </ToggleButton>
+                    <Button x:Name="SearchButton" Style="{StaticResource ActionButtonStyle}" Margin="0,0,4,0" Click="SearchButton_Click" ToolTip="Quick search">
+                        <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.QuickFind}" Width="16" Height="16"/>
+                    </Button>
+                    <Border x:Name="SearchBoxBorder" Visibility="Collapsed" Background="#222222" BorderBrush="#5a5a5a" BorderThickness="1" CornerRadius="2" Margin="0,0,4,0" Padding="4,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <CheckBox x:Name="SearchHexCheckBox" Content="HEX" IsChecked="False" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,6,0" Click="SearchHexCheckBox_Click" ToolTip="Search the HEX pane instead of the text pane"/>
+                            <TextBox x:Name="SearchTextBox" Width="180" BorderThickness="0" Background="Transparent" Foreground="#f0f0f0" FontSize="11" VerticalContentAlignment="Center" AcceptsReturn="False" TextWrapping="NoWrap" KeyDown="SearchTextBox_KeyDown" TextChanged="SearchTextBox_TextChanged" ToolTip="Search text as you type"/>
+                            <Button x:Name="SearchPreviousButton" Style="{StaticResource ActionButtonStyle}" Width="20" Height="20" Margin="6,0,0,0" Click="SearchPreviousButton_Click" ToolTip="Find previous">
+                                <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.FindPrevious}" Width="14" Height="14"/>
+                            </Button>
+                            <Button x:Name="SearchNextButton" Style="{StaticResource ActionButtonStyle}" Width="20" Height="20" Margin="4,0,0,0" Click="SearchNextButton_Click" ToolTip="Find next">
+                                <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.FindNext}" Width="14" Height="14"/>
+                            </Button>
+                        </StackPanel>
+                    </Border>
                     <Button x:Name="SettingsButton" Style="{StaticResource ActionButtonStyle}" Content="&#x2699;" Margin="0,0,0,0" Click="SettingsButton_Click" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Settings"/>
                 </WrapPanel>
             </DockPanel>

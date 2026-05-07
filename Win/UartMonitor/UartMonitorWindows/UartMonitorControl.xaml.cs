@@ -49,8 +49,9 @@ namespace UartMonitor
         private readonly List<TextPointer> _textLineStarts = new List<TextPointer>();
         private readonly List<TextPointer> _hexLineStarts = new List<TextPointer>();
         private readonly List<TimestampHoverRange> _timestampHoverRanges = new List<TimestampHoverRange>();
-        private readonly List<TextRange> _mirrorHighlights = new List<TextRange>();
+        private readonly List<HoverHighlightRange> _mirrorHighlights = new List<HoverHighlightRange>();
         private readonly List<HoverHighlightRange> _hexHoverHighlights = new List<HoverHighlightRange>();
+        private readonly List<HoverHighlightRange> _searchHighlights = new List<HoverHighlightRange>();
         private ToolTip? _hexHoverToolTip;
         private ToolTip? _timestampToolTip;
         private ManagementEventWatcher? _deviceChangeWatcher;
@@ -74,6 +75,12 @@ namespace UartMonitor
         private double _visibleTextColumns;
         private double _hexColumns;
         private bool _isDisposed;
+        private bool _suppressSearchEvents;
+        private string _lastSearchQuery = string.Empty;
+        private bool _lastSearchWasHex;
+        private int _currentSearchLineIndex = -1;
+        private int _currentSearchStartOffset = -1;
+        private int _currentSearchEndOffset = -1;
 
         public MyToolWindowControl()
         {
@@ -98,6 +105,8 @@ namespace UartMonitor
             EncodingComboBox.ItemsSource = _encodingOptions;
             EncodingComboBox.SelectedItem = _state.EncodingChoice;
             EncodingComboBox.SelectionChanged += EncodingComboBox_SelectionChanged;
+            TimestampsButton.IsChecked = _state.Timestamps;
+            SearchHexCheckBox.IsChecked = false;
 
             _reader.ChunkReceived += Reader_ChunkReceived;
             _reader.StatusChanged += Reader_StatusChanged;
@@ -379,6 +388,90 @@ namespace UartMonitor
                 _state.EncodingChoice = choice;
 
             UpdateSelectedEncodingSnapshot();
+        }
+
+        private void TimestampsButton_Click(object sender, RoutedEventArgs e)
+        {
+            _state.Timestamps = TimestampsButton.IsChecked == true;
+            _state.Save();
+            RefreshRenderedDocuments();
+        }
+
+        private void SearchButton_Click(object sender, RoutedEventArgs e)
+        {
+            SearchBoxBorder.Visibility = SearchBoxBorder.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+            if (SearchBoxBorder.Visibility == Visibility.Visible)
+            {
+                SearchTextBox.Focus();
+                SearchTextBox.SelectAll();
+                if (!string.IsNullOrWhiteSpace(SearchTextBox.Text))
+                    PerformSearch(NormalizeSearchQuery(SearchTextBox.Text, SearchHexCheckBox.IsChecked == true), SearchHexCheckBox.IsChecked == true, true, restart: true);
+            }
+            else
+            {
+                ClearSearchSelection();
+            }
+        }
+
+        private void SearchTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            if (_suppressSearchEvents)
+                return;
+
+            bool searchHex = SearchHexCheckBox.IsChecked == true;
+            string query = NormalizeSearchQuery(SearchTextBox.Text, searchHex);
+            if (searchHex)
+                query = query.ToUpperInvariant();
+            if (!string.Equals(query, SearchTextBox.Text, StringComparison.Ordinal))
+            {
+                _suppressSearchEvents = true;
+                try
+                {
+                    int caretIndex = Math.Min(query.Length, SearchTextBox.CaretIndex);
+                    SearchTextBox.Text = query;
+                    SearchTextBox.CaretIndex = caretIndex;
+                }
+                finally
+                {
+                    _suppressSearchEvents = false;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(query))
+                ClearSearchSelection();
+            else
+                PerformSearch(query, searchHex, true, restart: HasSearchContextChanged(query, searchHex));
+        }
+
+        private void SearchTextBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (e.Key == System.Windows.Input.Key.Escape)
+            {
+                _suppressSearchEvents = true;
+                try
+                {
+                    SearchTextBox.Clear();
+                }
+                finally
+                {
+                    _suppressSearchEvents = false;
+                }
+
+                SearchBoxBorder.Visibility = Visibility.Collapsed;
+                ClearSearchSelection();
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                bool searchHex = SearchHexCheckBox.IsChecked == true;
+                string query = NormalizeSearchQuery(SearchTextBox.Text, searchHex);
+                if (searchHex)
+                    query = query.ToUpperInvariant();
+                PerformSearch(query, searchHex, true, restart: HasSearchContextChanged(query, searchHex));
+                e.Handled = true;
+            }
         }
 
         private void LogBox_SelectionChanged(object sender, RoutedEventArgs e)
@@ -806,6 +899,7 @@ namespace UartMonitor
             hexDocument.Blocks.Clear();
             _mirrorHighlights.Clear();
             _hexHoverHighlights.Clear();
+            _searchHighlights.Clear();
             _timestampHoverRanges.Clear();
 
             Paragraph textParagraph = CreateParagraph(LogBox.FontSize);
@@ -923,6 +1017,7 @@ namespace UartMonitor
             _textLineStarts.Clear();
             _hexLineStarts.Clear();
             _mirrorHighlights.Clear();
+            _searchHighlights.Clear();
             const double sharedFontSize = 16;
             const double sharedLineHeight = 16;
             FlowDocument document = new FlowDocument
@@ -1161,6 +1256,8 @@ namespace UartMonitor
                 PortComboBox.SelectedItem = _state.PortName;
 
             EncodingComboBox.SelectedItem = _state.EncodingChoice;
+            if (TimestampsButton.IsChecked != _state.Timestamps)
+                TimestampsButton.IsChecked = _state.Timestamps;
         }
 
         private void SyncSelection(RichTextBox source, RichTextBox target)
@@ -1268,15 +1365,16 @@ namespace UartMonitor
         private void ApplyMirrorHighlights(RichTextBox target, IEnumerable<TextRange> ranges)
         {
             ClearMirrorHighlights();
-            SolidColorBrush brush = CreateBrush(Color.FromRgb(0x66, 0x66, 0x66));
+            SolidColorBrush brush = CreateBrush(Color.FromRgb(0x3f, 0x3f, 0x46));
 
             foreach (TextRange range in ranges)
             {
                 if (range.IsEmpty)
                     continue;
 
+                object previousBackground = range.GetPropertyValue(TextElement.BackgroundProperty);
                 range.ApplyPropertyValue(TextElement.BackgroundProperty, brush);
-                _mirrorHighlights.Add(range);
+                _mirrorHighlights.Add(new HoverHighlightRange(range, previousBackground));
             }
         }
 
@@ -1285,10 +1383,15 @@ namespace UartMonitor
             if (_mirrorHighlights.Count == 0)
                 return;
 
-            foreach (TextRange range in _mirrorHighlights)
+            foreach (HoverHighlightRange highlight in _mirrorHighlights)
             {
-                if (!range.IsEmpty)
-                    range.ApplyPropertyValue(TextElement.BackgroundProperty, null);
+                if (highlight.Range.IsEmpty)
+                    continue;
+
+                object previousBackground = highlight.PreviousBackground == DependencyProperty.UnsetValue
+                    ? null!
+                    : highlight.PreviousBackground;
+                highlight.Range.ApplyPropertyValue(TextElement.BackgroundProperty, previousBackground);
             }
 
             _mirrorHighlights.Clear();
@@ -1667,6 +1770,259 @@ namespace UartMonitor
             _state.HexBytes = _state.HexBytes;
             SaveHexSplitRatio();
             _state.Save();
+        }
+
+        private void SearchHexCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrWhiteSpace(SearchTextBox.Text))
+                PerformSearch(NormalizeSearchQuery(SearchTextBox.Text, SearchHexCheckBox.IsChecked == true), SearchHexCheckBox.IsChecked == true, true, restart: true);
+        }
+
+        private void SearchPreviousButton_Click(object sender, RoutedEventArgs e)
+        {
+            PerformSearch(NormalizeSearchQuery(SearchTextBox.Text, SearchHexCheckBox.IsChecked == true), SearchHexCheckBox.IsChecked == true, false, restart: false);
+        }
+
+        private void SearchNextButton_Click(object sender, RoutedEventArgs e)
+        {
+            PerformSearch(NormalizeSearchQuery(SearchTextBox.Text, SearchHexCheckBox.IsChecked == true), SearchHexCheckBox.IsChecked == true, true, restart: false);
+        }
+
+        private void ClearSearchSelection()
+        {
+            ClearSearchHighlights();
+            ClearMirrorHighlights();
+            _lastSearchQuery = string.Empty;
+            _currentSearchLineIndex = -1;
+            _currentSearchStartOffset = -1;
+            _currentSearchEndOffset = -1;
+        }
+
+        private bool HasSearchContextChanged(string query, bool searchHex)
+        {
+            return !string.Equals(_lastSearchQuery, query, StringComparison.Ordinal) || _lastSearchWasHex != searchHex;
+        }
+
+        private void PerformSearch(string query, bool searchHex, bool searchForward, bool restart)
+        {
+            if (string.IsNullOrWhiteSpace(query) || _lineIndex.Count == 0)
+                return;
+
+            RichTextBox box = searchHex ? HexLogBox : LogBox;
+            if (!TryFindSearchMatch(query, searchHex, searchForward, restart, out int lineIndex, out int matchStartOffset, out int matchEndOffset))
+            {
+                ClearSearchSelection();
+                _lastSearchQuery = query;
+                _lastSearchWasHex = searchHex;
+                return;
+            }
+
+            CaptureLineIndex.CaptureLine line = _lineIndex.GetLine(lineIndex);
+            TextPointer? lineStart = GetLineStartPointer(box, lineIndex);
+            if (lineStart == null)
+                return;
+
+            TextPointer start = TextPointerNavigation.GetAtTextOffset(lineStart, GetPointerOffset(box, line, matchStartOffset));
+            TextPointer end = TextPointerNavigation.GetAtTextOffset(lineStart, GetPointerOffset(box, line, matchEndOffset));
+            RichTextBox target = searchHex ? LogBox : HexLogBox;
+            try
+            {
+                _suppressSelectionEvents = true;
+                ClearSearchHighlights();
+                ClearMirrorHighlights();
+                ClearSelection(LogBox);
+                ClearSelection(HexLogBox);
+                ApplySearchHighlight(new TextRange(start, end));
+            }
+            finally
+            {
+                _suppressSelectionEvents = false;
+            }
+
+            ScrollToSearchMatch(box, lineIndex, start);
+            _lastSearchQuery = query;
+            _lastSearchWasHex = searchHex;
+            _currentSearchLineIndex = lineIndex;
+            _currentSearchStartOffset = matchStartOffset;
+            _currentSearchEndOffset = matchEndOffset;
+            ApplySearchMirrorHighlight(line, searchHex, matchStartOffset, matchEndOffset, target, lineIndex);
+        }
+
+        private void ApplySearchMirrorHighlight(CaptureLineIndex.CaptureLine line, bool searchHex, int matchStartOffset, int matchEndOffset, RichTextBox target, int lineIndex)
+        {
+            if (!_state.HexBytes && !searchHex)
+                return;
+
+            if (!TryMapOffsets(line, searchHex, matchStartOffset, matchEndOffset, includeLeadingBytes: false, includeTrailingBytes: false, out int targetStartOffset, out int targetEndOffset))
+                return;
+
+            TextPointer? lineStart = GetLineStartPointer(target, lineIndex);
+            if (lineStart == null)
+                return;
+
+            int targetLineLength = searchHex ? line.TextLength : line.HexLength;
+            int safeStart = Math.Max(0, Math.Min(targetStartOffset, targetLineLength));
+            int safeEnd = Math.Max(safeStart, Math.Min(targetEndOffset, targetLineLength));
+            TextPointer start = TextPointerNavigation.GetAtTextOffset(lineStart, GetPointerOffset(target, line, safeStart));
+            TextPointer end = TextPointerNavigation.GetAtTextOffset(lineStart, GetPointerOffset(target, line, safeEnd));
+            ApplyMirrorHighlights(target, new[] { new TextRange(start, end) });
+        }
+
+        private bool TryFindSearchMatch(string query, bool searchHex, bool searchForward, bool restart, out int lineIndex, out int matchStartOffset, out int matchEndOffset)
+        {
+            lineIndex = -1;
+            matchStartOffset = -1;
+            matchEndOffset = -1;
+
+            int startLine = restart || _currentSearchLineIndex < 0 || _lastSearchWasHex != searchHex
+                ? (searchForward ? 0 : _lineIndex.Count - 1)
+                : Math.Max(0, Math.Min(_currentSearchLineIndex, _lineIndex.Count - 1));
+            int firstLine = startLine;
+
+            for (int visited = 0; visited < _lineIndex.Count; visited++)
+            {
+                CaptureLineIndex.CaptureLine line = _lineIndex.GetLine(startLine);
+                string modelText = searchHex ? line.Hex : line.Text;
+                string searchable = searchHex ? modelText : GetSearchableTextLine(modelText);
+                if (searchable.Length == 0)
+                {
+                    startLine = searchForward
+                        ? (startLine + 1) % _lineIndex.Count
+                        : (startLine - 1 + _lineIndex.Count) % _lineIndex.Count;
+                    continue;
+                }
+
+                int startOffset;
+                if (restart || startLine != firstLine || _currentSearchLineIndex < 0 || _lastSearchWasHex != searchHex)
+                {
+                    startOffset = searchForward ? 0 : Math.Max(0, searchable.Length - 1);
+                }
+                else
+                {
+                    startOffset = searchForward
+                        ? Math.Max(0, Math.Min(_currentSearchEndOffset, searchable.Length))
+                        : Math.Max(0, Math.Min(_currentSearchStartOffset - 1, Math.Max(0, searchable.Length - 1)));
+                }
+
+                int found = searchForward
+                    ? searchable.IndexOf(query, startOffset, StringComparison.Ordinal)
+                    : searchable.LastIndexOf(query, startOffset, StringComparison.Ordinal);
+                if (found >= 0)
+                {
+                    lineIndex = startLine;
+                    matchStartOffset = searchHex ? found : TabExpansion.ExpandedOffsetToModelOffset(modelText, found, GetSelectedTabSize());
+                    matchEndOffset = searchHex ? found + query.Length : TabExpansion.ExpandedOffsetToModelOffset(modelText, found + query.Length, GetSelectedTabSize());
+                    return true;
+                }
+
+                startLine = searchForward
+                    ? (startLine + 1) % _lineIndex.Count
+                    : (startLine - 1 + _lineIndex.Count) % _lineIndex.Count;
+            }
+
+            return false;
+        }
+
+        private void ScrollToSearchMatch(RichTextBox box, int lineIndex, TextPointer matchStart)
+        {
+            ScrollViewer? scrollViewer = GetScrollViewer(box);
+            if (scrollViewer == null)
+                return;
+
+            double lineScrollUnit = GetLineScrollUnit(scrollViewer, _lineIndex.Count, box.FontSize);
+            double visibleRows = scrollViewer.ViewportHeight > 0 && lineScrollUnit > 0
+                ? Math.Max(1, Math.Floor(scrollViewer.ViewportHeight / lineScrollUnit))
+                : 1;
+            double firstVisibleLine = Math.Max(0, Math.Min(Math.Max(0, lineIndex - 2), Math.Max(0, _lineIndex.Count - visibleRows)));
+            scrollViewer.ScrollToVerticalOffset(firstVisibleLine * lineScrollUnit);
+        }
+
+        private static double GetLineScrollUnit(ScrollViewer scrollViewer, int lineCount, double fallbackLineHeight)
+        {
+            if (lineCount > 0 && scrollViewer.ExtentHeight > 0)
+                return Math.Max(1, scrollViewer.ExtentHeight / lineCount);
+
+            return Math.Max(1, fallbackLineHeight);
+        }
+
+        private static string NormalizeSearchQuery(string query, bool searchHex)
+        {
+            if (string.IsNullOrEmpty(query))
+                return string.Empty;
+
+            string normalized = searchHex ? query : StripAnsiSequences(query);
+            normalized = normalized.Replace("\r", string.Empty).Replace("\n", string.Empty);
+            return normalized;
+        }
+
+        private string GetSearchableTextLine(string text)
+        {
+            int column = 0;
+            return TabExpansion.Expand(text, GetSelectedTabSize(), ref column);
+        }
+
+        private static string StripAnsiSequences(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return string.Empty;
+
+            var builder = new StringBuilder(text.Length);
+            for (int index = 0; index < text.Length; index++)
+            {
+                char current = text[index];
+                if (current != '\u001b')
+                {
+                    builder.Append(current);
+                    continue;
+                }
+
+                if (index + 1 < text.Length && text[index + 1] == '[')
+                {
+                    index += 2;
+                    while (index < text.Length)
+                    {
+                        char token = text[index];
+                        if (token >= '@' && token <= '~')
+                            break;
+                        index++;
+                    }
+                    continue;
+                }
+
+                if (index + 1 < text.Length)
+                    index++;
+            }
+
+            return builder.ToString();
+        }
+
+        private void ApplySearchHighlight(TextRange range)
+        {
+            if (range.IsEmpty)
+                return;
+
+            object previousBackground = range.GetPropertyValue(TextElement.BackgroundProperty);
+            range.ApplyPropertyValue(TextElement.BackgroundProperty, CreateBrush(Color.FromRgb(0x26, 0x4f, 0x78)));
+            _searchHighlights.Add(new HoverHighlightRange(range, previousBackground));
+        }
+
+        private void ClearSearchHighlights()
+        {
+            if (_searchHighlights.Count == 0)
+                return;
+
+            foreach (HoverHighlightRange highlight in _searchHighlights)
+            {
+                if (highlight.Range.IsEmpty)
+                    continue;
+
+                object previousBackground = highlight.PreviousBackground == DependencyProperty.UnsetValue
+                    ? null!
+                    : highlight.PreviousBackground;
+                highlight.Range.ApplyPropertyValue(TextElement.BackgroundProperty, previousBackground);
+            }
+
+            _searchHighlights.Clear();
         }
 
         private sealed class MonitorSettingsState

@@ -41,5 +41,16 @@ namespace UartMonitor.Rendering
 
             return documentStart.DocumentEnd;
         }
+
+        public static int GetTextOffset(TextPointer documentStart, TextPointer position)
+        {
+            if (position == null || documentStart == null)
+                return 0;
+
+            if (position.CompareTo(documentStart) <= 0)
+                return 0;
+
+            return new TextRange(documentStart, position).Text.Length;
+        }
     }
 }
