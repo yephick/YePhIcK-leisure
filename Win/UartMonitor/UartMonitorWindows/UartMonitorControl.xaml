@@ -74,72 +74,24 @@
                 <WrapPanel DockPanel.Dock="Left" VerticalAlignment="Top">
                     <Button x:Name="ConnectButton" Style="{StaticResource ActionButtonStyle}" Content="&#x26A1;" Margin="0,0,4,0" Click="ConnectButton_Click" FontWeight="SemiBold" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Connect"/>
                     <Button x:Name="DisconnectButton" Style="{StaticResource ActionButtonStyle}" Content="&#x238B;" Margin="0,0,4,0" Click="DisconnectButton_Click" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Disconnect"/>
-                    <Button x:Name="RefreshButton" Style="{StaticResource ActionButtonStyle}" Content="&#x21BB;" Margin="0,0,8,0" Click="RefreshButton_Click" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Refresh ports"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
                         <TextBlock Text="Port:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
                         <ComboBox x:Name="PortComboBox" Width="72" FontSize="11"/>
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="Baud:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                        <ComboBox x:Name="BaudComboBox" Width="64" IsEditable="True" FontSize="11"/>
-                    </StackPanel>
-
-                    <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="Data bits:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                        <ComboBox x:Name="DataBitsComboBox" Width="38" FontSize="11"/>
-                    </StackPanel>
-
-                    <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="Stop bits:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                        <ComboBox x:Name="StopBitsComboBox" Width="35" FontSize="11"/>
-                    </StackPanel>
-
-                    <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="Parity:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                        <ComboBox x:Name="ParityComboBox" Width="72" FontSize="11"/>
-                    </StackPanel>
-
-                    <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="Flow control:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                        <ComboBox x:Name="FlowControlComboBox" Width="92" FontSize="11"/>
-                    </StackPanel>
-
-                    <Button x:Name="TestButton" Style="{StaticResource ActionButtonStyle}" Content="&#x1F524;" Margin="0,0,4,0" Click="TestButton_Click" FontSize="13" FontFamily="Segoe UI Emoji" ToolTip="Run test sample"/>
-                    <Button x:Name="ClearButton" Style="{StaticResource ActionButtonStyle}" Content="&#x274C;" Margin="0,0,8,0" Click="ClearButton_Click" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Clear log"/>
-                </WrapPanel>
-
-                <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Top">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
                         <TextBlock Text="Encoding:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
                         <ComboBox x:Name="EncodingComboBox" Width="150" FontSize="11"/>
                     </StackPanel>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="Font:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                        <ComboBox x:Name="FontFamilyComboBox" Width="112" FontSize="11" SelectionChanged="FontFamilyComboBox_SelectionChanged"/>
-                    </StackPanel>
+                    <Button x:Name="TestButton" Style="{StaticResource ActionButtonStyle}" Content="&#x1F524;" Margin="0,0,4,0" Click="TestButton_Click" FontSize="13" FontFamily="Segoe UI Emoji" ToolTip="Run test sample"/>
+                    <Button x:Name="ClearButton" Style="{StaticResource ActionButtonStyle}" Margin="0,0,8,0" Click="ClearButton_Click" ToolTip="Clear log">
+                        <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.ClearWindowContent}" Width="16" Height="16"/>
+                    </Button>
+                </WrapPanel>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="Size:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                        <ComboBox x:Name="FontSizeComboBox" Width="36" IsEditable="True" FontSize="11" SelectionChanged="FontSizeComboBox_SelectionChanged" LostFocus="FontSizeComboBox_LostFocus"/>
-                    </StackPanel>
-
-                    <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="Tab:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                        <ComboBox x:Name="TabSizeComboBox" Width="36" FontSize="11" SelectionChanged="TabSizeComboBox_SelectionChanged"/>
-                    </StackPanel>
-
-                    <CheckBox x:Name="AutoScrollCheckBox" Content="Auto-scroll" Foreground="#d6d6d6" IsChecked="True" Margin="0,0,6,0" VerticalAlignment="Center" FontSize="11"/>
-                    <CheckBox x:Name="HexBytesCheckBox" Content="HEX bytes" Foreground="#d6d6d6" IsChecked="True" Margin="0,0,6,0" VerticalAlignment="Center" FontSize="11" Checked="HexBytesCheckBox_CheckedChanged" Unchecked="HexBytesCheckBox_CheckedChanged"/>
-                    <CheckBox x:Name="PanelSyncCheckBox"
-                              Content="Panel sync"
-                              Foreground="#d6d6d6"
-                              IsChecked="False"
-                              Margin="0,0,6,0"
-                              VerticalAlignment="Center"
-                              FontSize="11"
-                              ToolTip="Enables synchronized vertical and horizontal scrolling between the text and hex panes. This can significantly reduce UI responsiveness and increase scroll handling overhead, so it is disabled by default."/>
+                <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Top">
+                    <Button x:Name="SettingsButton" Style="{StaticResource ActionButtonStyle}" Content="&#x2699;" Margin="0,0,0,0" Click="SettingsButton_Click" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Settings"/>
                 </WrapPanel>
             </DockPanel>
         </StackPanel>

@@ -22,6 +22,8 @@ namespace UartMonitor.Settings
         public bool AutoScroll { get; set; } = true;
         public bool HexBytes { get; set; } = true;
         public double HexSplitRatio { get; set; } = 0.6;
+        public bool HexMouseOverToolTips { get; set; } = true;
+        public bool Timestamps { get; set; } = false;
         public bool PanelSync { get; set; } = false;
 
         public static string FilePath =>
@@ -60,6 +62,8 @@ namespace UartMonitor.Settings
                 settings.AutoScroll = GetBool(values, nameof(AutoScroll), settings.AutoScroll);
                 settings.HexBytes = GetBool(values, nameof(HexBytes), settings.HexBytes);
                 settings.HexSplitRatio = GetRatio(values, nameof(HexSplitRatio), settings.HexSplitRatio);
+                settings.HexMouseOverToolTips = GetBool(values, nameof(HexMouseOverToolTips), settings.HexMouseOverToolTips);
+                settings.Timestamps = GetBool(values, nameof(Timestamps), settings.Timestamps);
                 settings.PanelSync = GetBool(values, nameof(PanelSync), settings.PanelSync);
                 return settings;
             }
@@ -87,6 +91,8 @@ namespace UartMonitor.Settings
                 $"AutoScroll={AutoScroll}",
                 $"HexBytes={HexBytes}",
                 $"HexSplitRatio={GetAllowedRatio(HexSplitRatio).ToString(CultureInfo.InvariantCulture)}",
+                $"HexMouseOverToolTips={HexMouseOverToolTips}",
+                $"Timestamps={Timestamps}",
                 $"PanelSync={PanelSync}",
             });
         }

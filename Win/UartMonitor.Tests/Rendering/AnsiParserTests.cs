@@ -493,6 +493,8 @@ namespace UartMonitor.Tests.Rendering
                     AutoScroll = false,
                     HexBytes = false,
                     HexSplitRatio = 0.42,
+                    HexMouseOverToolTips = false,
+                    Timestamps = true,
                     PanelSync = true
                 };
 
@@ -509,6 +511,8 @@ namespace UartMonitor.Tests.Rendering
                 Assert.IsFalse(loaded.AutoScroll);
                 Assert.IsFalse(loaded.HexBytes);
                 Assert.AreEqual(0.42, loaded.HexSplitRatio);
+                Assert.IsFalse(loaded.HexMouseOverToolTips);
+                Assert.IsTrue(loaded.Timestamps);
                 Assert.IsTrue(loaded.PanelSync);
             }
             finally

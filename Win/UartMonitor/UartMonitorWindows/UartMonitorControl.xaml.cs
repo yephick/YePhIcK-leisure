@@ -24,7 +24,26 @@ namespace UartMonitor
         private readonly HexStreamFormatter _hexFormatter = new HexStreamFormatter();
         private readonly RawLineSplitter _rawLineSplitter = new RawLineSplitter();
         private readonly CaptureLineIndex _lineIndex = new CaptureLineIndex();
-        private readonly UartMonitorUserSettings _settings = UartMonitorUserSettings.Load();
+        private readonly MonitorSettingsState _state;
+        private readonly int[] _baudRates = { 4608000, 4000000, 3000000, 2000000, 1000000, 921600, 750000, 500000, 460800, 400000, 300000, 225000, 200000, 153600, 115200, 57600, 38400, 19200, 9600 };
+        private readonly int[] _dataBitsOptions = { 5, 6, 7, 8 };
+        private readonly int[] _fontSizeOptions = { 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24 };
+        private readonly int[] _tabSizeOptions = { 2, 3, 4, 6, 8 };
+        private readonly EncodingChoice[] _encodingOptions = GetEncodings();
+        private readonly FontFamilyChoice[] _fontFamilyOptions = GetFontFamilies();
+        private readonly StopBitsChoice[] _stopBitsOptions =
+        {
+            new StopBitsChoice("1", StopBits.One),
+            new StopBitsChoice("1.5", StopBits.OnePointFive),
+            new StopBitsChoice("2", StopBits.Two)
+        };
+        private readonly FlowControlChoice[] _flowControlOptions =
+        {
+            new FlowControlChoice("None", Handshake.None),
+            new FlowControlChoice("XON/XOFF", Handshake.XOnXOff),
+            new FlowControlChoice("RTS/CTS", Handshake.RequestToSend),
+            new FlowControlChoice("RTS/CTS + XON/XOFF", Handshake.RequestToSendXOnXOff)
+        };
         private readonly List<TextPointer> _textLineStarts = new List<TextPointer>();
         private readonly List<TextPointer> _hexLineStarts = new List<TextPointer>();
         private readonly List<TextRange> _mirrorHighlights = new List<TextRange>();
@@ -48,6 +67,7 @@ namespace UartMonitor
 
         public MyToolWindowControl()
         {
+            _state = MonitorSettingsState.Load(_encodingOptions, _fontFamilyOptions, _stopBitsOptions, _flowControlOptions);
             InitializeComponent();
             InitializeLogDocument();
             _selectionDebounceTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -58,59 +78,17 @@ namespace UartMonitor
             HexLogBox.MouseMove += HexLogBox_MouseMove;
             HexLogBox.MouseLeave += HexLogBox_MouseLeave;
 
-            BaudComboBox.ItemsSource = new[] { 4608000, 4000000, 3000000, 2000000, 1000000, 921600, 750000, 500000, 460800, 400000, 300000, 225000, 200000, 153600, 115200, 57600, 38400, 19200, 9600 };
-            BaudComboBox.Text = _settings.BaudRate;
-
-            EncodingComboBox.ItemsSource = GetEncodings();
-            EncodingComboBox.SelectedItem = EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => string.Equals(choice.DisplayName, _settings.EncodingDisplayName, StringComparison.OrdinalIgnoreCase))
-                ?? EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => choice.Encoding.CodePage == 28591)
-                ?? EncodingComboBox.Items.OfType<EncodingChoice>().FirstOrDefault(choice => choice.DisplayName.StartsWith("ISO-8859-1: 1998", StringComparison.OrdinalIgnoreCase));
+            EncodingComboBox.ItemsSource = _encodingOptions;
+            EncodingComboBox.SelectedItem = _state.EncodingChoice;
             EncodingComboBox.SelectionChanged += EncodingComboBox_SelectionChanged;
-
-            FontFamilyComboBox.ItemsSource = GetFontFamilies();
-            FontFamilyComboBox.SelectedItem = FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault(choice => choice.FontFamily.Source.Equals(_settings.FontFamily, StringComparison.OrdinalIgnoreCase))
-                ?? FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault(choice => choice.FontFamily.Source.Equals("Consolas", StringComparison.OrdinalIgnoreCase))
-                ?? FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault(choice => choice.IsMonospace)
-                ?? FontFamilyComboBox.Items.OfType<FontFamilyChoice>().FirstOrDefault();
-
-            FontSizeComboBox.ItemsSource = new[] { 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24 };
-            FontSizeComboBox.Text = _settings.FontSize;
-
-            TabSizeComboBox.ItemsSource = new[] { 2, 3, 4, 6, 8 };
-            TabSizeComboBox.SelectedItem = GetAllowedTabSize(_settings.TabSize);
-
-            DataBitsComboBox.ItemsSource = new[] { 5, 6, 7, 8 };
-            DataBitsComboBox.SelectedItem = _settings.DataBits;
-
-            StopBitsComboBox.ItemsSource = new[]
-            {
-                new StopBitsChoice("1", StopBits.One),
-                new StopBitsChoice("1.5", StopBits.OnePointFive),
-                new StopBitsChoice("2", StopBits.Two)
-            };
-            StopBitsComboBox.SelectedItem = StopBitsComboBox.Items.OfType<StopBitsChoice>().FirstOrDefault(choice => choice.DisplayName == _settings.StopBits)
-                ?? StopBitsComboBox.Items.OfType<StopBitsChoice>().First();
-
-            ParityComboBox.ItemsSource = Enum.GetValues(typeof(Parity)).Cast<Parity>().ToArray();
-            ParityComboBox.SelectedItem = Enum.TryParse(_settings.Parity, out Parity savedParity) ? savedParity : Parity.None;
-
-            FlowControlComboBox.ItemsSource = new[]
-            {
-                new FlowControlChoice("None", Handshake.None),
-                new FlowControlChoice("XON/XOFF", Handshake.XOnXOff),
-                new FlowControlChoice("RTS/CTS", Handshake.RequestToSend),
-                new FlowControlChoice("RTS/CTS + XON/XOFF", Handshake.RequestToSendXOnXOff)
-            };
-            FlowControlComboBox.SelectedItem = FlowControlComboBox.Items.OfType<FlowControlChoice>().FirstOrDefault(choice => choice.DisplayName == _settings.FlowControl)
-                ?? FlowControlComboBox.Items.OfType<FlowControlChoice>().First(choice => choice.Handshake == Handshake.XOnXOff);
-
-            AutoScrollCheckBox.IsChecked = _settings.AutoScroll;
-            HexBytesCheckBox.IsChecked = _settings.HexBytes;
-            PanelSyncCheckBox.IsChecked = _settings.PanelSync;
 
             _reader.ChunkReceived += Reader_ChunkReceived;
             _reader.StatusChanged += Reader_StatusChanged;
             _reader.Error += Reader_Error;
+
+#if !DEBUG
+            TestButton.Visibility = Visibility.Collapsed;
+#endif
 
             ApplyFontSettings();
             ApplyHexPaneVisibility();
@@ -120,34 +98,248 @@ namespace UartMonitor
             ApplySavedPort();
         }
 
-        private void RefreshButton_Click(object sender, RoutedEventArgs e)
+        private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
-            RefreshPorts();
-        }
+            ComboBox portComboBox = CreateDialogComboBox(PortComboBox.ItemsSource, _state.PortName, width: 110, toolTip: "COM port used for the UART connection.");
+            ComboBox baudComboBox = CreateDialogComboBox(_baudRates, _state.BaudRate, width: 110, isEditable: true, toolTip: "Serial baud rate. This must match the device.");
+            ComboBox dataBitsComboBox = CreateDialogComboBox(_dataBitsOptions, _state.DataBits, width: 110, toolTip: "Number of data bits per serial frame.");
+            ComboBox stopBitsComboBox = CreateDialogComboBox(_stopBitsOptions, _state.StopBitsChoice, width: 110, toolTip: "Number of stop bits per serial frame.");
+            ComboBox parityComboBox = CreateDialogComboBox(Enum.GetValues(typeof(Parity)).Cast<Parity>().ToArray(), _state.Parity, width: 110, toolTip: "Parity mode expected by the device.");
+            ComboBox flowControlComboBox = CreateDialogComboBox(_flowControlOptions, _state.FlowControlChoice, width: 160, toolTip: "Hardware/software flow-control mode for the serial port.");
+            ComboBox fontFamilyComboBox = CreateDialogComboBox(_fontFamilyOptions, _state.FontFamilyChoice, width: 170, toolTip: "Font used by the text and HEX panes.");
+            ComboBox fontSizeComboBox = CreateDialogComboBox(_fontSizeOptions, _state.FontSize, width: 80, isEditable: true, toolTip: "Font size used by the text and HEX panes.");
+            ComboBox tabSizeComboBox = CreateDialogComboBox(_tabSizeOptions, _state.TabSize, width: 80, toolTip: "Number of columns used when rendering tab characters.");
+            CheckBox timestampsCheckBox = CreateDialogCheckBox("Timestamps", _state.Timestamps, "Show timestamps for captured UART lines.");
+            CheckBox autoScrollCheckBox = CreateDialogCheckBox("Auto-scroll", _state.AutoScroll, "Keep the latest received text visible as new data arrives.");
+            CheckBox hexBytesCheckBox = CreateDialogCheckBox("HEX bytes", _state.HexBytes, "Show or hide the HEX bytes pane.");
+            CheckBox panelSyncCheckBox = CreateDialogCheckBox("Panel sync", _state.PanelSync, "Synchronize scrolling between the text and HEX panes. This can reduce responsiveness on large captures.");
+            CheckBox hexToolTipsCheckBox = CreateDialogCheckBox("HEX mouse-over tooltips", _state.HexMouseOverToolTips, "Show byte/ANSI explanations when hovering over the HEX pane.");
 
-        private void FontFamilyComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-        {
+            Button refreshButton = new Button
+            {
+                Content = "Refresh ports",
+                MinWidth = 96,
+                Margin = new Thickness(6, 0, 0, 0)
+            };
+            refreshButton.Click += (buttonSender, buttonArgs) =>
+            {
+                RefreshPorts();
+                portComboBox.ItemsSource = PortComboBox.ItemsSource;
+                portComboBox.SelectedItem = PortComboBox.SelectedItem;
+            };
+
+            StackPanel portPanel = new StackPanel { Orientation = Orientation.Horizontal };
+            portPanel.Children.Add(portComboBox);
+            portPanel.Children.Add(refreshButton);
+
+            TabControl tabs = new TabControl
+            {
+                MinWidth = 340,
+                Margin = new Thickness(0, 0, 0, 10),
+                Background = CreateBrush(Color.FromRgb(0x1c, 0x1c, 0x1c)),
+                Foreground = CreateBrush(Color.FromRgb(0xf0, 0xf0, 0xf0))
+            };
+            tabs.Items.Add(CreateSettingsTab("UART", new[]
+            {
+                    CreateDialogRow("Port:", portPanel, "COM port used for the UART connection."),
+                    CreateDialogRow("Baud:", baudComboBox, "Serial baud rate. This must match the device."),
+                    CreateDialogRow("Data bits:", dataBitsComboBox, "Number of data bits per serial frame."),
+                    CreateDialogRow("Stop bits:", stopBitsComboBox, "Number of stop bits per serial frame."),
+                    CreateDialogRow("Parity:", parityComboBox, "Parity mode expected by the device."),
+                    CreateDialogRow("Flow control:", flowControlComboBox, "Hardware/software flow-control mode for the serial port.")
+                }));
+            tabs.Items.Add(CreateSettingsTab("Text", new FrameworkElement[]
+            {
+                CreateDialogRow("Font:", fontFamilyComboBox, "Font used by the text and HEX panes."),
+                CreateDialogRow("Size:", fontSizeComboBox, "Font size used by the text and HEX panes."),
+                CreateDialogRow("Tab width:", tabSizeComboBox, "Number of columns used when rendering tab characters."),
+                timestampsCheckBox
+            }));
+            tabs.Items.Add(CreateSettingsTab("Behavior", new FrameworkElement[]
+            {
+                autoScrollCheckBox,
+                hexBytesCheckBox,
+                panelSyncCheckBox,
+                hexToolTipsCheckBox
+            }));
+
+            Window dialog = CreateSettingsDialog("Settings", tabs);
+            if (dialog.ShowDialog() != true)
+                return;
+
+            _state.PortName = portComboBox.SelectedItem as string;
+            if (!string.IsNullOrWhiteSpace(_state.PortName))
+                PortComboBox.SelectedItem = _state.PortName;
+            _state.BaudRate = baudComboBox.Text?.Trim() ?? _state.BaudRate;
+            _state.DataBits = dataBitsComboBox.SelectedItem is int dataBits ? dataBits : _state.DataBits;
+            _state.StopBitsChoice = stopBitsComboBox.SelectedItem as StopBitsChoice ?? _state.StopBitsChoice;
+            _state.Parity = parityComboBox.SelectedItem is Parity parity ? parity : _state.Parity;
+            _state.FlowControlChoice = flowControlComboBox.SelectedItem as FlowControlChoice ?? _state.FlowControlChoice;
+            _state.FontFamilyChoice = fontFamilyComboBox.SelectedItem as FontFamilyChoice ?? _state.FontFamilyChoice;
+            _state.FontSize = fontSizeComboBox.Text?.Trim() ?? _state.FontSize;
+            _state.TabSize = tabSizeComboBox.SelectedItem is int tabSize ? GetAllowedTabSize(tabSize) : _state.TabSize;
+            _state.AutoScroll = autoScrollCheckBox.IsChecked == true;
+            _state.HexBytes = hexBytesCheckBox.IsChecked == true;
+            _state.PanelSync = panelSyncCheckBox.IsChecked == true;
+            _state.HexMouseOverToolTips = hexToolTipsCheckBox.IsChecked == true;
+            _state.Timestamps = timestampsCheckBox.IsChecked == true;
+            _state.Save();
+
+            ApplyStateToQuickControls();
             ApplyFontSettings();
-        }
-
-        private void FontSizeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-        {
-            ApplyFontSettings();
-        }
-
-        private void FontSizeComboBox_LostFocus(object sender, RoutedEventArgs e)
-        {
-            ApplyFontSettings();
-        }
-
-        private void TabSizeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-        {
+            ApplyHexPaneVisibility();
             RefreshRenderedDocuments();
         }
-
-        private void HexBytesCheckBox_CheckedChanged(object sender, RoutedEventArgs e)
+        private ComboBox CreateDialogComboBox(System.Collections.IEnumerable? itemsSource, object? selectedItem, double width, bool isEditable = false, string? toolTip = null)
         {
-            ApplyHexPaneVisibility();
+            ComboBox comboBox = new ComboBox
+            {
+                ItemsSource = itemsSource,
+                SelectedItem = selectedItem,
+                Width = width,
+                MinHeight = 22,
+                IsEditable = isEditable,
+                FontSize = 11,
+                ToolTip = toolTip
+            };
+
+            if (isEditable && selectedItem is string text)
+                comboBox.Text = text;
+
+            return comboBox;
+        }
+
+        private CheckBox CreateDialogCheckBox(string text, bool isChecked, string toolTip)
+        {
+            return new CheckBox
+            {
+                Content = text,
+                IsChecked = isChecked,
+                Foreground = CreateBrush(Color.FromRgb(0xd6, 0xd6, 0xd6)),
+                Margin = new Thickness(0, 0, 0, 8),
+                FontSize = 11,
+                ToolTip = toolTip
+            };
+        }
+
+        private TabItem CreateSettingsTab(string header, IEnumerable<FrameworkElement> rows)
+        {
+            StackPanel content = new StackPanel { Margin = new Thickness(10) };
+            foreach (FrameworkElement row in rows)
+                content.Children.Add(row);
+
+            return new TabItem
+            {
+                Header = header,
+                Content = content
+            };
+        }
+
+        private FrameworkElement CreateDialogRow(string label, UIElement editor, string toolTip)
+        {
+            Grid row = new Grid { Margin = new Thickness(0, 0, 0, 8), ToolTip = toolTip };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(84) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            TextBlock textBlock = new TextBlock
+            {
+                Text = label,
+                Foreground = CreateBrush(Color.FromRgb(0xd6, 0xd6, 0xd6)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            Grid.SetColumn(textBlock, 0);
+            row.Children.Add(textBlock);
+
+            Grid.SetColumn(editor, 1);
+            row.Children.Add(editor);
+            return row;
+        }
+
+        private Window CreateSettingsDialog(string title, UIElement body)
+        {
+            StackPanel content = new StackPanel { Margin = new Thickness(12) };
+            content.Children.Add(body);
+
+            StackPanel buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 6, 0, 0)
+            };
+            Button okButton = CreateDialogButton("OK");
+            okButton.Margin = new Thickness(0, 0, 6, 0);
+            okButton.IsDefault = true;
+            Button cancelButton = CreateDialogButton("Cancel");
+            cancelButton.IsCancel = true;
+            buttons.Children.Add(okButton);
+            buttons.Children.Add(cancelButton);
+            content.Children.Add(buttons);
+
+            TextBlock titleText = new TextBlock
+            {
+                Text = title,
+                Foreground = CreateBrush(Color.FromRgb(0xf0, 0xf0, 0xf0)),
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 0, 0)
+            };
+            Button closeButton = CreateDialogButton("X");
+            closeButton.Width = 28;
+            closeButton.MinWidth = 28;
+            closeButton.Height = 24;
+            closeButton.HorizontalAlignment = HorizontalAlignment.Right;
+
+            DockPanel titleBar = new DockPanel
+            {
+                Height = 32,
+                Background = CreateBrush(Color.FromRgb(0x2a, 0x2a, 0x2a)),
+                LastChildFill = true
+            };
+            DockPanel.SetDock(closeButton, Dock.Right);
+            titleBar.Children.Add(closeButton);
+            titleBar.Children.Add(titleText);
+
+            Border border = new Border
+            {
+                Background = CreateBrush(Color.FromRgb(0x1c, 0x1c, 0x1c)),
+                BorderBrush = CreateBrush(Color.FromRgb(0x4a, 0x4a, 0x4a)),
+                BorderThickness = new Thickness(1)
+            };
+            DockPanel root = new DockPanel();
+            DockPanel.SetDock(titleBar, Dock.Top);
+            root.Children.Add(titleBar);
+            root.Children.Add(content);
+            border.Child = root;
+
+            Window dialog = new Window
+            {
+                Title = title,
+                Content = border,
+                Owner = Window.GetWindow(this),
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStyle = WindowStyle.None,
+                Background = CreateBrush(Color.FromRgb(0x1c, 0x1c, 0x1c))
+            };
+            okButton.Click += (buttonSender, buttonArgs) => dialog.DialogResult = true;
+            closeButton.Click += (buttonSender, buttonArgs) => dialog.DialogResult = false;
+            titleBar.MouseLeftButtonDown += (titleSender, titleArgs) => dialog.DragMove();
+            return dialog;
+        }
+
+        private Button CreateDialogButton(string text)
+        {
+            return new Button
+            {
+                Content = text,
+                MinWidth = 72,
+                Padding = new Thickness(8, 2, 8, 2),
+                Foreground = CreateBrush(Color.FromRgb(0xf0, 0xf0, 0xf0)),
+                Background = CreateBrush(Color.FromRgb(0x2a, 0x2a, 0x2a)),
+                BorderBrush = CreateBrush(Color.FromRgb(0x5a, 0x5a, 0x5a))
+            };
         }
 
         private void HexGridSplitter_DragCompleted(object sender, DragCompletedEventArgs e)
@@ -157,6 +349,9 @@ namespace UartMonitor
 
         private void EncodingComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
+            if (EncodingComboBox.SelectedItem is EncodingChoice choice)
+                _state.EncodingChoice = choice;
+
             UpdateSelectedEncodingSnapshot();
         }
 
@@ -167,7 +362,7 @@ namespace UartMonitor
 
             ClearMirrorHighlights();
             ClearSelection(HexLogBox);
-            if (LogBox.Selection.IsEmpty || HexBytesCheckBox.IsChecked != true)
+            if (LogBox.Selection.IsEmpty || !_state.HexBytes)
                 return;
 
             QueueSelectionSync(LogBox, HexLogBox);
@@ -234,6 +429,7 @@ namespace UartMonitor
             try
             {
                 _reader.Connect(options);
+                _state.PortName = portName;
             }
             catch (Exception ex)
             {
@@ -326,9 +522,12 @@ namespace UartMonitor
 
             if (!string.IsNullOrEmpty(selected) && ports.Contains(selected))
                 PortComboBox.SelectedItem = selected;
+            else if (!string.IsNullOrWhiteSpace(_state.PortName) && ports.Contains(_state.PortName))
+                PortComboBox.SelectedItem = _state.PortName;
             else if (ports.Length > 0)
                 PortComboBox.SelectedIndex = 0;
 
+            _state.PortName = PortComboBox.SelectedItem as string ?? _state.PortName;
             UpdateConnectionButtons();
         }
 
@@ -459,7 +658,7 @@ namespace UartMonitor
                     _hexColumns = _lineIndex.GetLines().Sum(line => line.HexLength);
                 }
 
-                if (AutoScrollCheckBox.IsChecked == true)
+                if (_state.AutoScroll)
                 {
                     LogBox.ScrollToEnd();
                     HexLogBox.ScrollToEnd();
@@ -682,16 +881,13 @@ namespace UartMonitor
 
         private void ApplyFontSettings()
         {
-            if (FontFamilyComboBox.SelectedItem is FontFamilyChoice familyChoice)
-            {
-                FontFamily fontFamily = familyChoice.FontFamily;
-                LogBox.FontFamily = fontFamily;
-                HexLogBox.FontFamily = fontFamily;
-                if (LogBox.Document != null)
-                    LogBox.Document.FontFamily = fontFamily;
-                if (HexLogBox.Document != null)
-                    HexLogBox.Document.FontFamily = fontFamily;
-            }
+            FontFamily fontFamily = _state.FontFamilyChoice.FontFamily;
+            LogBox.FontFamily = fontFamily;
+            HexLogBox.FontFamily = fontFamily;
+            if (LogBox.Document != null)
+                LogBox.Document.FontFamily = fontFamily;
+            if (HexLogBox.Document != null)
+                HexLogBox.Document.FontFamily = fontFamily;
 
             if (TryGetFontSize(out double fontSize))
             {
@@ -710,10 +906,10 @@ namespace UartMonitor
 
         private void ApplyHexPaneVisibility()
         {
-            if (TextColumn == null || HexPane == null || HexGridSplitter == null || SplitterColumn == null || HexColumn == null || PanelSyncCheckBox == null)
+            if (TextColumn == null || HexPane == null || HexGridSplitter == null || SplitterColumn == null || HexColumn == null)
                 return;
 
-            bool showHex = HexBytesCheckBox.IsChecked == true;
+            bool showHex = _state.HexBytes;
             HexPane.Visibility = showHex ? Visibility.Visible : Visibility.Collapsed;
             HexGridSplitter.Visibility = showHex ? Visibility.Visible : Visibility.Collapsed;
             SplitterColumn.Width = showHex ? new GridLength(4) : new GridLength(0);
@@ -721,8 +917,6 @@ namespace UartMonitor
                 ApplySavedHexSplitRatio();
             else
                 HexColumn.Width = new GridLength(0);
-            PanelSyncCheckBox.IsEnabled = showHex;
-
             if (!showHex)
             {
                 ClearHexHover();
@@ -733,24 +927,24 @@ namespace UartMonitor
 
         private void ApplySavedHexSplitRatio()
         {
-            if (TextColumn == null || HexColumn == null || HexBytesCheckBox.IsChecked != true)
+            if (TextColumn == null || HexColumn == null || !_state.HexBytes)
                 return;
 
-            double ratio = Math.Max(0.15, Math.Min(0.85, _settings.HexSplitRatio));
+            double ratio = Math.Max(0.15, Math.Min(0.85, _state.HexSplitRatio));
             TextColumn.Width = new GridLength(ratio, GridUnitType.Star);
             HexColumn.Width = new GridLength(1 - ratio, GridUnitType.Star);
         }
 
         private void SaveHexSplitRatio()
         {
-            if (TextColumn == null || HexColumn == null || HexBytesCheckBox.IsChecked != true)
+            if (TextColumn == null || HexColumn == null || !_state.HexBytes)
                 return;
 
             double totalWidth = TextColumn.ActualWidth + HexColumn.ActualWidth;
             if (totalWidth <= 0)
                 return;
 
-            _settings.HexSplitRatio = TextColumn.ActualWidth / totalWidth;
+            _state.HexSplitRatio = TextColumn.ActualWidth / totalWidth;
         }
 
         public void Dispose()
@@ -761,8 +955,15 @@ namespace UartMonitor
 
         private void ApplySavedPort()
         {
-            if (!string.IsNullOrWhiteSpace(_settings.PortName) && PortComboBox.Items.Contains(_settings.PortName))
-                PortComboBox.SelectedItem = _settings.PortName;
+            ApplyStateToQuickControls();
+        }
+
+        private void ApplyStateToQuickControls()
+        {
+            if (!string.IsNullOrWhiteSpace(_state.PortName) && PortComboBox.Items.Contains(_state.PortName))
+                PortComboBox.SelectedItem = _state.PortName;
+
+            EncodingComboBox.SelectedItem = _state.EncodingChoice;
         }
 
         private void SyncSelection(RichTextBox source, RichTextBox target)
@@ -898,6 +1099,12 @@ namespace UartMonitor
 
         private void UpdateHexHover(Point point)
         {
+            if (!_state.HexMouseOverToolTips)
+            {
+                ClearHexHover();
+                return;
+            }
+
             TextPointer? pointer = HexLogBox.GetPositionFromPoint(point, snapToText: true);
             if (pointer == null || _lineIndex.Count == 0)
             {
@@ -1114,18 +1321,15 @@ namespace UartMonitor
 
         private int ParseBaudRate()
         {
-            if (BaudComboBox.Text != null && int.TryParse(BaudComboBox.Text.Trim(), out int baudRate) && baudRate > 0)
+            if (int.TryParse(_state.BaudRate, out int baudRate) && baudRate > 0)
                 return baudRate;
 
-            return BaudComboBox.SelectedItem is int selectedBaud ? selectedBaud : 115200;
+            return 115200;
         }
 
         private Encoding GetSelectedEncoding()
         {
-            if (EncodingComboBox.SelectedItem is EncodingChoice choice)
-                return choice.Encoding;
-
-            return Encoding.UTF8;
+            return _state.EncodingChoice.Encoding;
         }
 
         private void UpdateSelectedEncodingSnapshot()
@@ -1135,12 +1339,12 @@ namespace UartMonitor
 
         private int GetSelectedDataBits()
         {
-            return DataBitsComboBox.SelectedItem is int dataBits ? dataBits : 8;
+            return _state.DataBits;
         }
 
         private int GetSelectedTabSize()
         {
-            return TabSizeComboBox.SelectedItem is int tabSize ? GetAllowedTabSize(tabSize) : 8;
+            return GetAllowedTabSize(_state.TabSize);
         }
 
         private static int GetAllowedTabSize(int value)
@@ -1150,17 +1354,17 @@ namespace UartMonitor
 
         private StopBits GetSelectedStopBits()
         {
-            return StopBitsComboBox.SelectedItem is StopBitsChoice choice ? choice.StopBits : StopBits.One;
+            return _state.StopBitsChoice.StopBits;
         }
 
         private Parity GetSelectedParity()
         {
-            return ParityComboBox.SelectedItem is Parity parity ? parity : Parity.None;
+            return _state.Parity;
         }
 
         private Handshake GetSelectedHandshake()
         {
-            return FlowControlComboBox.SelectedItem is FlowControlChoice choice ? choice.Handshake : Handshake.XOnXOff;
+            return _state.FlowControlChoice.Handshake;
         }
 
         private static EncodingChoice[] GetEncodings()
@@ -1192,14 +1396,8 @@ namespace UartMonitor
 
         private bool TryGetFontSize(out double fontSize)
         {
-            if (FontSizeComboBox.Text != null && double.TryParse(FontSizeComboBox.Text.Trim(), out fontSize) && fontSize > 0)
+            if (double.TryParse(_state.FontSize, out fontSize) && fontSize > 0)
                 return true;
-
-            if (FontSizeComboBox.SelectedItem is int selectedSize)
-            {
-                fontSize = selectedSize;
-                return true;
-            }
 
             fontSize = 16;
             return false;
@@ -1207,22 +1405,93 @@ namespace UartMonitor
 
         private void SaveSettings()
         {
-            _settings.PortName = PortComboBox.SelectedItem as string;
-            _settings.BaudRate = BaudComboBox.Text?.Trim() ?? _settings.BaudRate;
-            _settings.EncodingDisplayName = (EncodingComboBox.SelectedItem as EncodingChoice)?.DisplayName ?? _settings.EncodingDisplayName;
-            _settings.FontFamily = (FontFamilyComboBox.SelectedItem as FontFamilyChoice)?.FontFamily.Source ?? _settings.FontFamily;
-            _settings.FontSize = FontSizeComboBox.Text?.Trim() ?? _settings.FontSize;
-            _settings.TabSize = GetSelectedTabSize();
-            _settings.DataBits = GetSelectedDataBits();
-            _settings.StopBits = (StopBitsComboBox.SelectedItem as StopBitsChoice)?.DisplayName ?? _settings.StopBits;
-            _settings.Parity = GetSelectedParity().ToString();
-            _settings.FlowControl = (FlowControlComboBox.SelectedItem as FlowControlChoice)?.DisplayName ?? _settings.FlowControl;
-            _settings.AutoScroll = AutoScrollCheckBox.IsChecked == true;
-            _settings.HexBytes = HexBytesCheckBox.IsChecked == true;
+            _state.PortName = PortComboBox.SelectedItem as string ?? _state.PortName;
+            _state.AutoScroll = _state.AutoScroll;
+            _state.HexBytes = _state.HexBytes;
             SaveHexSplitRatio();
-            _settings.PanelSync = PanelSyncCheckBox.IsChecked == true;
+            _state.Save();
+        }
 
-            _settings.Save();
+        private sealed class MonitorSettingsState
+        {
+            private readonly UartMonitorUserSettings _settings;
+
+            private MonitorSettingsState(UartMonitorUserSettings settings)
+            {
+                _settings = settings;
+            }
+
+            public string? PortName { get; set; }
+            public string BaudRate { get; set; } = "115200";
+            public EncodingChoice EncodingChoice { get; set; } = null!;
+            public FontFamilyChoice FontFamilyChoice { get; set; } = null!;
+            public string FontSize { get; set; } = "16";
+            public int TabSize { get; set; } = 8;
+            public int DataBits { get; set; } = 8;
+            public StopBitsChoice StopBitsChoice { get; set; } = null!;
+            public Parity Parity { get; set; } = Parity.None;
+            public FlowControlChoice FlowControlChoice { get; set; } = null!;
+            public bool AutoScroll { get; set; } = true;
+            public bool HexBytes { get; set; } = true;
+            public double HexSplitRatio { get; set; } = 0.6;
+            public bool HexMouseOverToolTips { get; set; } = true;
+            public bool Timestamps { get; set; }
+            public bool PanelSync { get; set; }
+
+            public static MonitorSettingsState Load(
+                IReadOnlyList<EncodingChoice> encodingOptions,
+                IReadOnlyList<FontFamilyChoice> fontFamilyOptions,
+                IReadOnlyList<StopBitsChoice> stopBitsOptions,
+                IReadOnlyList<FlowControlChoice> flowControlOptions)
+            {
+                UartMonitorUserSettings settings = UartMonitorUserSettings.Load();
+                return new MonitorSettingsState(settings)
+                {
+                    PortName = settings.PortName,
+                    BaudRate = settings.BaudRate,
+                    EncodingChoice = encodingOptions.FirstOrDefault(choice => string.Equals(choice.DisplayName, settings.EncodingDisplayName, StringComparison.OrdinalIgnoreCase))
+                        ?? encodingOptions.FirstOrDefault(choice => choice.Encoding.CodePage == 28591)
+                        ?? encodingOptions.First(),
+                    FontFamilyChoice = fontFamilyOptions.FirstOrDefault(choice => choice.FontFamily.Source.Equals(settings.FontFamily, StringComparison.OrdinalIgnoreCase))
+                        ?? fontFamilyOptions.FirstOrDefault(choice => choice.FontFamily.Source.Equals("Consolas", StringComparison.OrdinalIgnoreCase))
+                        ?? fontFamilyOptions.FirstOrDefault(choice => choice.IsMonospace)
+                        ?? fontFamilyOptions.First(),
+                    FontSize = settings.FontSize,
+                    TabSize = GetAllowedTabSize(settings.TabSize),
+                    DataBits = settings.DataBits,
+                    StopBitsChoice = stopBitsOptions.FirstOrDefault(choice => choice.DisplayName == settings.StopBits) ?? stopBitsOptions.First(),
+                    Parity = Enum.TryParse(settings.Parity, out Parity parity) ? parity : Parity.None,
+                    FlowControlChoice = flowControlOptions.FirstOrDefault(choice => choice.DisplayName == settings.FlowControl)
+                        ?? flowControlOptions.First(choice => choice.Handshake == Handshake.XOnXOff),
+                    AutoScroll = settings.AutoScroll,
+                    HexBytes = settings.HexBytes,
+                    HexSplitRatio = settings.HexSplitRatio,
+                    HexMouseOverToolTips = settings.HexMouseOverToolTips,
+                    Timestamps = settings.Timestamps,
+                    PanelSync = settings.PanelSync
+                };
+            }
+
+            public void Save()
+            {
+                _settings.PortName = PortName;
+                _settings.BaudRate = BaudRate;
+                _settings.EncodingDisplayName = EncodingChoice.DisplayName;
+                _settings.FontFamily = FontFamilyChoice.FontFamily.Source;
+                _settings.FontSize = FontSize;
+                _settings.TabSize = TabSize;
+                _settings.DataBits = DataBits;
+                _settings.StopBits = StopBitsChoice.DisplayName;
+                _settings.Parity = Parity.ToString();
+                _settings.FlowControl = FlowControlChoice.DisplayName;
+                _settings.AutoScroll = AutoScroll;
+                _settings.HexBytes = HexBytes;
+                _settings.HexSplitRatio = HexSplitRatio;
+                _settings.HexMouseOverToolTips = HexMouseOverToolTips;
+                _settings.Timestamps = Timestamps;
+                _settings.PanelSync = PanelSync;
+                _settings.Save();
+            }
         }
 
         private sealed class EncodingChoice
@@ -1291,7 +1560,7 @@ namespace UartMonitor
 
         private void Pane_ScrollChanged(object sender, ScrollChangedEventArgs e)
         {
-            if (PanelSyncCheckBox.IsChecked != true || HexBytesCheckBox.IsChecked != true)
+            if (!_state.PanelSync || !_state.HexBytes)
                 return;
 
             if (_syncingScroll)
