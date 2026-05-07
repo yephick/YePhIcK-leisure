@@ -28,6 +28,11 @@ namespace UartMonitor
         private readonly List<TextPointer> _textLineStarts = new List<TextPointer>();
         private readonly List<TextPointer> _hexLineStarts = new List<TextPointer>();
         private readonly List<TextRange> _mirrorHighlights = new List<TextRange>();
+        private readonly List<HoverHighlightRange> _hexHoverHighlights = new List<HoverHighlightRange>();
+        private ToolTip? _hexHoverToolTip;
+        private int _hexHoverLineIndex = -1;
+        private int _hexHoverStartOffset = -1;
+        private int _hexHoverEndOffset = -1;
         private readonly DispatcherTimer _selectionDebounceTimer;
         private readonly object _processingGate = new object();
         private RichTextBox? _pendingSelectionSource;
@@ -50,6 +55,8 @@ namespace UartMonitor
                 Interval = TimeSpan.FromMilliseconds(100)
             };
             _selectionDebounceTimer.Tick += SelectionDebounceTimer_Tick;
+            HexLogBox.MouseMove += HexLogBox_MouseMove;
+            HexLogBox.MouseLeave += HexLogBox_MouseLeave;
 
             BaudComboBox.ItemsSource = new[] { 4608000, 4000000, 3000000, 2000000, 1000000, 921600, 750000, 500000, 460800, 400000, 300000, 225000, 200000, 153600, 115200, 57600, 38400, 19200, 9600 };
             BaudComboBox.Text = _settings.BaudRate;
@@ -109,7 +116,6 @@ namespace UartMonitor
             UpdateSelectedEncodingSnapshot();
             RefreshPorts();
             ApplySavedPort();
-            UpdateSelectionDebug();
         }
 
         private void RefreshButton_Click(object sender, RoutedEventArgs e)
@@ -150,13 +156,9 @@ namespace UartMonitor
             ClearMirrorHighlights();
             ClearSelection(HexLogBox);
             if (LogBox.Selection.IsEmpty)
-            {
-                UpdateSelectionDebug();
                 return;
-            }
 
             QueueSelectionSync(LogBox, HexLogBox);
-            UpdateSelectionDebug();
         }
 
         private void HexLogBox_SelectionChanged(object sender, RoutedEventArgs e)
@@ -167,13 +169,9 @@ namespace UartMonitor
             ClearMirrorHighlights();
             ClearSelection(LogBox);
             if (HexLogBox.Selection.IsEmpty)
-            {
-                UpdateSelectionDebug();
                 return;
-            }
 
             QueueSelectionSync(HexLogBox, LogBox);
-            UpdateSelectionDebug();
         }
 
         private void SelectionPane_GotKeyboardFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
@@ -182,6 +180,16 @@ namespace UartMonitor
 
         private void SelectionPane_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
+        }
+
+        private void HexLogBox_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            UpdateHexHover(e.GetPosition(HexLogBox));
+        }
+
+        private void HexLogBox_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            ClearHexHover();
         }
 
         private void ConnectButton_Click(object sender, RoutedEventArgs e)
@@ -324,11 +332,6 @@ namespace UartMonitor
             StatusTextBlock.Text = text;
         }
 
-        private void UpdateSelectionDebug()
-        {
-            SelectionDebugTextBlock.Text = BuildSelectionDebugText("L", LogBox) + "   " + BuildSelectionDebugText("R", HexLogBox);
-        }
-
         private void QueueSelectionSync(RichTextBox source, RichTextBox target)
         {
             _pendingSelectionSource = source;
@@ -345,63 +348,6 @@ namespace UartMonitor
                 return;
 
             SyncSelection(_pendingSelectionSource, _pendingSelectionTarget);
-            UpdateSelectionDebug();
-        }
-
-        private static string BuildSelectionDebugText(string label, RichTextBox box)
-        {
-            string documentText = new TextRange(box.Document.ContentStart, box.Document.ContentEnd).Text;
-            int startOffset = GetTextOffset(box.Document.ContentStart, box.Selection.Start);
-            int endOffset = GetTextOffset(box.Document.ContentStart, box.Selection.End);
-            (int startLine, int startColumn) = GetLineAndColumn(documentText, startOffset);
-            (int endLine, int endColumn) = GetLineAndColumn(documentText, endOffset);
-            int selectedLength = Math.Max(0, endOffset - startOffset);
-            string selectedText = GetSafeSnippet(documentText, startOffset, endOffset, 40);
-            string startContext = GetSafeSnippet(documentText, Math.Max(0, startOffset - 12), Math.Min(documentText.Length, startOffset + 12), 24);
-            string endContext = GetSafeSnippet(documentText, Math.Max(0, endOffset - 12), Math.Min(documentText.Length, endOffset + 12), 24);
-
-            return $"{label}[s r{startLine + 1},c{startColumn + 1} e r{endLine + 1},c{endColumn + 1} len{selectedLength} off{startOffset}-{endOffset} txt='{selectedText}' sc='{startContext}' ec='{endContext}']";
-        }
-
-        private static (int line, int column) GetLineAndColumn(string text, int offset)
-        {
-            int line = 0;
-            int column = 0;
-            int current = 0;
-            int target = Math.Max(0, Math.Min(offset, text.Length));
-
-            while (current < target)
-            {
-                char value = text[current++];
-                if (value == '\r' || value == '\n')
-                {
-                    line++;
-                    column = 0;
-                    if (current < target && IsLineBreakPair(value, text[current]))
-                        current++;
-                    continue;
-                }
-
-                column++;
-            }
-
-            return (line, column);
-        }
-
-        private static bool IsLineBreakPair(char first, char second)
-        {
-            return (first == '\r' && second == '\n') || (first == '\n' && second == '\r');
-        }
-
-        private static string GetSafeSnippet(string text, int startOffset, int endOffset, int maxLength)
-        {
-            int start = Math.Max(0, Math.Min(startOffset, text.Length));
-            int end = Math.Max(start, Math.Min(endOffset, text.Length));
-            string snippet = text.Substring(start, end - start);
-            snippet = snippet.Replace("\r", "\\r").Replace("\n", "\\n");
-            if (snippet.Length > maxLength)
-                snippet = snippet.Substring(0, maxLength) + "...";
-            return snippet;
         }
 
         private void AppendSegment(LogSegment segment)
@@ -473,7 +419,6 @@ namespace UartMonitor
                 _suppressSelectionEvents = false;
             }
 
-            UpdateSelectionDebug();
         }
 
         private void RequestUiRefresh()
@@ -485,8 +430,12 @@ namespace UartMonitor
                 _refreshQueued = true;
             }
 
-            Dispatcher.BeginInvoke(new Action(() =>
+#pragma warning disable VSSDK007
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+#pragma warning restore VSSDK007
             {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
                 lock (_processingGate)
                     _refreshQueued = false;
 
@@ -494,7 +443,7 @@ namespace UartMonitor
                     return;
 
                 RefreshRenderedDocuments();
-            }), DispatcherPriority.Background);
+            });
         }
 
         private void ClearLog()
@@ -502,7 +451,6 @@ namespace UartMonitor
             InitializeLogDocument();
             _hexFormatter.Flush();
             _rawLineSplitter.Clear();
-            UpdateSelectionDebug();
         }
 
         private static string FormatHexLine(byte[] bytes)
@@ -533,6 +481,7 @@ namespace UartMonitor
             textDocument.Blocks.Clear();
             hexDocument.Blocks.Clear();
             _mirrorHighlights.Clear();
+            _hexHoverHighlights.Clear();
 
             Paragraph textParagraph = CreateParagraph(LogBox.FontSize);
             Paragraph hexParagraph = CreateParagraph(HexLogBox.FontSize);
@@ -851,6 +800,104 @@ namespace UartMonitor
             _mirrorHighlights.Clear();
         }
 
+        private void UpdateHexHover(Point point)
+        {
+            TextPointer? pointer = HexLogBox.GetPositionFromPoint(point, snapToText: true);
+            if (pointer == null || _lineIndex.Count == 0)
+            {
+                ClearHexHover();
+                return;
+            }
+
+            int lineIndex = GetLineIndexFromPointer(HexLogBox, pointer);
+            CaptureLineIndex.CaptureLine line = _lineIndex.GetLine(lineIndex);
+            int hexOffset = GetRowLocalOffset(HexLogBox, lineIndex, pointer);
+            if (!line.TryGetHexHoverInfo(hexOffset, GetSelectedEncoding(), out CaptureLineIndex.CaptureLine.HexHoverInfo hoverInfo))
+            {
+                ClearHexHover();
+                return;
+            }
+
+            TextPointer? lineStart = GetLineStartPointer(HexLogBox, lineIndex);
+            if (lineStart == null)
+                return;
+
+            TextPointer start = TextPointerNavigation.GetAtTextOffset(lineStart, hoverInfo.StartOffset);
+            TextPointer end = TextPointerNavigation.GetAtTextOffset(lineStart, hoverInfo.EndOffset);
+            if (new TextRange(start, end).IsEmpty)
+            {
+                ClearHexHover();
+                return;
+            }
+
+            if (lineIndex == _hexHoverLineIndex && hoverInfo.StartOffset == _hexHoverStartOffset && hoverInfo.EndOffset == _hexHoverEndOffset)
+                return;
+
+            ClearHexHover();
+            _hexHoverLineIndex = lineIndex;
+            _hexHoverStartOffset = hoverInfo.StartOffset;
+            _hexHoverEndOffset = hoverInfo.EndOffset;
+            ApplyHexHover(new TextRange(start, end));
+            ShowHexHoverToolTip(hoverInfo.Tooltip);
+        }
+
+        private void ApplyHexHover(TextRange range)
+        {
+            SolidColorBrush brush = CreateBrush(Color.FromRgb(0x3f, 0x3f, 0x3f));
+            object previousBackground = range.GetPropertyValue(TextElement.BackgroundProperty);
+            range.ApplyPropertyValue(TextElement.BackgroundProperty, brush);
+            _hexHoverHighlights.Add(new HoverHighlightRange(range, previousBackground));
+        }
+
+        private void ClearHexHover()
+        {
+            CloseHexHoverToolTip();
+            _hexHoverLineIndex = -1;
+            _hexHoverStartOffset = -1;
+            _hexHoverEndOffset = -1;
+
+            if (_hexHoverHighlights.Count == 0)
+                return;
+
+            foreach (HoverHighlightRange highlight in _hexHoverHighlights)
+            {
+                if (highlight.Range.IsEmpty)
+                    continue;
+
+                object previousBackground = highlight.PreviousBackground == DependencyProperty.UnsetValue
+                    ? null!
+                    : highlight.PreviousBackground;
+                highlight.Range.ApplyPropertyValue(TextElement.BackgroundProperty, previousBackground);
+            }
+
+            _hexHoverHighlights.Clear();
+        }
+
+        private void ShowHexHoverToolTip(string text)
+        {
+            CloseHexHoverToolTip();
+
+            ToolTip toolTip = new ToolTip
+            {
+                Content = text,
+                Placement = PlacementMode.Mouse,
+                PlacementTarget = HexLogBox,
+                StaysOpen = true,
+                IsOpen = true
+            };
+
+            _hexHoverToolTip = toolTip;
+        }
+
+        private void CloseHexHoverToolTip()
+        {
+            if (_hexHoverToolTip == null)
+                return;
+
+            _hexHoverToolTip.IsOpen = false;
+            _hexHoverToolTip = null;
+        }
+
         private void ClearSelection(RichTextBox box)
         {
             if (box.Selection.IsEmpty)
@@ -967,11 +1014,6 @@ namespace UartMonitor
                 return TabExpansion.ModelOffsetToExpandedOffset(line.Text, rowOffset, GetSelectedTabSize());
 
             return Math.Max(0, Math.Min(rowOffset, line.HexLength));
-        }
-
-        private static int GetTextOffset(TextPointer documentStart, TextPointer position)
-        {
-            return new TextRange(documentStart, position).Text.Length;
         }
 
         private int ParseBaudRate()
@@ -1136,6 +1178,18 @@ namespace UartMonitor
             public FontFamily FontFamily { get; }
             public bool IsMonospace { get; }
             public override string ToString() => FontFamily.Source;
+        }
+
+        private sealed class HoverHighlightRange
+        {
+            public HoverHighlightRange(TextRange range, object previousBackground)
+            {
+                Range = range;
+                PreviousBackground = previousBackground;
+            }
+
+            public TextRange Range { get; }
+            public object PreviousBackground { get; }
         }
 
         private void Pane_ScrollChanged(object sender, ScrollChangedEventArgs e)

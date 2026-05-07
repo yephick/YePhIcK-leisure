@@ -590,6 +590,46 @@ namespace UartMonitor.Serial
                 return true;
             }
 
+            public bool TryGetHexHoverInfo(int hexOffset, Encoding encoding, out HexHoverInfo hoverInfo)
+            {
+                hoverInfo = HexHoverInfo.Empty;
+
+                if (string.IsNullOrEmpty(Hex))
+                    return false;
+
+                LineSelectionMap map = GetOrBuildSelectionMap(encoding);
+                int tokenIndex = FindTokenIndexForOffset(map.Tokens, hexOffset, preferPrevious: false);
+                if (tokenIndex < 0 || tokenIndex >= map.Tokens.Count)
+                    return false;
+
+                HexToken token = map.Tokens[tokenIndex];
+                if (hexOffset < token.StartOffset || hexOffset >= token.EndOffset)
+                    return false;
+
+                TokenRange? ansiSpan = FindAnsiSpan(tokenIndex, map.AnsiSpans);
+                if (ansiSpan is TokenRange sequence)
+                {
+                    HexToken startToken = map.Tokens[Math.Max(0, Math.Min(sequence.Start, map.Tokens.Count - 1))];
+                    HexToken endToken = map.Tokens[Math.Max(0, Math.Min(sequence.EndExclusive - 1, map.Tokens.Count - 1))];
+                    hoverInfo = new HexHoverInfo(startToken.StartOffset, endToken.EndOffset, DescribeAnsiSequence(map.Tokens, sequence));
+                    return true;
+                }
+
+                for (int index = 0; index < map.Spans.Count; index++)
+                {
+                    VisibleByteSpan span = map.Spans[index];
+                    if (tokenIndex < span.TokenStartIndex || tokenIndex >= span.TokenEndIndexExclusive)
+                        continue;
+
+                    string text = Text.Substring(span.TextStartOffset, span.TextEndOffset - span.TextStartOffset);
+                    hoverInfo = new HexHoverInfo(token.StartOffset, token.EndOffset, DescribeVisibleByte(token.Value, text, encoding));
+                    return true;
+                }
+
+                hoverInfo = new HexHoverInfo(token.StartOffset, token.EndOffset, DescribeSkippedByte(token.Value));
+                return true;
+            }
+
             private static bool ContainsAnyVisibleToken(IReadOnlyList<HexToken> tokens, int startTokenIndex, int endTokenIndexExclusive, IReadOnlyList<TokenRange> ansiSpans)
             {
                 int upper = Math.Min(endTokenIndexExclusive, tokens.Count);
@@ -630,6 +670,18 @@ namespace UartMonitor.Serial
                 }
 
                 return false;
+            }
+
+            private static TokenRange? FindAnsiSpan(int tokenIndex, IReadOnlyList<TokenRange> ansiSpans)
+            {
+                for (int i = 0; i < ansiSpans.Count; i++)
+                {
+                    TokenRange span = ansiSpans[i];
+                    if (tokenIndex >= span.Start && tokenIndex < span.EndExclusive)
+                        return span;
+                }
+
+                return null;
             }
 
             private static int FindTokenIndexForOffset(IReadOnlyList<HexToken> tokens, int offset, bool preferPrevious)
@@ -958,6 +1010,133 @@ namespace UartMonitor.Serial
                 return hex.Length;
             }
 
+            private static string DescribeVisibleByte(byte value, string text, Encoding encoding)
+            {
+                if (value == 0x09)
+                    return $"0x{value:X2}: tab ({encoding.WebName})";
+
+                string display = text == " " ? "space" : $"'{text}'";
+                return $"0x{value:X2}: {display} ({encoding.WebName})";
+            }
+
+            private static string DescribeSkippedByte(byte value)
+            {
+                if (value == 0x0D)
+                    return "CR line ending";
+                if (value == 0x0A)
+                    return "LF line ending";
+                if (value < 0x20)
+                    return $"Skipped control 0x{value:X2}";
+
+                return $"Ignored byte 0x{value:X2}";
+            }
+
+            private static string DescribeAnsiSequence(IReadOnlyList<HexToken> tokens, TokenRange range)
+            {
+                byte[] bytes = tokens
+                    .Skip(range.Start)
+                    .Take(range.EndExclusive - range.Start)
+                    .Select(token => token.Value)
+                    .ToArray();
+
+                if (bytes.Length == 2 && bytes[0] == 0x1B && bytes[1] == (byte)'c')
+                    return "ANSI reset terminal";
+
+                if (bytes.Length >= 3 && bytes[0] == 0x1B && bytes[1] == (byte)'[')
+                {
+                    char final = (char)bytes[bytes.Length - 1];
+                    string parameters = Encoding.ASCII.GetString(bytes, 2, bytes.Length - 3);
+                    if (final == 'm')
+                        return DescribeSgr(parameters);
+                    if (final == 'J')
+                        return parameters == "2" ? "ANSI clear screen" : "ANSI erase display";
+                    if (final == 'K')
+                        return "ANSI erase line";
+                }
+
+                return "ANSI sequence ignored";
+            }
+
+            private static string DescribeSgr(string parameters)
+            {
+                int[] codes = ParseAnsiCodes(parameters);
+                var parts = new List<string>();
+
+                for (int index = 0; index < codes.Length; index++)
+                {
+                    int code = codes[index];
+                    if (code == 0)
+                        parts.Add("reset");
+                    else if (code == 1)
+                        parts.Add("bold");
+                    else if (code == 4)
+                        parts.Add("underline");
+                    else if (code == 9)
+                        parts.Add("strikeout");
+                    else if (code == 22)
+                        parts.Add("bold off");
+                    else if (code == 24)
+                        parts.Add("underline off");
+                    else if (code == 29)
+                        parts.Add("strikeout off");
+                    else if (code == 39)
+                        parts.Add("default foreground");
+                    else if (code == 49)
+                        parts.Add("default background");
+                    else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97))
+                        parts.Add($"foreground {GetAnsiColorName(code)}");
+                    else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107))
+                        parts.Add($"background {GetAnsiColorName(code - 10)}");
+                    else if ((code == 38 || code == 48) && index + 2 < codes.Length && codes[index + 1] == 5)
+                    {
+                        parts.Add($"{(code == 38 ? "foreground" : "background")} xterm-{codes[index + 2]}");
+                        index += 2;
+                    }
+                }
+
+                return parts.Count == 0 ? "ANSI SGR unsupported" : "ANSI SGR " + string.Join(", ", parts);
+            }
+
+            private static int[] ParseAnsiCodes(string parameters)
+            {
+                if (string.IsNullOrEmpty(parameters))
+                    return new[] { 0 };
+
+                string[] parts = parameters.Split(';');
+                int[] codes = new int[parts.Length];
+                for (int index = 0; index < parts.Length; index++)
+                {
+                    if (!int.TryParse(parts[index], NumberStyles.None, CultureInfo.InvariantCulture, out codes[index]))
+                        codes[index] = -1;
+                }
+
+                return codes;
+            }
+
+            private static string GetAnsiColorName(int code)
+            {
+                switch (code)
+                {
+                    case 30: return "black";
+                    case 31: return "red";
+                    case 32: return "green";
+                    case 33: return "yellow";
+                    case 34: return "blue";
+                    case 35: return "magenta";
+                    case 36: return "cyan";
+                    case 37: return "white";
+                    case 90: return "bright black";
+                    case 91: return "bright red";
+                    case 92: return "bright green";
+                    case 93: return "bright yellow";
+                    case 94: return "bright blue";
+                    case 95: return "bright magenta";
+                    case 96: return "bright cyan";
+                    case 97: return "bright white";
+                    default: return "color";
+                }
+            }
+
             private static bool IsHexDigit(char value)
             {
                 return (value >= '0' && value <= '9')
@@ -1028,6 +1207,22 @@ namespace UartMonitor.Serial
                 {
                     _text.Append(text);
                 }
+            }
+
+            public sealed class HexHoverInfo
+            {
+                public static readonly HexHoverInfo Empty = new HexHoverInfo(0, 0, string.Empty);
+
+                public HexHoverInfo(int startOffset, int endOffset, string tooltip)
+                {
+                    StartOffset = Math.Max(0, startOffset);
+                    EndOffset = Math.Max(StartOffset, endOffset);
+                    Tooltip = tooltip ?? string.Empty;
+                }
+
+                public int StartOffset { get; }
+                public int EndOffset { get; }
+                public string Tooltip { get; }
             }
 
             private readonly struct VisibleByteSpan

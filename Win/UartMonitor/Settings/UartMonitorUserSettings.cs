@@ -113,5 +113,6 @@ namespace UartMonitor.Settings
                 ? value
                 : 8;
         }
+
     }
 }

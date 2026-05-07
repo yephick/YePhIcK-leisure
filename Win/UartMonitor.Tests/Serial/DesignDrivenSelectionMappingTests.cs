@@ -182,6 +182,25 @@ namespace UartMonitor.Tests.Serial
         }
 
         [TestMethod]
+        public void Design_LeftToRight_PrintableTabBeforeAnsiStaysMapped()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "0\t02",
+                "30 09 1B 5B 33 32 6D 30 32",
+                true);
+
+            bool prefixMapped = line.TryGetHexSelection(0, 2, encoding, out int prefixStart, out int prefixEnd);
+            bool ansiTextMapped = line.TryGetHexSelection(2, 4, encoding, out int ansiStart, out int ansiEnd);
+
+            Assert.IsTrue(prefixMapped);
+            Assert.AreEqual("30 09", ExtractHexSpan(line.Hex, prefixStart, prefixEnd));
+            Assert.IsTrue(ansiTextMapped);
+            Assert.AreEqual("1B 5B 33 32 6D 30 32", ExtractHexSpan(line.Hex, ansiStart, ansiEnd));
+        }
+
+        [TestMethod]
         public void Design_LeftToRight_EmptySelectedRowsWithHexAreFullySelected()
         {
             Encoding encoding = Encoding.GetEncoding(28591);
@@ -211,6 +230,25 @@ namespace UartMonitor.Tests.Serial
 
             Assert.IsFalse(mappedWithoutTrailing);
             Assert.IsFalse(mappedWithoutLeading);
+        }
+
+        [TestMethod]
+        public void Design_RightToLeft_PrintableTabBeforeAnsiStaysMapped()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "0\t02",
+                "30 09 1B 5B 33 32 6D 30 32",
+                true);
+
+            bool prefixMapped = line.TryGetTextSelectionFromHex(0, 5, encoding, out int prefixStart, out int prefixEnd);
+            bool ansiTextMapped = line.TryGetTextSelectionFromHex(6, line.Hex.Length, encoding, out int ansiStart, out int ansiEnd);
+
+            Assert.IsTrue(prefixMapped);
+            Assert.AreEqual("0\t", line.Text.Substring(prefixStart, prefixEnd - prefixStart));
+            Assert.IsTrue(ansiTextMapped);
+            Assert.AreEqual("02", line.Text.Substring(ansiStart, ansiEnd - ansiStart));
         }
 
         [TestMethod]
@@ -346,19 +384,12 @@ namespace UartMonitor.Tests.Serial
         {
             var visible = new List<VisibleChar>();
             int textOffset = 0;
-            bool sawEscape = false;
 
             for (int index = 0; index < bytes.Length; index++)
             {
                 byte value = bytes[index];
                 if (value == 0x1B)
                 {
-                    if (!sawEscape && visible.Count > 0)
-                    {
-                        visible.Clear();
-                        textOffset = 0;
-                    }
-                    sawEscape = true;
                     SkipEscape(bytes, ref index);
                     continue;
                 }

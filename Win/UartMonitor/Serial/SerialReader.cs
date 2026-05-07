@@ -56,7 +56,6 @@ public sealed class SerialReader : IDisposable
             Handshake = options.Handshake,
             ReadTimeout = 250,
             WriteTimeout = 250,
-            Encoding = options.Encoding,
             DtrEnable = false,
             RtsEnable = false
         };

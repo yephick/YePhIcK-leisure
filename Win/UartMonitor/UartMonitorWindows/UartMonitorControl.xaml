@@ -86,7 +86,6 @@
             </WrapPanel>
 
             <TextBlock x:Name="StatusTextBlock" Text="Disconnected" Foreground="#d6d6d6" FontSize="11"/>
-            <TextBlock x:Name="SelectionDebugTextBlock" Text="" Foreground="#8f8f8f" FontSize="10" Margin="0,2,0,0"/>
         </StackPanel>
 
         <Grid>

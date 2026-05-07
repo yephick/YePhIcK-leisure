@@ -488,6 +488,50 @@ namespace UartMonitor.Tests.Serial
             AssertVisibleHexColor(segments, "47", Color.FromRgb(0x00, 0xff, 0x00));
         }
 
+        [TestMethod]
+        public void CaptureLine_TryGetHexHoverInfo_ReturnsPrintableByte()
+        {
+            Encoding encoding = Encoding.GetEncoding(28591);
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "0\tA",
+                "30 09 41",
+                true);
+
+            bool matched = line.TryGetHexHoverInfo(3, encoding, out CaptureLineIndex.CaptureLine.HexHoverInfo hoverInfo);
+
+            Assert.IsTrue(matched);
+            Assert.AreEqual(3, hoverInfo.StartOffset);
+            Assert.AreEqual(5, hoverInfo.EndOffset);
+            StringAssert.Contains(hoverInfo.Tooltip, "tab");
+            StringAssert.Contains(hoverInfo.Tooltip, encoding.WebName);
+        }
+
+        [TestMethod]
+        public void CaptureLine_TryGetHexHoverInfo_ReturnsAnsiSequenceRangeAndMeaning()
+        {
+            Encoding encoding = Encoding.ASCII;
+            AnsiStyle red = new AnsiStyle { Foreground = Color.FromRgb(0xff, 0x00, 0x00) };
+            var line = new CaptureLineIndex.CaptureLine(
+                0,
+                "R",
+                "1B 5B 33 31 6D 52",
+                true,
+                0,
+                0,
+                0,
+                "\x1b[31mR",
+                new[] { new LogSegment("R", red) });
+
+            bool matched = line.TryGetHexHoverInfo(6, encoding, out CaptureLineIndex.CaptureLine.HexHoverInfo hoverInfo);
+
+            Assert.IsTrue(matched);
+            Assert.AreEqual(0, hoverInfo.StartOffset);
+            Assert.AreEqual(14, hoverInfo.EndOffset);
+            StringAssert.Contains(hoverInfo.Tooltip, "ANSI SGR");
+            StringAssert.Contains(hoverInfo.Tooltip, "foreground red");
+        }
+
         private static string ExtractHexSpan(string hex, int startOffset, int endOffset)
         {
             int startIndex = Math.Max(0, Math.Min(startOffset, hex.Length));
