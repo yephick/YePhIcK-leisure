@@ -331,15 +331,33 @@ namespace UartMonitor.Tests.Serial
         public void RawLineSplitter_AppendsLineEndingBytesToTheCurrentLine()
         {
             var splitter = new RawLineSplitter();
+            DateTime firstByteTimestamp = new DateTime(2026, 5, 7, 10, 11, 12, 123);
 
-            RawLinePart[] first = new System.Collections.Generic.List<RawLinePart>(splitter.Append(new byte[] { 0x32, 0x33, 0x31 })).ToArray();
-            RawLinePart[] second = new System.Collections.Generic.List<RawLinePart>(splitter.Append(new byte[] { 0x0A, 0x0D, 0x34 })).ToArray();
+            RawLinePart[] first = new System.Collections.Generic.List<RawLinePart>(splitter.Append(new byte[] { 0x32, 0x33, 0x31 }, firstByteTimestamp)).ToArray();
+            RawLinePart[] second = new System.Collections.Generic.List<RawLinePart>(splitter.Append(new byte[] { 0x0A, 0x0D, 0x34 }, firstByteTimestamp.AddMilliseconds(10))).ToArray();
 
             Assert.AreEqual(0, first.Length);
             Assert.AreEqual(1, second.Length);
             Assert.IsTrue(second[0].IsComplete);
             Assert.AreEqual("32 33 31 0A 0D", BytesToHex(second[0].Bytes));
             Assert.AreEqual(2, second[0].LineEndingLength);
+            Assert.AreEqual(firstByteTimestamp, second[0].Timestamp);
+        }
+
+        [TestMethod]
+        public void RawLineSplitter_UsesTimestampFromFirstByteOfEachLine()
+        {
+            var splitter = new RawLineSplitter();
+            DateTime firstLineTimestamp = new DateTime(2026, 5, 7, 10, 11, 12, 123);
+            DateTime secondLineTimestamp = firstLineTimestamp.AddMilliseconds(37);
+
+            RawLinePart[] first = splitter.Append(new byte[] { 0x41, 0x0A, 0x0D }, firstLineTimestamp).ToArray();
+            RawLinePart[] second = splitter.Append(new byte[] { 0x42, 0x0A, 0x0D }, secondLineTimestamp).ToArray();
+
+            Assert.AreEqual(1, first.Length);
+            Assert.AreEqual(1, second.Length);
+            Assert.AreEqual(firstLineTimestamp, first[0].Timestamp);
+            Assert.AreEqual(secondLineTimestamp, second[0].Timestamp);
         }
 
         [TestMethod]
@@ -353,6 +371,32 @@ namespace UartMonitor.Tests.Serial
             Assert.AreEqual(1, index.Count);
             Assert.AreEqual("231Â¦ Â· mft.ixx#75:cmd()", index.GetLine(0).Text);
             Assert.AreEqual("32 33 31 A6 20 B7 20 6D 66 74 2E 69 78 78 23 37 35 3A 63 6D 64 28 29 0A 0D", index.GetLine(0).Hex);
+        }
+
+        [TestMethod]
+        public void CaptureLineIndex_StoresTimestampWithNewLine()
+        {
+            CaptureLineIndex index = new CaptureLineIndex();
+            DateTime timestamp = new DateTime(2026, 5, 7, 10, 11, 12, 123);
+
+            index.AppendLinePart("hello", "68 65 6C 6C 6F", true, 0, "hello", null, timestamp);
+
+            Assert.AreEqual(timestamp, index.GetLine(0).Timestamp);
+        }
+
+        [TestMethod]
+        public void CaptureLineIndex_AppendedPartialLineKeepsOriginalTimestamp()
+        {
+            CaptureLineIndex index = new CaptureLineIndex();
+            DateTime firstByteTimestamp = new DateTime(2026, 5, 7, 10, 11, 12, 123);
+            DateTime appendedTimestamp = firstByteTimestamp.AddMilliseconds(8);
+
+            index.AppendLinePart("hel", "68 65 6C", false, 0, "hel", null, firstByteTimestamp);
+            index.AppendLinePart("lo", "6C 6F 0A", true, 1, "lo", null, appendedTimestamp);
+
+            Assert.AreEqual(1, index.Count);
+            Assert.AreEqual("hello", index.GetLine(0).Text);
+            Assert.AreEqual(firstByteTimestamp, index.GetLine(0).Timestamp);
         }
 
         [TestMethod]

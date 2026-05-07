@@ -52,6 +52,11 @@ namespace UartMonitor.Serial
 
         public void AppendLinePart(string text, string hex, bool isComplete, int lineBreakLength, string ansiText, IReadOnlyList<LogSegment>? segments)
         {
+            AppendLinePart(text, hex, isComplete, lineBreakLength, ansiText, segments, DateTime.MinValue);
+        }
+
+        public void AppendLinePart(string text, string hex, bool isComplete, int lineBreakLength, string ansiText, IReadOnlyList<LogSegment>? segments, DateTime timestamp)
+        {
             if (string.IsNullOrEmpty(text) && isComplete && lineBreakLength > 0)
                 hex = TrimHexToTrailingBytes(hex, lineBreakLength);
 
@@ -65,7 +70,7 @@ namespace UartMonitor.Serial
                 return;
             }
 
-            _lines.Add(new CaptureLine(_lines.Count, text, hex, isComplete, lineBreakLength, documentOffset, 0, ansiText, segments));
+            _lines.Add(new CaptureLine(_lines.Count, text, hex, isComplete, lineBreakLength, documentOffset, 0, ansiText, segments, timestamp));
         }
 
         private static string TrimHexToTrailingBytes(string hex, int byteCount)
@@ -293,8 +298,14 @@ namespace UartMonitor.Serial
             }
 
             public CaptureLine(int index, string text, string hex, bool isComplete, int lineBreakLength, int documentStartOffset, int renderedDocumentStartOffset, string ansiText, IReadOnlyList<LogSegment>? segments)
+                : this(index, text, hex, isComplete, lineBreakLength, documentStartOffset, renderedDocumentStartOffset, ansiText, segments, DateTime.MinValue)
+            {
+            }
+
+            public CaptureLine(int index, string text, string hex, bool isComplete, int lineBreakLength, int documentStartOffset, int renderedDocumentStartOffset, string ansiText, IReadOnlyList<LogSegment>? segments, DateTime timestamp)
             {
                 Index = index;
+                Timestamp = timestamp;
                 _textBuilder.Append(text);
                 _hexBuilder.Append(hex);
                 _ansiTextBuilder.Append(ansiText ?? string.Empty);
@@ -331,6 +342,7 @@ namespace UartMonitor.Serial
             public int RenderedDocumentStartOffset => RenderedTextDocumentStartOffset;
             public int RenderedTextDocumentStartOffset { get; private set; }
             public int RenderedHexDocumentStartOffset { get; private set; }
+            public DateTime Timestamp { get; }
 
             public void SetRenderedDocumentStartOffset(int renderedDocumentStartOffset)
             {

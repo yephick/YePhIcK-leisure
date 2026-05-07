@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace UartMonitor.Serial
@@ -7,8 +8,14 @@ namespace UartMonitor.Serial
         private readonly List<byte> _currentLine = new List<byte>();
         private byte? _pendingLineEnding;
         private int _emittedCount;
+        private DateTime _currentLineTimestamp;
 
         public IEnumerable<RawLinePart> Append(byte[] bytes)
+        {
+            return Append(bytes, DateTime.MinValue);
+        }
+
+        public IEnumerable<RawLinePart> Append(byte[] bytes, DateTime timestamp)
         {
             if (bytes == null || bytes.Length == 0)
                 yield break;
@@ -30,6 +37,9 @@ namespace UartMonitor.Serial
                     yield return Flush(isComplete: true);
                     _pendingLineEnding = null;
                 }
+
+                if (_currentLine.Count == 0)
+                    _currentLineTimestamp = timestamp;
 
                 _currentLine.Add(value);
 
@@ -53,6 +63,7 @@ namespace UartMonitor.Serial
             _currentLine.Clear();
             _pendingLineEnding = null;
             _emittedCount = 0;
+            _currentLineTimestamp = DateTime.MinValue;
         }
 
         private RawLinePart Flush(bool isComplete)
@@ -60,6 +71,7 @@ namespace UartMonitor.Serial
             RawLinePart part = CreatePart(_emittedCount, _currentLine.Count - _emittedCount, isComplete);
             _currentLine.Clear();
             _emittedCount = 0;
+            _currentLineTimestamp = DateTime.MinValue;
             return part;
         }
 
@@ -67,7 +79,7 @@ namespace UartMonitor.Serial
         {
             byte[] bytes = _currentLine.GetRange(start, count).ToArray();
             int lineEndingLength = GetLineEndingLength(bytes);
-            return new RawLinePart(bytes, isComplete, lineEndingLength);
+            return new RawLinePart(bytes, isComplete, lineEndingLength, _currentLineTimestamp);
         }
 
         private static int GetLineEndingLength(byte[] bytes)
@@ -94,14 +106,21 @@ namespace UartMonitor.Serial
     public readonly struct RawLinePart
     {
         public RawLinePart(byte[] bytes, bool isComplete, int lineEndingLength)
+            : this(bytes, isComplete, lineEndingLength, DateTime.MinValue)
+        {
+        }
+
+        public RawLinePart(byte[] bytes, bool isComplete, int lineEndingLength, DateTime timestamp)
         {
             Bytes = bytes;
             IsComplete = isComplete;
             LineEndingLength = lineEndingLength;
+            Timestamp = timestamp;
         }
 
         public byte[] Bytes { get; }
         public bool IsComplete { get; }
         public int LineEndingLength { get; }
+        public DateTime Timestamp { get; }
     }
 }

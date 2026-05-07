@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.Shell;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO.Ports;
 using System.Linq;
 using System.Text;
@@ -46,9 +47,11 @@ namespace UartMonitor
         };
         private readonly List<TextPointer> _textLineStarts = new List<TextPointer>();
         private readonly List<TextPointer> _hexLineStarts = new List<TextPointer>();
+        private readonly List<TimestampHoverRange> _timestampHoverRanges = new List<TimestampHoverRange>();
         private readonly List<TextRange> _mirrorHighlights = new List<TextRange>();
         private readonly List<HoverHighlightRange> _hexHoverHighlights = new List<HoverHighlightRange>();
         private ToolTip? _hexHoverToolTip;
+        private ToolTip? _timestampToolTip;
         private int _hexHoverLineIndex = -1;
         private int _hexHoverStartOffset = -1;
         private int _hexHoverEndOffset = -1;
@@ -62,6 +65,7 @@ namespace UartMonitor
         private bool _suspendUiRefresh;
         private bool _refreshQueued;
         private Encoding _selectedEncoding = Encoding.UTF8;
+        private DateTime _connectTimestamp = DateTime.MinValue;
         private double _visibleTextColumns;
         private double _hexColumns;
 
@@ -75,6 +79,8 @@ namespace UartMonitor
                 Interval = TimeSpan.FromMilliseconds(100)
             };
             _selectionDebounceTimer.Tick += SelectionDebounceTimer_Tick;
+            LogBox.MouseMove += LogBox_MouseMove;
+            LogBox.MouseLeave += LogBox_MouseLeave;
             HexLogBox.MouseMove += HexLogBox_MouseMove;
             HexLogBox.MouseLeave += HexLogBox_MouseLeave;
 
@@ -399,6 +405,16 @@ namespace UartMonitor
             ClearHexHover();
         }
 
+        private void LogBox_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            UpdateTimestampHover(e.GetPosition(LogBox));
+        }
+
+        private void LogBox_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            ClearTimestampHover();
+        }
+
         private void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
             string? portName = PortComboBox.SelectedItem as string;
@@ -428,6 +444,7 @@ namespace UartMonitor
 
             try
             {
+                _connectTimestamp = DateTime.Now;
                 _reader.Connect(options);
                 _state.PortName = portName;
             }
@@ -451,6 +468,7 @@ namespace UartMonitor
             _ansiParser.Reset();
             _lineIndex.Clear();
             _rawLineSplitter.Clear();
+            _connectTimestamp = DateTime.Now;
 
             Encoding encoding = GetSelectedEncoding();
             _suspendUiRefresh = true;
@@ -482,9 +500,10 @@ namespace UartMonitor
         {
             byte[] chunk = (byte[])e.Bytes.Clone();
             Encoding encoding = _selectedEncoding;
+            DateTime timestamp = DateTime.Now;
             _ = Task.Run(() =>
             {
-                ProcessChunkCore(chunk, encoding);
+                ProcessChunkCore(chunk, encoding, timestamp);
                 RequestUiRefresh();
             });
         }
@@ -579,7 +598,7 @@ namespace UartMonitor
 
         private void ProcessChunk(byte[] bytes, Encoding encoding)
         {
-            ProcessChunkCore(bytes, encoding);
+            ProcessChunkCore(bytes, encoding, DateTime.Now);
 
             if (_suspendUiRefresh)
                 return;
@@ -587,11 +606,11 @@ namespace UartMonitor
             RefreshRenderedDocuments();
         }
 
-        private void ProcessChunkCore(byte[] bytes, Encoding encoding)
+        private void ProcessChunkCore(byte[] bytes, Encoding encoding, DateTime timestamp)
         {
             lock (_processingGate)
             {
-                foreach (RawLinePart part in _rawLineSplitter.Append(bytes))
+                foreach (RawLinePart part in _rawLineSplitter.Append(bytes, timestamp))
                 {
                     foreach (RawLinePart logicalPart in SplitClearScreenParts(part))
                     {
@@ -602,10 +621,26 @@ namespace UartMonitor
                         LogSegment[] segments = _ansiParser.Parse(text).ToArray();
                         string renderedText = string.Concat(segments.Select(segment => segment.Text));
                         string hex = FormatHexLine(logicalPart.Bytes);
-                        _lineIndex.AppendLinePart(renderedText, hex, logicalPart.IsComplete, logicalPart.LineEndingLength, text, segments);
+                        DateTime lineTimestamp = _lineIndex.Count == 0
+                            ? GetLineZeroTimestamp(logicalPart.Timestamp)
+                            : GetLineTimestamp(logicalPart.Timestamp);
+                        _lineIndex.AppendLinePart(renderedText, hex, logicalPart.IsComplete, logicalPart.LineEndingLength, text, segments, lineTimestamp);
                     }
                 }
             }
+        }
+
+        private DateTime GetLineZeroTimestamp(DateTime fallback)
+        {
+            if (_connectTimestamp != DateTime.MinValue)
+                return _connectTimestamp;
+
+            return GetLineTimestamp(fallback);
+        }
+
+        private static DateTime GetLineTimestamp(DateTime fallback)
+        {
+            return fallback == DateTime.MinValue ? DateTime.Now : fallback;
         }
 
         private static IEnumerable<RawLinePart> SplitClearScreenParts(RawLinePart part)
@@ -622,7 +657,7 @@ namespace UartMonitor
                 int count = clearEnd - start;
                 byte[] clearBytes = new byte[count];
                 Buffer.BlockCopy(bytes, start, clearBytes, 0, count);
-                yield return new RawLinePart(clearBytes, isComplete: true, lineEndingLength: 0);
+                yield return new RawLinePart(clearBytes, isComplete: true, lineEndingLength: 0, part.Timestamp);
                 start = clearEnd;
             }
 
@@ -630,7 +665,7 @@ namespace UartMonitor
             {
                 byte[] remaining = new byte[bytes.Length - start];
                 Buffer.BlockCopy(bytes, start, remaining, 0, remaining.Length);
-                yield return new RawLinePart(remaining, part.IsComplete, part.LineEndingLength);
+                yield return new RawLinePart(remaining, part.IsComplete, part.LineEndingLength, part.Timestamp);
             }
         }
 
@@ -732,6 +767,7 @@ namespace UartMonitor
             hexDocument.Blocks.Clear();
             _mirrorHighlights.Clear();
             _hexHoverHighlights.Clear();
+            _timestampHoverRanges.Clear();
 
             Paragraph textParagraph = CreateParagraph(LogBox.FontSize);
             Paragraph hexParagraph = CreateParagraph(HexLogBox.FontSize);
@@ -743,6 +779,7 @@ namespace UartMonitor
             int renderedTextOffset = 0;
             int renderedHexOffset = 0;
             int tabSize = GetSelectedTabSize();
+            DateTime previousTimestamp = DateTime.MinValue;
             foreach (CaptureLineIndex.CaptureLine line in _lineIndex.GetLines())
             {
                 line.SetRenderedDocumentStartOffsets(renderedTextOffset, renderedHexOffset);
@@ -781,6 +818,12 @@ namespace UartMonitor
                     hexSpan.Inlines.Add(run);
                 }
 
+                if (_state.Timestamps)
+                {
+                    AddTimestampPrefix(textParagraph, line, previousTimestamp);
+                    previousTimestamp = GetDisplayTimestamp(line);
+                }
+
                 textParagraph.Inlines.Add(textSpan);
                 hexParagraph.Inlines.Add(hexSpan);
                 _textLineStarts.Add(textSpan.ContentStart);
@@ -790,6 +833,50 @@ namespace UartMonitor
                 renderedTextOffset += TabExpansion.GetExpandedLength(line.Text, tabSize) + 2;
                 renderedHexOffset += line.HexLength + 2;
             }
+        }
+
+        private void AddTimestampPrefix(Paragraph paragraph, CaptureLineIndex.CaptureLine line, DateTime previousTimestamp)
+        {
+            DateTime timestamp = GetDisplayTimestamp(line);
+            DateTime previous = previousTimestamp == DateTime.MinValue ? timestamp : previousTimestamp;
+            TimeSpan increment = timestamp - previous;
+            if (increment < TimeSpan.Zero)
+                increment = TimeSpan.Zero;
+
+            Span timestampSpan = new Span();
+            Run timestampRun = new Run(FormatTimestampDelta(increment))
+            {
+                FontSize = Math.Max(8, LogBox.FontSize - 2),
+                Foreground = CreateBrush(Color.FromRgb(0x8a, 0x8a, 0x8a))
+            };
+            timestampSpan.Inlines.Add(timestampRun);
+            paragraph.Inlines.Add(timestampSpan);
+            paragraph.Inlines.Add(new Run(" "));
+            _timestampHoverRanges.Add(new TimestampHoverRange(timestampSpan.ContentStart, timestampSpan.ContentEnd, FormatTimestampToolTip(timestamp, increment)));
+        }
+
+        private static DateTime GetDisplayTimestamp(CaptureLineIndex.CaptureLine line)
+        {
+            return line.Timestamp == DateTime.MinValue ? DateTime.Now : line.Timestamp;
+        }
+
+        private static string FormatTimestampDelta(TimeSpan increment)
+        {
+            long milliseconds = Math.Max(0, (long)Math.Round(increment.TotalMilliseconds));
+            if (milliseconds > 99999)
+                return "+++++";
+
+            return milliseconds.ToString(CultureInfo.InvariantCulture).PadLeft(5);
+        }
+
+        private static string FormatTimestampToolTip(DateTime timestamp, TimeSpan increment)
+        {
+            long milliseconds = Math.Max(0, (long)Math.Round(increment.TotalMilliseconds));
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Timestamp: {0:yyyy-MM-dd HH:mm:ss.fff}\nIncrement: +{1} ms",
+                timestamp,
+                milliseconds);
         }
 
         private void InitializeLogDocument()
@@ -1095,6 +1182,66 @@ namespace UartMonitor
             }
 
             _mirrorHighlights.Clear();
+        }
+
+        private void UpdateTimestampHover(Point point)
+        {
+            if (!_state.Timestamps || _timestampHoverRanges.Count == 0)
+            {
+                ClearTimestampHover();
+                return;
+            }
+
+            TextPointer? pointer = LogBox.GetPositionFromPoint(point, snapToText: true);
+            if (pointer == null)
+            {
+                ClearTimestampHover();
+                return;
+            }
+
+            foreach (TimestampHoverRange range in _timestampHoverRanges)
+            {
+                if (!range.Contains(pointer))
+                    continue;
+
+                ShowTimestampToolTip(range.ToolTip);
+                return;
+            }
+
+            ClearTimestampHover();
+        }
+
+        private void ClearTimestampHover()
+        {
+            CloseTimestampToolTip();
+        }
+
+        private void ShowTimestampToolTip(string text)
+        {
+            if (_timestampToolTip != null && string.Equals(_timestampToolTip.Content as string, text, StringComparison.Ordinal))
+                return;
+
+            CloseTimestampToolTip();
+
+            ToolTip toolTip = new ToolTip
+            {
+                Content = text,
+                Placement = PlacementMode.Mouse,
+                PlacementTarget = LogBox,
+                StaysOpen = true,
+                IsOpen = true
+            };
+
+            _timestampToolTip = toolTip;
+        }
+
+        private void CloseTimestampToolTip()
+        {
+            if (_timestampToolTip == null)
+                return;
+
+            _timestampToolTip.IsOpen = false;
+            _timestampToolTip = null;
         }
 
         private void UpdateHexHover(Point point)
@@ -1556,6 +1703,25 @@ namespace UartMonitor
 
             public TextRange Range { get; }
             public object PreviousBackground { get; }
+        }
+
+        private sealed class TimestampHoverRange
+        {
+            public TimestampHoverRange(TextPointer start, TextPointer end, string toolTip)
+            {
+                Start = start;
+                End = end;
+                ToolTip = toolTip;
+            }
+
+            public TextPointer Start { get; }
+            public TextPointer End { get; }
+            public string ToolTip { get; }
+
+            public bool Contains(TextPointer pointer)
+            {
+                return pointer.CompareTo(Start) >= 0 && pointer.CompareTo(End) <= 0;
+            }
         }
 
         private void Pane_ScrollChanged(object sender, ScrollChangedEventArgs e)
