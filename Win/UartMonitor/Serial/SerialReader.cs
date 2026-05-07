@@ -82,13 +82,11 @@ public sealed class SerialReader : IDisposable
     {
         SerialPort? port;
         CancellationTokenSource? cts;
-        Task? readerTask;
 
         lock (_gate)
         {
             port = _port;
             cts = _cts;
-            readerTask = _readerTask;
             _port = null;
             _cts = null;
             _readerTask = null;
@@ -104,20 +102,6 @@ public sealed class SerialReader : IDisposable
         catch
         {
             // Ignore shutdown races.
-        }
-
-        if (readerTask != null && readerTask.Id != Task.CurrentId)
-        {
-            try
-            {
-#pragma warning disable VSTHRD002
-                readerTask.Wait(500);
-#pragma warning restore VSTHRD002
-            }
-            catch
-            {
-                // Ignore shutdown races.
-            }
         }
 
         try

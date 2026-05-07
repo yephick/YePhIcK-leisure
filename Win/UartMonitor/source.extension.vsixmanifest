@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
     <Metadata>
-        <Identity Id="UartMonitor.5c5cab1a-0063-4837-949a-13f581ef750e" Version="1.0" Language="en-US" Publisher="YePhIcK" />
+        <Identity Id="UartMonitor.5c5cab1a-0063-4837-949a-13f581ef750e" Version="1.0.0" Language="en-US" Publisher="YePhIcK" />
         <DisplayName>UartMonitor</DisplayName>
-        <Description xml:space="preserve">UART monitor with basic ANSI coloring support</Description>
-        <Icon>Resources\Icon.png</Icon>
-        <PreviewImage>Resources\Icon.png</PreviewImage>
+        <Description xml:space="preserve">UART monitor for embedded debug logs with ANSI-aware text rendering, HEX view, line timestamps, and synchronized selection</Description>
+        <License>License.txt</License>
+        <ReleaseNotes>ReleaseNotes.txt</ReleaseNotes>
+        <Icon>Resources\mini.png</Icon>
+        <PreviewImage>Resources\preview.png</PreviewImage>
+        <Tags>UART, serial, monitor, log, debug, logging, embedded</Tags>
     </Metadata>
     <Installation>
         <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0,)">

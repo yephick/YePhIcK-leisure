@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using UartMonitor;
 
 [assembly: AssemblyTitle("UART Monitor")]
-[assembly: AssemblyDescription("UART monitor with limited ANSI supoprt")]
+[assembly: AssemblyDescription("UART monitor for embedded debug logs with ANSI-aware text rendering, HEX view, line timestamps, and synchronized selection")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("YePhIcK")]
 [assembly: AssemblyProduct("UartMonitor")]
@@ -13,8 +13,8 @@ using UartMonitor;
 
 [assembly: ComVisible(false)]
 
-[assembly: AssemblyVersion(Vsix.Version)]
-[assembly: AssemblyFileVersion(Vsix.Version)]
+[assembly: AssemblyVersion("1.0.0")]
+[assembly: AssemblyFileVersion("1.0.0.0")]
 
 namespace System.Runtime.CompilerServices
 {

@@ -10,11 +10,11 @@ namespace UartMonitor
     {
         public const string Id = "UartMonitor.5c5cab1a-0063-4837-949a-13f581ef750e";
         public const string Name = "UartMonitor";
-        public const string Description = @"UART monitor with basic ANSI coloring support";
+        public const string Description = @"UART monitor for embedded debug logs with ANSI-aware text rendering, HEX view, line timestamps, and synchronized selection";
         public const string Language = "en-US";
-        public const string Version = "1.0";
+        public const string Version = "1.0.0";
         public const string Author = "YePhIcK";
-        public const string Tags = "";
+        public const string Tags = "UART, serial, monitor, log, debug, logging, embedded";
         public const bool IsPreview = false;
     }
 }
