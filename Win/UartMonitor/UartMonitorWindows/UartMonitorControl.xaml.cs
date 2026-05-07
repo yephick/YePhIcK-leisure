@@ -114,6 +114,7 @@ namespace UartMonitor
 
             ApplyFontSettings();
             ApplyHexPaneVisibility();
+            ApplySavedHexSplitRatio();
             UpdateSelectedEncodingSnapshot();
             RefreshPorts();
             ApplySavedPort();
@@ -147,6 +148,11 @@ namespace UartMonitor
         private void HexBytesCheckBox_CheckedChanged(object sender, RoutedEventArgs e)
         {
             ApplyHexPaneVisibility();
+        }
+
+        private void HexGridSplitter_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            SaveHexSplitRatio();
         }
 
         private void EncodingComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -334,7 +340,7 @@ namespace UartMonitor
 
         private void SetStatus(string text)
         {
-            StatusTextBlock.Text = text;
+            ConnectButton.ToolTip = string.IsNullOrWhiteSpace(text) ? "Connect" : $"Connect ({text})";
         }
 
         private void QueueSelectionSync(RichTextBox source, RichTextBox target)
@@ -704,14 +710,17 @@ namespace UartMonitor
 
         private void ApplyHexPaneVisibility()
         {
-            if (HexPane == null || HexGridSplitter == null || SplitterColumn == null || HexColumn == null || PanelSyncCheckBox == null)
+            if (TextColumn == null || HexPane == null || HexGridSplitter == null || SplitterColumn == null || HexColumn == null || PanelSyncCheckBox == null)
                 return;
 
             bool showHex = HexBytesCheckBox.IsChecked == true;
             HexPane.Visibility = showHex ? Visibility.Visible : Visibility.Collapsed;
             HexGridSplitter.Visibility = showHex ? Visibility.Visible : Visibility.Collapsed;
             SplitterColumn.Width = showHex ? new GridLength(4) : new GridLength(0);
-            HexColumn.Width = showHex ? new GridLength(2, GridUnitType.Star) : new GridLength(0);
+            if (showHex)
+                ApplySavedHexSplitRatio();
+            else
+                HexColumn.Width = new GridLength(0);
             PanelSyncCheckBox.IsEnabled = showHex;
 
             if (!showHex)
@@ -720,6 +729,28 @@ namespace UartMonitor
                 ClearMirrorHighlights();
                 ClearSelection(HexLogBox);
             }
+        }
+
+        private void ApplySavedHexSplitRatio()
+        {
+            if (TextColumn == null || HexColumn == null || HexBytesCheckBox.IsChecked != true)
+                return;
+
+            double ratio = Math.Max(0.15, Math.Min(0.85, _settings.HexSplitRatio));
+            TextColumn.Width = new GridLength(ratio, GridUnitType.Star);
+            HexColumn.Width = new GridLength(1 - ratio, GridUnitType.Star);
+        }
+
+        private void SaveHexSplitRatio()
+        {
+            if (TextColumn == null || HexColumn == null || HexBytesCheckBox.IsChecked != true)
+                return;
+
+            double totalWidth = TextColumn.ActualWidth + HexColumn.ActualWidth;
+            if (totalWidth <= 0)
+                return;
+
+            _settings.HexSplitRatio = TextColumn.ActualWidth / totalWidth;
         }
 
         public void Dispose()
@@ -1188,6 +1219,7 @@ namespace UartMonitor
             _settings.FlowControl = (FlowControlComboBox.SelectedItem as FlowControlChoice)?.DisplayName ?? _settings.FlowControl;
             _settings.AutoScroll = AutoScrollCheckBox.IsChecked == true;
             _settings.HexBytes = HexBytesCheckBox.IsChecked == true;
+            SaveHexSplitRatio();
             _settings.PanelSync = PanelSyncCheckBox.IsChecked == true;
 
             _settings.Save();

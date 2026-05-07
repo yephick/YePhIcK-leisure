@@ -492,6 +492,7 @@ namespace UartMonitor.Tests.Rendering
                     FlowControl = "XON/XOFF",
                     AutoScroll = false,
                     HexBytes = false,
+                    HexSplitRatio = 0.42,
                     PanelSync = true
                 };
 
@@ -507,6 +508,7 @@ namespace UartMonitor.Tests.Rendering
                 Assert.AreEqual(8, loaded.DataBits);
                 Assert.IsFalse(loaded.AutoScroll);
                 Assert.IsFalse(loaded.HexBytes);
+                Assert.AreEqual(0.42, loaded.HexSplitRatio);
                 Assert.IsTrue(loaded.PanelSync);
             }
             finally

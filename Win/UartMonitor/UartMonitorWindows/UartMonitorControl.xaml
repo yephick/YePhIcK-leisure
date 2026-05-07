@@ -142,13 +142,11 @@
                               ToolTip="Enables synchronized vertical and horizontal scrolling between the text and hex panes. This can significantly reduce UI responsiveness and increase scroll handling overhead, so it is disabled by default."/>
                 </WrapPanel>
             </DockPanel>
-
-            <TextBlock x:Name="StatusTextBlock" Text="Disconnected" Foreground="#d6d6d6" FontSize="11"/>
         </StackPanel>
 
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="3*"/>
+                <ColumnDefinition x:Name="TextColumn" Width="3*"/>
                 <ColumnDefinition x:Name="SplitterColumn" Width="4"/>
                 <ColumnDefinition x:Name="HexColumn" Width="2*"/>
             </Grid.ColumnDefinitions>
@@ -183,7 +181,8 @@
                           Width="4"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch"
-                          Background="#2a2a2a"/>
+                          Background="#2a2a2a"
+                          DragCompleted="HexGridSplitter_DragCompleted"/>
 
             <DockPanel x:Name="HexPane"
                        Grid.Column="2"

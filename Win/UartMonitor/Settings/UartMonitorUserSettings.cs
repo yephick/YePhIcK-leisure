@@ -21,6 +21,7 @@ namespace UartMonitor.Settings
         public string FlowControl { get; set; } = "XON/XOFF";
         public bool AutoScroll { get; set; } = true;
         public bool HexBytes { get; set; } = true;
+        public double HexSplitRatio { get; set; } = 0.6;
         public bool PanelSync { get; set; } = false;
 
         public static string FilePath =>
@@ -58,6 +59,7 @@ namespace UartMonitor.Settings
                 settings.FlowControl = GetString(values, nameof(FlowControl), settings.FlowControl);
                 settings.AutoScroll = GetBool(values, nameof(AutoScroll), settings.AutoScroll);
                 settings.HexBytes = GetBool(values, nameof(HexBytes), settings.HexBytes);
+                settings.HexSplitRatio = GetRatio(values, nameof(HexSplitRatio), settings.HexSplitRatio);
                 settings.PanelSync = GetBool(values, nameof(PanelSync), settings.PanelSync);
                 return settings;
             }
@@ -84,6 +86,7 @@ namespace UartMonitor.Settings
                 $"FlowControl={FlowControl}",
                 $"AutoScroll={AutoScroll}",
                 $"HexBytes={HexBytes}",
+                $"HexSplitRatio={GetAllowedRatio(HexSplitRatio).ToString(CultureInfo.InvariantCulture)}",
                 $"PanelSync={PanelSync}",
             });
         }
@@ -105,6 +108,21 @@ namespace UartMonitor.Settings
             return values.TryGetValue(key, out string? value) && bool.TryParse(value, out bool parsed)
                 ? parsed
                 : fallback;
+        }
+
+        private static double GetRatio(IReadOnlyDictionary<string, string> values, string key, double fallback)
+        {
+            return values.TryGetValue(key, out string? value) && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+                ? GetAllowedRatio(parsed)
+                : fallback;
+        }
+
+        private static double GetAllowedRatio(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value))
+                return 0.6;
+
+            return Math.Max(0.15, Math.Min(0.85, value));
         }
 
         private static int GetAllowedTabSize(int value)
