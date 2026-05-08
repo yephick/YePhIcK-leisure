@@ -1,0 +1,239 @@
+<UserControl x:Class="UartMonitor.MyToolWindowControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:imaging="clr-namespace:Microsoft.VisualStudio.Imaging;assembly=Microsoft.VisualStudio.Imaging"
+             xmlns:theming="clr-namespace:Microsoft.VisualStudio.PlatformUI;assembly=Microsoft.VisualStudio.Imaging"
+             xmlns:util="clr-namespace:Microsoft.VisualStudio.PlatformUI;assembly=Microsoft.VisualStudio.Utilities"
+             xmlns:catalog="clr-namespace:Microsoft.VisualStudio.Imaging;assembly=Microsoft.VisualStudio.ImageCatalog"
+             xmlns:toolkit="clr-namespace:Community.VisualStudio.Toolkit;assembly=Community.VisualStudio.Toolkit"
+             toolkit:Themes.UseVsTheme="True"
+             mc:Ignorable="d"
+             d:DesignHeight="300"
+             d:DesignWidth="300"
+             Name="MyToolWindow">
+    <UserControl.Resources>
+        <Style x:Key="ActionButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="MinWidth" Value="0"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#d6d6d6"/>
+            <Setter Property="Background" Value="#2a2a2a"/>
+            <Setter Property="BorderBrush" Value="#3b3b3b"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter x:Name="ButtonContent"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#343434"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#5a5a5a"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#505050"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#8a8a8a"/>
+                                <Setter TargetName="ButtonContent" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <TranslateTransform X="1" Y="1"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Cursor" Value="Arrow"/>
+                                <Setter Property="Foreground" Value="#777777"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#202020"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#2b2b2b"/>
+                                <Setter TargetName="ButtonContent" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ActionToggleButtonStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="MinWidth" Value="0"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#d6d6d6"/>
+            <Setter Property="Background" Value="#2a2a2a"/>
+            <Setter Property="BorderBrush" Value="#3b3b3b"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter x:Name="ButtonContent"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#343434"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#5a5a5a"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#3d3d3d"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#8a8a8a"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#505050"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#8a8a8a"/>
+                                <Setter TargetName="ButtonContent" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <TranslateTransform X="1" Y="1"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Cursor" Value="Arrow"/>
+                                <Setter Property="Foreground" Value="#777777"/>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#202020"/>
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#2b2b2b"/>
+                                <Setter TargetName="ButtonContent" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+    <DockPanel Background="#1c1c1c">
+
+        <StackPanel DockPanel.Dock="Top" Orientation="Vertical" Margin="8,8,8,4">
+            <DockPanel LastChildFill="True" Margin="0,0,0,4">
+                <WrapPanel DockPanel.Dock="Left" VerticalAlignment="Top">
+                    <Button x:Name="ConnectButton" Style="{StaticResource ActionButtonStyle}" Content="&#x26A1;" Margin="0,0,4,0" Click="ConnectButton_Click" FontWeight="SemiBold" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Connect"/>
+                    <Button x:Name="DisconnectButton" Style="{StaticResource ActionButtonStyle}" Content="&#x238B;" Margin="0,0,4,0" Click="DisconnectButton_Click" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Disconnect"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
+                        <TextBlock Text="Port:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
+                        <ComboBox x:Name="PortComboBox" Width="72" FontSize="11"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,6,0" VerticalAlignment="Center">
+                        <TextBlock Text="Encoding:" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,3,0"/>
+                        <ComboBox x:Name="EncodingComboBox" Width="150" FontSize="11"/>
+                    </StackPanel>
+
+                    <Button x:Name="TestButton" Style="{StaticResource ActionButtonStyle}" Content="&#x1F524;" Margin="0,0,4,0" Click="TestButton_Click" FontSize="13" FontFamily="Segoe UI Emoji" ToolTip="Run test sample"/>
+                    <Button x:Name="ClearButton" Style="{StaticResource ActionButtonStyle}" Margin="0,0,8,0" Click="ClearButton_Click" ToolTip="Clear log">
+                        <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.ClearWindowContent}" Width="16" Height="16"/>
+                    </Button>
+                    <ToggleButton x:Name="TimestampsButton" Style="{StaticResource ActionToggleButtonStyle}" Margin="0,0,4,0" Click="TimestampsButton_Click" ToolTip="Show timestamps">
+                        <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.Time}" Width="16" Height="16"/>
+                    </ToggleButton>
+                    <Button x:Name="SearchButton" Style="{StaticResource ActionButtonStyle}" Margin="0,0,4,0" Click="SearchButton_Click" ToolTip="Quick search">
+                        <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.QuickFind}" Width="16" Height="16"/>
+                    </Button>
+                    <Border x:Name="SearchBoxBorder" Visibility="Collapsed" Background="#222222" BorderBrush="#5a5a5a" BorderThickness="1" CornerRadius="2" Margin="0,0,4,0" Padding="4,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <CheckBox x:Name="SearchHexCheckBox" Content="HEX" IsChecked="False" Foreground="#d6d6d6" VerticalAlignment="Center" Margin="0,0,6,0" Click="SearchHexCheckBox_Click" ToolTip="Search the HEX pane instead of the text pane"/>
+                            <TextBox x:Name="SearchTextBox" Width="180" BorderThickness="0" Background="Transparent" Foreground="#f0f0f0" FontSize="11" VerticalContentAlignment="Center" AcceptsReturn="False" TextWrapping="NoWrap" KeyDown="SearchTextBox_KeyDown" TextChanged="SearchTextBox_TextChanged" ToolTip="Search text as you type"/>
+                            <Button x:Name="SearchPreviousButton" Style="{StaticResource ActionButtonStyle}" Width="20" Height="20" Margin="6,0,0,0" Click="SearchPreviousButton_Click" ToolTip="Find previous">
+                                <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.FindPrevious}" Width="14" Height="14"/>
+                            </Button>
+                            <Button x:Name="SearchNextButton" Style="{StaticResource ActionButtonStyle}" Width="20" Height="20" Margin="4,0,0,0" Click="SearchNextButton_Click" ToolTip="Find next">
+                                <imaging:CrispImage Moniker="{x:Static catalog:KnownMonikers.FindNext}" Width="14" Height="14"/>
+                            </Button>
+                        </StackPanel>
+                    </Border>
+                    <Button x:Name="SettingsButton" Style="{StaticResource ActionButtonStyle}" Content="&#x2699;" Margin="0,0,0,0" Click="SettingsButton_Click" FontSize="14" FontFamily="Segoe UI Symbol" ToolTip="Settings"/>
+                </WrapPanel>
+            </DockPanel>
+        </StackPanel>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="TextColumn" Width="3*"/>
+                <ColumnDefinition x:Name="SplitterColumn" Width="4"/>
+                <ColumnDefinition x:Name="HexColumn" Width="2*"/>
+            </Grid.ColumnDefinitions>
+
+            <RichTextBox x:Name="LogBox"
+                     Grid.Column="0"
+                     IsReadOnly="True"
+                     IsInactiveSelectionHighlightEnabled="True"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Visible"
+                     Background="#1c1c1c"
+                     BorderThickness="0"
+                     Padding="6,0,6,6"
+                     FontFamily="Consolas"
+                     FontSize="16"
+                     IsDocumentEnabled="True"
+                     SpellCheck.IsEnabled="False"
+                     SelectionChanged="LogBox_SelectionChanged"
+                     GotKeyboardFocus="SelectionPane_GotKeyboardFocus"
+                     PreviewMouseLeftButtonDown="SelectionPane_PreviewMouseLeftButtonDown"
+                     ScrollViewer.ScrollChanged="Pane_ScrollChanged">
+                <RichTextBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Copy" Command="ApplicationCommands.Copy"/>
+                        <MenuItem Header="Select All" Command="ApplicationCommands.SelectAll"/>
+                    </ContextMenu>
+                </RichTextBox.ContextMenu>
+            </RichTextBox>
+
+            <GridSplitter x:Name="HexGridSplitter"
+                          Grid.Column="1"
+                          Width="4"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"
+                          Background="#2a2a2a"
+                          DragCompleted="HexGridSplitter_DragCompleted"/>
+
+            <DockPanel x:Name="HexPane"
+                       Grid.Column="2"
+                       Background="#171717">
+                <RichTextBox x:Name="HexLogBox"
+                             IsReadOnly="True"
+                             IsInactiveSelectionHighlightEnabled="True"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto"
+                             Background="#171717"
+                             BorderThickness="0"
+                             Padding="6,0,6,6"
+                             FontFamily="Consolas"
+                             FontSize="16"
+                             IsDocumentEnabled="True"
+                             SpellCheck.IsEnabled="False"
+                             SelectionChanged="HexLogBox_SelectionChanged"
+                             GotKeyboardFocus="SelectionPane_GotKeyboardFocus"
+                             PreviewMouseLeftButtonDown="SelectionPane_PreviewMouseLeftButtonDown"
+                             ScrollViewer.ScrollChanged="Pane_ScrollChanged">
+                    <RichTextBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Copy" Command="ApplicationCommands.Copy"/>
+                            <MenuItem Header="Select All" Command="ApplicationCommands.SelectAll"/>
+                        </ContextMenu>
+                    </RichTextBox.ContextMenu>
+                </RichTextBox>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</UserControl>

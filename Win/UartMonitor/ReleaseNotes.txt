@@ -1,0 +1,4 @@
+Release 1.0.0
+
+UartMonitor provides UART text and HEX monitoring with ANSI-aware rendering,
+synchronized selection, timestamps, search, and configurable serial/UI settings.

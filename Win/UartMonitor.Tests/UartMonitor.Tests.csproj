@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net481</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\UartMonitor\Rendering\AnsiParser.cs" Link="Rendering\AnsiParser.cs" />
+    <Compile Include="..\UartMonitor\Rendering\AnsiSequenceInfo.cs" Link="Rendering\AnsiSequenceInfo.cs" />
+    <Compile Include="..\UartMonitor\Rendering\AnsiStyle.cs" Link="Rendering\AnsiStyle.cs" />
+    <Compile Include="..\UartMonitor\Rendering\LogLine.cs" Link="Rendering\LogLine.cs" />
+    <Compile Include="..\UartMonitor\Rendering\TabExpansion.cs" Link="Rendering\TabExpansion.cs" />
+    <Compile Include="..\UartMonitor\Rendering\TextPointerNavigation.cs" Link="Rendering\TextPointerNavigation.cs" />
+    <Compile Include="..\UartMonitor\Serial\LineEndingNormalizer.cs" Link="Serial\LineEndingNormalizer.cs" />
+    <Compile Include="..\UartMonitor\Serial\HexChunkFormatter.cs" Link="Serial\HexChunkFormatter.cs" />
+    <Compile Include="..\UartMonitor\Serial\HexStreamFormatter.cs" Link="Serial\HexStreamFormatter.cs" />
+    <Compile Include="..\UartMonitor\Serial\RawLineSplitter.cs" Link="Serial\RawLineSplitter.cs" />
+    <Compile Include="..\UartMonitor\Serial\AlignmentMath.cs" Link="Serial\AlignmentMath.cs" />
+    <Compile Include="..\UartMonitor\Serial\PortSelection.cs" Link="Serial\PortSelection.cs" />
+    <Compile Include="..\UartMonitor\Serial\CaptureLineIndex.cs" Link="Serial\CaptureLineIndex.cs" />
+    <Compile Include="..\UartMonitor\Serial\SelectionMirror.cs" Link="Serial\SelectionMirror.cs" />
+    <Compile Include="..\UartMonitor\Serial\TestSample.cs" Link="Serial\TestSample.cs" />
+    <Compile Include="..\UartMonitor\Settings\UartMonitorUserSettings.cs" Link="Settings\UartMonitorUserSettings.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="MSTest.TestAdapter" Version="3.8.3" />
+    <PackageReference Include="MSTest.TestFramework" Version="3.8.3" />
+  </ItemGroup>
+</Project>
