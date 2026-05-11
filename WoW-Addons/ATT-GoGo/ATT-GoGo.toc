@@ -1,4 +1,4 @@
-﻿## Interface: 50502,50503
+﻿## Interface: 50502,50503,50504
 ## Title: ATT-GoGo
 ## Notes: Companion addon for 'AllTheThings' to show instance farming status in a grid. Use /attgogo to see available commands.
 ## Author: |cffff8000YePhlcK|r
@@ -7,7 +7,7 @@
 ## X-QrPayPalMe: qr-paypal-me
 ## X-QrDiscord: qr-discord
 ## X-QrDiscord-ATT: qr-discord-att
-## Version: 1.01
+## Version: 1.02
 ## Dependencies: AllTheThings
 ## OptionalDeps: LibStub LibDataBroker-1.1 LibDBIcon-1.0
 Libs\LibStub\LibStub.lua

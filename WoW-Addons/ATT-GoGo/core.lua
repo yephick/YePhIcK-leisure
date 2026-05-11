@@ -84,6 +84,22 @@ function Util.InsertNodeChatLink(node)
   if link and not ChatEdit_InsertLink(link) then ChatFrame_OpenChat(link) end
 end
 
+function Util.GetKnownProfessions()
+  local professions, seen = {}, {}
+  local slots = { GetProfessions() }
+  for i = 1, #slots do
+    local profIndex = slots[i]
+    if profIndex then
+      local name = GetProfessionInfo(profIndex)
+      if name and not seen[name] then
+        seen[name] = true
+        professions[#professions + 1] = name
+      end
+    end
+  end
+  return professions
+end
+
 function Util.NodeDisplayName(n) return n.text or n.name or ATT.GetNameFromProviders(n) end
 
 local _ATT_ONE_CACHE = setmetatable({}, { __mode = "v" })  -- weak values
@@ -174,6 +190,11 @@ function Util.InvalidateProgressCache(node)
   -- targeted: clear this node and bubble to parents so rollups recompute
   local p = node
   while type(p) == "table" do _PROG_CACHE[p] = nil; p = rawget(p, "parent") end
+end
+
+function Util.GetATTDatabaseRoot()
+    if ATT.GetDatabaseRoot then return ATT:GetDatabaseRoot() end
+    if ATT.GetDataCache then return ATT:GetDataCache() end
 end
 
 function Util.ATTGetProgress(node)
@@ -383,17 +404,20 @@ end
 -------------------------------------------------
 function Util.ExtractMapAndCoords(node)
   local c = node.coords
-  if c then
-    local x = c[1][1]
-    local y = c[1][2]
-    local m = c[1][3]
-    if x and y then
-      if x > 1 then x = x / 100 end
-      if y > 1 then y = y / 100 end
-      if x < 0 then x = 0 elseif x > 1 then x = 1 end
-      if y < 0 then y = 0 elseif y > 1 then y = 1 end
-      local mapID = m or node.mapID
-      return mapID, x, y
+  if type(c) == "table" then
+    local first = c[1]
+    if type(first) == "table" then
+      local x = first[1]
+      local y = first[2]
+      local m = first[3]
+      if x and y then
+        if x > 1 then x = x / 100 end
+        if y > 1 then y = y / 100 end
+        if x < 0 then x = 0 elseif x > 1 then x = 1 end
+        if y < 0 then y = 0 elseif y > 1 then y = 1 end
+        local mapID = m or node.mapID
+        return mapID, x, y
+      end
     end
   end
 
@@ -780,7 +804,7 @@ end
 
 function BuildExpansionList()
   local list, seen = {}, {}
-  local root = ATT:GetDataCache()
+  local root = ATT:GetDatabaseRoot()
 
   local function scanContainer(cat)
     if type(cat.g) ~= "table" then return end
@@ -812,7 +836,7 @@ function Util.GetInstanceProgressKey(node)
 end
 
 function GetInstancesForExpansion(expansionID)
-  local root = ATT:GetDataCache()
+  local root = ATT:GetDatabaseRoot()
   local out = {}
 
   local function scanContainer(cat)
@@ -853,7 +877,7 @@ function GetInstancesForExpansion(expansionID)
 end
 
 function BuildZoneList()
-  local root = ATT:GetDataCache()
+  local root = ATT:GetDatabaseRoot()
 
   local zones, seen = {}, {}
 

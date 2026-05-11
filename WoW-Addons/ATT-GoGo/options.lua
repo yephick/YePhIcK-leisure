@@ -18,7 +18,7 @@ local function RefreshPopupForCurrentData() local popup = _G.ATTGoGoUncollectedP
 local function SetupOptionsFrame()
   if OptionsUI.frame then return OptionsUI.frame end
   local f = CreateFrame("Frame", "ATTGoGoOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
-  f:SetSize(300, 570)
+  f:SetSize(300, 600)
   f:Hide()
   Util.EnableDragPersist(f, "optionsWindowPos")
 
@@ -59,7 +59,7 @@ local function SetupOptionsFrame()
     local function RefreshControl(cb) cb:GetScript("OnShow")(cb) end
     for _, key in ipairs({
       "minimapCheckbox","instIconCheckbox","nakedTryOnCheckbox",
-      "removedCheckbox","mapPackageCheckbox","criteriaCheckbox","groupVisualsCheckbox",
+      "removedCheckbox","mapPackageCheckbox","criteriaCheckbox","groupVisualsCheckbox","onlyThisCharacterCheckbox",
     }) do
       RefreshControl(OptionsUI.controls[key])
     end
@@ -307,8 +307,21 @@ function OptionsUI.BuildPerCharGroup(parent)
   )
   OptionsUI.controls.groupVisualsCheckbox = groupVisualsCheckbox
 
+  local onlyThisCharacterCheckbox = AddCheckbox(
+    g,
+    "Only collectible by this character",
+    { "TOPLEFT", groupVisualsCheckbox, "BOTTOMLEFT", 0, -6 },
+    function() return GetCharSetting("bossItemsForThisCharacterOnly", false) end,
+    function(v) SetCharSetting("bossItemsForThisCharacterOnly", v) end,
+    RefreshPopupForCurrentData,
+    "ON: hide boss items this character cannot realistically use, including armor/weapon mismatches and recipe items for professions this character does not know.",
+    "OFF: show all uncollected boss items, regardless of whether this character can use them.",
+    "Recommended OFF if you want the full boss loot table."
+  )
+  OptionsUI.controls.onlyThisCharacterCheckbox = onlyThisCharacterCheckbox
+
   -- Filters grid
-  OptionsUI.BuildFilterCheckboxes(g, groupVisualsCheckbox)
+  OptionsUI.BuildFilterCheckboxes(g, onlyThisCharacterCheckbox)
 end
 
 -- Filters -------------------------------------------------------------------
@@ -340,7 +353,7 @@ function OptionsUI.BuildFilterCheckboxes(group, anchor)
     OptionsUI.filterCheckboxes[key] = cb
   end
 
-  group:SetHeight(24 + 2*20 + 12 + (math.ceil(#ORDER/2) * rowHeight) + 18 + 12)
+  group:SetHeight(24 + 3*24 + 12 + (math.ceil(#ORDER/2) * rowHeight) + 18 + 12)
 end
 
 function OptionsUI.UpdateFilterCheckboxes()

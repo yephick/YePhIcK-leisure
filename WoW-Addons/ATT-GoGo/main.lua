@@ -237,14 +237,14 @@ local function test()
 
     local ctx = Util.ResolvePopupTargetForCurrentContext() -- provides instance per-difficulty subset
     local mapID = C_Map.GetBestMapForUnit("player")
-    local pkg = ATT.GetCachedDataForMapID(mapID)          -- always provides a combined set
+    local pkg = mapID and ATT.GetCachedDataForMapID(mapID) or nil -- always provides a combined set
     local node, info = Util.ResolveContextNode()
-    print("mapID: " .. mapID)
+    print("mapID: " .. tostring(mapID))
 
     local function nt(o, c, t) return ("name=%s; text=%s; %d/%d"):format(tostring(o and o.name or "noname"), tostring(o and o.text or "notext"), (c or 0), (t or 0)) end
 
     print("ctx: " .. nt(ctx,  Util.ATTGetProgress(ctx)))
-    print("pkg: " .. nt(pkg,  Util.ResolveMapProgress(mapID)))
+    print("pkg: " .. nt(pkg,  mapID and Util.ResolveMapProgress(mapID) or nil))
     print("dfc: " .. nt(node, Util.ATTGetProgress(node)))
 
     if IsInInstance() then

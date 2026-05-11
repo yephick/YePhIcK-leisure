@@ -6,6 +6,7 @@
 ------------------------------------------------------------
 local uncollectedPopup          -- Frame (name: ATTGoGoUncollectedPopup)
 local currentTooltipNode        -- last node whose tooltip is active
+local bossItemsDock             -- text list shown beside the 3D boss preview
 
 -- Lazy-resolution registries
 local itemLabelsByID  = {}      -- [itemID]      = { label = FontString, btn = ItemButton }
@@ -35,6 +36,8 @@ local CLASS_ID = select(3, UnitClass("player"))
 
 local INCLUDE_REMOVED = false       -- set per-run in BuildNodeList
 local ACTIVE_KEYS = nil             -- set per-run in BuildNodeList
+local CanShowItemForCharacter
+local CollectBossItems
 
 local function IsAllowedLeaf(node, activeKeys)
     if node.visible == false or node.collected then return false, nil end
@@ -54,6 +57,8 @@ local function IsAllowedLeaf(node, activeKeys)
         end
         if not ok then return false, nil end
     end
+
+    if node.itemID and not CanShowItemForCharacter(node, "main") then return false, nil end
 
     if not INCLUDE_REMOVED and Util.IsNodeRemoved(node) then return false, nil end
 
@@ -105,51 +110,92 @@ local function NodeShortName(n)
     return "Collectible"
 end
 
-------------------------------------------------------------
--- Tooltip helpers
-------------------------------------------------------------
-local function CollectIdFields(node)
-    local keys = {}
-    for k, v in pairs(node) do
-        if v ~= nil and v ~= "" and type(k) == "string" and k:find("ID", 1, true) then
-            keys[#keys + 1] = k
+local INVTYPE_LABELS = {
+    INVTYPE_HEAD = "Head",
+    INVTYPE_NECK = "Neck",
+    INVTYPE_SHOULDER = "Shoulder",
+    INVTYPE_BODY = "Shirt",
+    INVTYPE_CHEST = "Chest",
+    INVTYPE_ROBE = "Chest",
+    INVTYPE_WAIST = "Waist",
+    INVTYPE_LEGS = "Legs",
+    INVTYPE_FEET = "Feet",
+    INVTYPE_WRIST = "Wrist",
+    INVTYPE_HAND = "Hands",
+    INVTYPE_FINGER = "Finger",
+    INVTYPE_TRINKET = "Trinket",
+    INVTYPE_CLOAK = "Back",
+    INVTYPE_WEAPON = "One-Hand",
+    INVTYPE_SHIELD = "Off-Hand",
+    INVTYPE_2HWEAPON = "Two-Hand",
+    INVTYPE_WEAPONMAINHAND = "Main Hand",
+    INVTYPE_WEAPONOFFHAND = "Off Hand",
+    INVTYPE_HOLDABLE = "Off-Hand",
+    INVTYPE_RANGED = "Ranged",
+    INVTYPE_RANGEDRIGHT = "Ranged",
+    INVTYPE_THROWN = "Thrown",
+    INVTYPE_TABARD = "Tabard",
+}
+
+local bindingTooltip
+local function BossItemBindPrefix(node)
+    if not (node and node.itemID) then return "" end
+
+    bindingTooltip = bindingTooltip or CreateFrame("GameTooltip", "ATTGoGoBindingTooltip", UIParent, "GameTooltipTemplate")
+    bindingTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    bindingTooltip:ClearLines()
+    bindingTooltip:SetHyperlink("item:" .. node.itemID)
+
+    local bindOnEquip = ITEM_BIND_ON_EQUIP and ITEM_BIND_ON_EQUIP:lower()
+    local bindOnPickup = ITEM_BIND_ON_PICKUP and ITEM_BIND_ON_PICKUP:lower()
+    for i = 2, bindingTooltip:NumLines() do
+        local line = _G["ATTGoGoBindingTooltipTextLeft" .. i]
+        local text = line and line:GetText()
+        text = text and text:lower()
+        if text == bindOnEquip then
+            bindingTooltip:Hide()
+            return "BoE "
+        end
+        if text == bindOnPickup then
+            bindingTooltip:Hide()
+            return "BoP "
         end
     end
-    return keys
+
+    bindingTooltip:Hide()
+    return ""
 end
 
-local function AddMatchedIDLines(node)
-    if GetSetting("DBG_en", false) ~= true then return end
-    local keys = CollectIdFields(node) or TP(node.parent) or node.parent and CollectIdFields(node.parent)
-    table.sort(keys)
-    if #keys == 0 then return end
-
-    GameTooltip:AddLine(" ")
-    for _, k in ipairs(keys) do
-        local v = node[k]
-        GameTooltip:AddLine(k .. ": " .. v, 1, 1, 1)
-        print(CTITLE .. "added " .. k .. ": " .. v .. " to tooltip")
+local function BossItemDisplayText(item)
+    local bindPrefix = BossItemBindPrefix(item)
+    local _, itemType, itemSubType, itemEquipLoc, _, classID = GetItemInfoInstant(item.itemID)
+    local slot = INVTYPE_LABELS[itemEquipLoc] or (itemEquipLoc and _G[itemEquipLoc])
+    local subType = itemSubType
+    if subType == "" or subType == itemType then subType = nil end
+    if classID == LE_ITEM_CLASS_WEAPON then
+        slot = nil
     end
+
+    if bindPrefix ~= "" then
+        local parts = { (bindPrefix:gsub("%s+$", "")) }
+        if slot then parts[#parts + 1] = slot end
+        if subType then parts[#parts + 1] = subType end
+        return "- " .. NodeShortName(item) .. " [" .. table.concat(parts, ", ") .. "]"
+    end
+
+    if slot and subType then
+        return "- " .. NodeShortName(item) .. " [" .. slot .. ", " .. subType .. "]"
+    end
+    if slot then
+        return "- " .. NodeShortName(item) .. " [" .. slot .. "]"
+    end
+    if subType then
+        return "- " .. NodeShortName(item) .. " [" .. subType .. "]"
+    end
+    return "- " .. NodeShortName(item)
 end
 
--- One-time hook to re-append our lines whenever the item tooltip is rebuilt. N.B.: items in bags (for instance) don't have/need our tooltip hook
-if not GameTooltip.__ATTGoGoHooked then
-    GameTooltip:HookScript("OnTooltipSetItem", function(tt)
-        if currentTooltipNode then
-            AddMatchedIDLines(currentTooltipNode)
-        end
-    end)
-
-    -- Quests/objects/spells/etc. that arrive via SetHyperlink (these often rebuild a tick later)
-    hooksecurefunc(GameTooltip, "SetHyperlink", function(tt, link)
-        if tt:IsShown() and currentTooltipNode then
-            AddMatchedIDLines(currentTooltipNode)
-        end
-    end)
-
-    GameTooltip.__ATTGoGoHooked = true
-end
-
+------------------------------------------------------------
 -- === Lightweight 3D preview dock for creatures ===
 local previewDock
 
@@ -183,10 +229,36 @@ function EnsurePreviewDock()
     return previewDock
 end
 
+local function EnsureBossItemsDock()
+    if bossItemsDock then return bossItemsDock end
+    bossItemsDock = CreateFrame("Frame", "ATTGoGoBossItemsDock", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    bossItemsDock:SetSize(300, 360)
+    bossItemsDock:SetFrameStrata("DIALOG")
+    bossItemsDock:SetFrameLevel(211)
+    bossItemsDock:SetClampedToScreen(true)
+    bossItemsDock:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    bossItemsDock.rows = {}
+    bossItemsDock:Hide()
+
+    bossItemsDock.title = bossItemsDock:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    bossItemsDock.title:SetPoint("TOPLEFT", 10, -10)
+    bossItemsDock.title:SetPoint("TOPRIGHT", -10, -10)
+    bossItemsDock.title:SetJustifyH("LEFT")
+    bossItemsDock.title:SetText("Items")
+
+    return bossItemsDock
+end
+
 local function ShowPreviewForNode(node)
     -- Only preview creatures on hover; items go to the Dressing Room via Ctrl+Click.
     if not (node and (node.creatureID or node.npcID)) or not GetSetting("showHover3DPreview", true) then
-        previewDock:Hide(); return
+        previewDock:Hide()
+        return
     end
 
     previewDock:ClearAllPoints()
@@ -214,6 +286,220 @@ local function AddUncollectedChildrenToTooltip(node)
     if shown > 0 and extra > 0 then
         GameTooltip:AddLine(("And %d more..."):format(extra), 0.85, 0.85, 0.85, true)
     end
+end
+
+local function IsTooltipItemAllowed(node)
+    if type(node) ~= "table" or not node.itemID or node.visible == false or node.collected then return false end
+    if OPPOSITE_FACTION ~= 0 and node.r == OPPOSITE_FACTION then return false end
+    if not INCLUDE_REMOVED and Util.IsNodeRemoved(node) then return false end
+
+    local nc = node.c
+    if nc ~= nil then
+        if type(nc) == "table" then
+            for i = 1, #nc do if nc[i] == CLASS_ID then return true end end
+            return false
+        end
+        return nc == CLASS_ID
+    end
+
+    return true
+end
+
+local function IsDescendantOf(node, ancestor)
+    local cur = rawget(node, "parent")
+    while type(cur) == "table" do
+        if cur == ancestor then return true end
+        cur = rawget(cur, "parent")
+    end
+    return false
+end
+
+local function ListContainsID(list, id)
+    if type(list) ~= "table" or not id then return false end
+    for i = 1, #list do
+        local v = list[i]
+        if v == id then return true end
+        if type(v) == "table" and (v[2] == id or v[1] == id) then return true end
+    end
+    return false
+end
+
+local function IsItemConnectedToBoss(itemNode, bossNode)
+    if IsDescendantOf(itemNode, bossNode) then return true end
+
+    local creatureID = bossNode.creatureID or bossNode.npcID
+    if ListContainsID(itemNode.crs, creatureID) or ListContainsID(itemNode.providers, creatureID) then return true end
+    if itemNode.creatureID == creatureID or itemNode.npcID == creatureID then return true end
+
+    local sourceParent = rawget(itemNode, "sourceParent")
+    return sourceParent == bossNode or (type(sourceParent) == "table" and (sourceParent.creatureID == creatureID or sourceParent.npcID == creatureID))
+end
+
+CollectBossItems = function(node)
+    if type(node) ~= "table" or not (node.creatureID or node.npcID) then return end
+
+    local out, seen = {}, {}
+    local nodes = uncollectedPopup and uncollectedPopup.currentNodes
+    if type(nodes) == "table" then
+        for i = 1, #nodes do
+            local child = nodes[i]
+            local itemID = child and child.itemID
+            if itemID and not seen[itemID] and IsTooltipItemAllowed(child) and IsItemConnectedToBoss(child, node) then
+                seen[itemID] = true
+                out[#out + 1] = child
+            end
+        end
+    end
+    return out
+end
+
+local CLASS_ALLOWED_ARMOR = {
+    [1] = { plate = true }, -- Warrior
+    [2] = { plate = true }, -- Paladin
+    [3] = { mail = true },  -- Hunter
+    [4] = { leather = true }, -- Rogue
+    [5] = { cloth = true },  -- Priest
+    [6] = { plate = true },  -- Death Knight
+    [7] = { mail = true },   -- Shaman
+    [8] = { cloth = true },  -- Mage
+    [9] = { cloth = true },  -- Warlock
+    [10] = { leather = true }, -- Monk
+    [11] = { leather = true }, -- Druid
+    [12] = { leather = true }, -- Demon Hunter
+    [13] = { mail = true },  -- Evoker
+}
+
+local CLASS_ALLOWED_WEAPONS = {
+    [1] = { axe = true, dagger = true, ["fist weapon"] = true, mace = true, polearm = true, sword = true, ["two-handed axe"] = true, ["two-handed mace"] = true, ["two-handed sword"] = true },
+    [2] = { axe = true, dagger = true, mace = true, polearm = true, sword = true, ["two-handed axe"] = true, ["two-handed mace"] = true, ["two-handed sword"] = true },
+    [3] = { axe = true, bow = true, crossbow = true, dagger = true, gun = true, ["fist weapon"] = true, mace = true, polearm = true, staff = true, sword = true, thrown = true, ["two-handed axe"] = true, ["two-handed mace"] = true, ["two-handed sword"] = true },
+    [4] = { axe = true, dagger = true, ["fist weapon"] = true, mace = true, sword = true },
+    [5] = { dagger = true, mace = true, wand = true, staff = true },
+    [6] = { axe = true, dagger = true, ["fist weapon"] = true, mace = true, polearm = true, sword = true, ["two-handed axe"] = true, ["two-handed mace"] = true, ["two-handed sword"] = true },
+    [7] = { axe = true, dagger = true, ["fist weapon"] = true, mace = true, shield = true, staff = true, ["two-handed axe"] = true, ["two-handed mace"] = true },
+    [8] = { dagger = true, mace = true, wand = true, staff = true, sword = true },
+    [9] = { dagger = true, wand = true, staff = true, sword = true },
+    [10] = { dagger = true, ["fist weapon"] = true, mace = true, sword = true, staff = true },
+    [11] = { dagger = true, ["fist weapon"] = true, mace = true, polearm = true, staff = true, sword = true, axe = true, ["two-handed axe"] = true, ["two-handed mace"] = true, ["two-handed sword"] = true },
+    [12] = { axe = true, dagger = true, ["fist weapon"] = true, mace = true, polearm = true, sword = true, ["two-handed axe"] = true, ["two-handed mace"] = true, ["two-handed sword"] = true },
+    [13] = { axe = true, dagger = true, ["fist weapon"] = true, mace = true, polearm = true, staff = true, sword = true, shield = true, ["two-handed axe"] = true, ["two-handed mace"] = true, ["two-handed sword"] = true },
+}
+
+local function NormalizeSubtype(subType)
+    return subType and strlower(subType) or nil
+end
+
+local function IsArmorTypeAllowed(classID, subType)
+    local allowed = CLASS_ALLOWED_ARMOR[classID]
+    return allowed and allowed[NormalizeSubtype(subType)] or false
+end
+
+local function IsCollectibleArmorSubtype(subType)
+    subType = NormalizeSubtype(subType)
+    return subType == "cloth" or subType == "leather" or subType == "mail" or subType == "plate" or subType == "shield"
+end
+
+local function IsWeaponTypeAllowed(classID, subType)
+    local allowed = CLASS_ALLOWED_WEAPONS[classID]
+    return allowed and allowed[NormalizeSubtype(subType)] or false
+end
+
+CanShowItemForCharacter = function(item, scope)
+    if not GetCharSetting("bossItemsForThisCharacterOnly", false) then return true end
+    if not item or not item.itemID then return false end
+
+    local bindPrefix = BossItemBindPrefix(item)
+    if bindPrefix == "BoE " then
+        return true
+    end
+
+    local _, itemType, itemSubType = GetItemInfoInstant(item.itemID)
+    if itemType == "Armor" then
+        if not IsCollectibleArmorSubtype(itemSubType) then
+            return true
+        end
+        local ok = IsArmorTypeAllowed(CLASS_ID, itemSubType)
+        return ok
+    end
+    if itemType == "Weapon" then
+        return IsWeaponTypeAllowed(CLASS_ID, itemSubType)
+    end
+    if itemType == "Recipe" then
+        local target = NormalizeSubtype(itemSubType or "")
+        if target == "" then return true end
+        local known = Util.GetKnownProfessions()
+        for i = 1, #known do
+            if NormalizeSubtype(known[i]) == target then return true end
+        end
+        return false
+    end
+
+    return true
+end
+
+local function ShowBossItemsForNode(node)
+    if not (node and (node.creatureID or node.npcID)) then
+        if bossItemsDock then bossItemsDock:Hide() end
+        return
+    end
+
+    local dock = EnsureBossItemsDock()
+    local items = CollectBossItems(node) or {}
+    local visibleItems = {}
+    for i = 1, #items do
+        local item = items[i]
+        if item and CanShowItemForCharacter(item, "boss") then
+            visibleItems[#visibleItems + 1] = item
+        end
+    end
+
+    dock:ClearAllPoints()
+    if previewDock and previewDock:IsShown() then
+        dock:SetPoint("TOPRIGHT", previewDock, "TOPLEFT", -8, 0)
+        dock:SetPoint("BOTTOMRIGHT", previewDock, "BOTTOMLEFT", -8, 0)
+    else
+        dock:SetPoint("TOPRIGHT", uncollectedPopup, "TOPLEFT", -8, 0)
+        dock:SetPoint("BOTTOMRIGHT", uncollectedPopup, "BOTTOMLEFT", -8, 0)
+    end
+    dock.title:SetText(SafeNodeName(node))
+
+    local maxRows = 14
+    for i = 1, maxRows do
+        local row = dock.rows[i]
+        if not row then
+            row = dock:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row:SetPoint("TOPLEFT", 10, -16 - (i * ROW_HEIGHT))
+            row:SetPoint("TOPRIGHT", -10, -16 - (i * ROW_HEIGHT))
+            row:SetJustifyH("LEFT")
+            row:SetWordWrap(false)
+            dock.rows[i] = row
+        end
+        local item = visibleItems[i]
+        if item then
+            row:SetText(BossItemDisplayText(item))
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+
+    if not dock.moreLine then
+        dock.moreLine = dock:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        dock.moreLine:SetPoint("BOTTOMLEFT", 10, 10)
+        dock.moreLine:SetPoint("BOTTOMRIGHT", -10, 10)
+        dock.moreLine:SetJustifyH("LEFT")
+    end
+    if #visibleItems > maxRows then
+        dock.moreLine:SetText(("And %d more..."):format(#visibleItems - maxRows))
+        dock.moreLine:Show()
+    elseif #visibleItems == 0 then
+        dock.moreLine:SetText("No matching uncollected items in this list.")
+        dock.moreLine:Show()
+    else
+        dock.moreLine:Hide()
+    end
+
+    dock:Show()
 end
 
 -- Returns a single-line compact description of quest objectives, or nil if unavailable.
@@ -266,6 +552,7 @@ local function SetupNodeTooltip(btn)
         currentTooltipNode = node
 
         ShowPreviewForNode(node)
+        ShowBossItemsForNode(node)
 
         -- brief attention ping on WorldMap near coords
         do
@@ -274,6 +561,10 @@ local function SetupNodeTooltip(btn)
           if not m and node.flightpathID and node.g then for i=1, #node.g do m, x, y = Util.ExtractMapAndCoords(node.g[i]); if m then break end end end
           if not m and node.parent then m, x, y = Util.ExtractMapAndCoords(node.parent) end
           PingMapAt(m, x, y)
+        end
+
+        if node and (node.creatureID or node.npcID) then
+            return
         end
 
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -304,9 +595,6 @@ local function SetupNodeTooltip(btn)
         elseif node.achievementID then
             GameTooltip:SetHyperlink(GetAchievementLink(node.achievementID))
             AddUncollectedChildrenToTooltip(node)
-        elseif node.creatureID or node.npcID then
-            GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
-            AddUncollectedChildrenToTooltip(node)
         else
             GameTooltip:AddLine(SafeNodeName(node), 1, 1, 1)
             AddUncollectedChildrenToTooltip(node)
@@ -316,6 +604,7 @@ local function SetupNodeTooltip(btn)
     btn:SetScript("OnLeave", function()
         currentTooltipNode = nil
         GameTooltip:Hide()
+        if bossItemsDock then bossItemsDock:Hide() end
         previewDock:Hide()
     end)
 end
@@ -668,12 +957,6 @@ local function AcquireRow(scrollContent, i)
         if mouseButton == "RightButton" then
             if IsAltKeyDown() then
                 Util.FocusMapForNode(node)
-            else
-                if GetSetting("DBG_en", false) == true then
-                    print(DebugGetNodePath(node, {verbose = true}))
-                    DebugRecursive(node, "row dump", 0, 3, false, true)
-                    TP(SafeNodeName(node), node)
-                end
             end
         end
     end)
@@ -807,6 +1090,7 @@ function EnsurePopup()
 
     uncollectedPopup:SetScript("OnHide", function(self)
         previewDock:Hide()
+        if bossItemsDock then bossItemsDock:Hide() end
         Util.SaveFramePosition(self, "popupWindowPos")
     end)
 
