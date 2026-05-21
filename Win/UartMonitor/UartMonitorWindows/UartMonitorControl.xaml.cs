@@ -1018,6 +1018,11 @@ namespace UartMonitor
             _hexLineStarts.Clear();
             _mirrorHighlights.Clear();
             _searchHighlights.Clear();
+
+            // Clear timestamp hover ranges whose TextPointers belong to any prior document.
+            _timestampHoverRanges.Clear();
+            CloseTimestampToolTip();
+
             const double sharedFontSize = 16;
             const double sharedLineHeight = 16;
             FlowDocument document = new FlowDocument
