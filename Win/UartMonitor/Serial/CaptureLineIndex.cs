@@ -18,6 +18,27 @@ namespace UartMonitor.Serial
             _lines.Clear();
         }
 
+        public void TrimToLast(int maxLines)
+        {
+            if (maxLines <= 0)
+                maxLines = 1;
+
+            if (_lines.Count <= maxLines)
+                return;
+
+            int removeCount = _lines.Count - maxLines;
+            _lines.RemoveRange(0, removeCount);
+
+            int documentOffset = 0;
+            for (int index = 0; index < _lines.Count; index++)
+            {
+                CaptureLine line = _lines[index];
+                line.SetIndex(index);
+                line.SetDocumentStartOffset(documentOffset);
+                documentOffset += line.DocumentLength;
+            }
+        }
+
         public void AppendChunk(string textChunk, string hexChunk)
         {
             LinePart[] textLines = SplitLines(textChunk);
@@ -327,7 +348,7 @@ namespace UartMonitor.Serial
             {
             }
 
-            public int Index { get; }
+            public int Index { get; private set; }
             public bool IsComplete { get; private set; }
             public string Text => _textBuilder.ToString();
             public string Hex => _hexBuilder.ToString();
@@ -343,6 +364,16 @@ namespace UartMonitor.Serial
             public int RenderedTextDocumentStartOffset { get; private set; }
             public int RenderedHexDocumentStartOffset { get; private set; }
             public DateTime Timestamp { get; }
+
+            public void SetIndex(int index)
+            {
+                Index = index;
+            }
+
+            public void SetDocumentStartOffset(int documentStartOffset)
+            {
+                DocumentStartOffset = Math.Max(0, documentStartOffset);
+            }
 
             public void SetRenderedDocumentStartOffset(int renderedDocumentStartOffset)
             {

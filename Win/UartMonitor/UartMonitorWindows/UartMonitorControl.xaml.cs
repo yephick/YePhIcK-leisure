@@ -141,6 +141,7 @@ namespace UartMonitor
             CheckBox hexBytesCheckBox = CreateDialogCheckBox("HEX bytes", _state.HexBytes, "Show or hide the HEX bytes pane.");
             CheckBox panelSyncCheckBox = CreateDialogCheckBox("Panel sync", _state.PanelSync, "Synchronize scrolling between the text and HEX panes. This can reduce responsiveness on large captures.");
             CheckBox hexToolTipsCheckBox = CreateDialogCheckBox("HEX mouse-over tooltips", _state.HexMouseOverToolTips, "Show byte/ANSI explanations when hovering over the HEX pane.");
+            TextBox maxStoredLinesTextBox = CreateDialogTextBox(_state.MaxStoredLines.ToString(CultureInfo.InvariantCulture), width: 80, toolTip: "Maximum number of captured lines kept in memory.");
 
             Button refreshButton = new Button
             {
@@ -182,6 +183,7 @@ namespace UartMonitor
             }));
             tabs.Items.Add(CreateSettingsTab("Behavior", new FrameworkElement[]
             {
+                CreateDialogRow("Scrollback:", maxStoredLinesTextBox, "Maximum number of captured lines kept in memory."),
                 autoScrollCheckBox,
                 hexBytesCheckBox,
                 panelSyncCheckBox,
@@ -212,6 +214,7 @@ namespace UartMonitor
                 _state.PanelSync = panelSyncCheckBox.IsChecked == true;
                 _state.HexMouseOverToolTips = hexToolTipsCheckBox.IsChecked == true;
                 _state.Timestamps = timestampsCheckBox.IsChecked == true;
+                _state.MaxStoredLines = GetAllowedLineLimit(maxStoredLinesTextBox.Text, _state.MaxStoredLines);
                 _state.Save();
 
                 ApplyStateToQuickControls();
@@ -252,6 +255,18 @@ namespace UartMonitor
                 IsChecked = isChecked,
                 Foreground = CreateBrush(Color.FromRgb(0xd6, 0xd6, 0xd6)),
                 Margin = new Thickness(0, 0, 0, 8),
+                FontSize = 11,
+                ToolTip = toolTip
+            };
+        }
+
+        private TextBox CreateDialogTextBox(string text, double width, string? toolTip = null)
+        {
+            return new TextBox
+            {
+                Text = text,
+                Width = width,
+                MinHeight = 22,
                 FontSize = 11,
                 ToolTip = toolTip
             };
@@ -757,6 +772,7 @@ namespace UartMonitor
                             ? GetLineZeroTimestamp(logicalPart.Timestamp)
                             : GetLineTimestamp(logicalPart.Timestamp);
                         _lineIndex.AppendLinePart(renderedText, hex, logicalPart.IsComplete, logicalPart.LineEndingLength, text, segments, lineTimestamp);
+                        _lineIndex.TrimToLast(_state.MaxStoredLines);
                     }
                 }
             }
@@ -773,6 +789,13 @@ namespace UartMonitor
         private static DateTime GetLineTimestamp(DateTime fallback)
         {
             return fallback == DateTime.MinValue ? DateTime.Now : fallback;
+        }
+
+        private static int GetAllowedLineLimit(string? text, int fallback)
+        {
+            return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed > 0
+                ? parsed
+                : fallback;
         }
 
         private static IEnumerable<RawLinePart> SplitClearScreenParts(RawLinePart part)
@@ -2056,6 +2079,7 @@ namespace UartMonitor
             public bool HexMouseOverToolTips { get; set; } = true;
             public bool Timestamps { get; set; }
             public bool PanelSync { get; set; }
+            public int MaxStoredLines { get; set; } = 400;
 
             public static MonitorSettingsState Load(
                 IReadOnlyList<EncodingChoice> encodingOptions,
@@ -2087,7 +2111,8 @@ namespace UartMonitor
                     HexSplitRatio = settings.HexSplitRatio,
                     HexMouseOverToolTips = settings.HexMouseOverToolTips,
                     Timestamps = settings.Timestamps,
-                    PanelSync = settings.PanelSync
+                    PanelSync = settings.PanelSync,
+                    MaxStoredLines = settings.MaxStoredLines > 0 ? settings.MaxStoredLines : 400
                 };
             }
 
@@ -2109,6 +2134,7 @@ namespace UartMonitor
                 _settings.HexMouseOverToolTips = HexMouseOverToolTips;
                 _settings.Timestamps = Timestamps;
                 _settings.PanelSync = PanelSync;
+                _settings.MaxStoredLines = MaxStoredLines;
                 _settings.Save();
             }
 

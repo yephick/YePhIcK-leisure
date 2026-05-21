@@ -25,6 +25,7 @@ namespace UartMonitor.Settings
         public bool HexMouseOverToolTips { get; set; } = true;
         public bool Timestamps { get; set; } = false;
         public bool PanelSync { get; set; } = false;
+        public int MaxStoredLines { get; set; } = 400;
 
         public static string FilePath =>
             OverrideFilePathForTests ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UartMonitor", "settings.txt");
@@ -65,6 +66,7 @@ namespace UartMonitor.Settings
                 settings.HexMouseOverToolTips = GetBool(values, nameof(HexMouseOverToolTips), settings.HexMouseOverToolTips);
                 settings.Timestamps = GetBool(values, nameof(Timestamps), settings.Timestamps);
                 settings.PanelSync = GetBool(values, nameof(PanelSync), settings.PanelSync);
+                settings.MaxStoredLines = GetPositiveInt(values, nameof(MaxStoredLines), settings.MaxStoredLines);
                 return settings;
             }
             catch
@@ -94,6 +96,7 @@ namespace UartMonitor.Settings
                 $"HexMouseOverToolTips={HexMouseOverToolTips}",
                 $"Timestamps={Timestamps}",
                 $"PanelSync={PanelSync}",
+                $"MaxStoredLines={GetPositiveInt(MaxStoredLines, 400).ToString(CultureInfo.InvariantCulture)}",
             });
         }
 
@@ -121,6 +124,18 @@ namespace UartMonitor.Settings
             return values.TryGetValue(key, out string? value) && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
                 ? GetAllowedRatio(parsed)
                 : fallback;
+        }
+
+        private static int GetPositiveInt(IReadOnlyDictionary<string, string> values, string key, int fallback)
+        {
+            return values.TryGetValue(key, out string? value) && int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed > 0
+                ? parsed
+                : fallback;
+        }
+
+        private static int GetPositiveInt(int value, int fallback)
+        {
+            return value > 0 ? value : fallback;
         }
 
         private static double GetAllowedRatio(double value)
