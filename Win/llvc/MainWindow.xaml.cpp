@@ -19,6 +19,7 @@
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <shobjidl_core.h>
+#include <mmreg.h>
 #include <robuffer.h>
 #include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
@@ -33,6 +34,7 @@
 #include <winrt/Windows.System.h>
 
 import std;
+import llvc.AudioWaveform;
 import llvc.EditorController;
 import llvc.Export;
 import llvc.Media;
@@ -82,6 +84,22 @@ using TS = MainWindow::TS;
 namespace{
 constexpr array kPageJumpSecondsOptions{0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0, 15.0, 20.0};
 constexpr int kIntegerZoomStartIndex{4};
+constexpr int32_t kMainWindowMinWidthDips{960};
+constexpr int32_t kMainWindowMinHeightDips{640};
+constexpr size_t kAudioWaveformBucketCount{4096};
+constexpr size_t kAudioWaveformChunkCount{64};
+constexpr size_t kAudioWaveformBucketsPerChunk{kAudioWaveformBucketCount / kAudioWaveformChunkCount};
+
+struct AudioWaveformCacheEntry final{
+    vector<float> peaks = vector<float>(kAudioWaveformBucketCount, 0.0f);
+    vector<bool> chunksBuilt = vector<bool>(kAudioWaveformChunkCount, false);
+    bool ready{false};
+    bool failed{false};
+    bool inProgress{false};
+};
+
+std::mutex g_audioWaveformCacheMutex;
+std::unordered_map<std::wstring, std::shared_ptr<AudioWaveformCacheEntry>> g_audioWaveformCache;
 
 double pageJumpSecondsFromSettings(const ::llvc::AppSettingsState& settings){
     return kPageJumpSecondsOptions[min<size_t>(settings.pageJumpDurationIndex, kPageJumpSecondsOptions.size() - 1)];
@@ -103,6 +121,16 @@ LRESULT CALLBACK MainWindowSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     auto* self{reinterpret_cast<MainWindow*>(refData)};
     if(!self){
         return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }
+
+    if(msg == WM_GETMINMAXINFO){
+        auto* minmaxInfo{reinterpret_cast<MINMAXINFO*>(lParam)};
+        if(minmaxInfo){
+            const auto dpi{::GetDpiForWindow(hwnd)};
+            minmaxInfo->ptMinTrackSize.x = dipsToPixels(kMainWindowMinWidthDips, dpi);
+            minmaxInfo->ptMinTrackSize.y = dipsToPixels(kMainWindowMinHeightDips, dpi);
+            return 0;
+        }
     }
 
     if(msg == WM_CLOSE && self->isExportInProgressForClosePrompt()){
@@ -1293,6 +1321,7 @@ MainWindow::MainWindow(const hstring& launchArguments){
     const auto hwnd{getWindowHandle()};
     SetWindowSubclass(hwnd, MainWindowSubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
     loadAppSettings();
+    applyThemePreference();
     const auto initialZoomIndex{clampTimelineZoomIndex(TimelineZoomSlider(), m_appSettings.timelineZoom)};
     m_appSettings.timelineZoom = initialZoomIndex;
     m_prj.setZoomWithoutDirty(initialZoomIndex);
@@ -1374,8 +1403,41 @@ void MainWindow::loadAppSettings(){
     m_appSettings = ::llvc::loadAppSettings();
 }
 
+std::shared_ptr<AudioWaveformCacheEntry> getOrCreateAudioWaveformEntry(const std::wstring& sourcePath){
+    std::scoped_lock lock{g_audioWaveformCacheMutex};
+    auto& entry{g_audioWaveformCache[sourcePath]};
+    if(!entry){
+        entry = std::make_shared<AudioWaveformCacheEntry>();
+    }
+    return entry;
+}
+
 void MainWindow::saveAppSettings() const{
     ::llvc::saveAppSettings(m_appSettings);
+}
+
+ElementTheme MainWindow::requestedElementTheme() const noexcept{
+    switch(m_appSettings.appThemeMode){
+    case ::llvc::AppThemeMode::Light:
+        return ElementTheme::Light;
+    case ::llvc::AppThemeMode::Dark:
+        return ElementTheme::Dark;
+    default:
+        return ElementTheme::Default;
+    }
+}
+
+void MainWindow::applyThemePreference(){
+    const auto theme{requestedElementTheme()};
+    if(RootGrid()){
+        RootGrid().RequestedTheme(theme);
+    }
+
+    if(m_separatePreview.window){
+        if(const auto previewRoot{m_separatePreview.window.Content().try_as<FrameworkElement>()}; previewRoot){
+            previewRoot.RequestedTheme(theme);
+        }
+    }
 }
 
 void MainWindow::saveWindowPlacement() const{
@@ -1463,10 +1525,7 @@ void MainWindow::onWindowActivated(const Control&, const WAVArgs& args){
 }
 
 void MainWindow::startButton_Click(const Control&, const REArgs&){
-    if(m_player){
-        applyAudioSettingsToPlayer();
-        m_player.Play();
-    }
+    playPreviewFromCurrentPosition();
 }
 
 void MainWindow::pauseButton_Click(const Control&, const REArgs&){
@@ -1576,6 +1635,15 @@ void MainWindow::timelineZoomSlider_PointerWheelChanged(const Control&, const PR
     args.Handled(true);
 }
 
+void MainWindow::audioWaveformThresholdSlider_ValueChanged(const Control&, const RBVArgs& args){
+    m_audioWaveformThresholdDb = std::clamp(args.NewValue(), -60.0, -3.0);
+    const auto thresholdText{AudioWaveformThresholdValueText()};
+    if(thresholdText){
+        thresholdText.Text(formatWaveformThresholdDb(m_audioWaveformThresholdDb));
+    }
+    renderAudioWaveform();
+}
+
 void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
     if(m_editorHistory.isApplying){
         return;
@@ -1647,6 +1715,11 @@ void MainWindow::timelineHorizontalScrollBar_ValueChanged(const Control&, const 
 
 void MainWindow::timelineScrollViewer_ViewChanged(const Control&, const SVVCArgs&){
     syncTimelineHorizontalScrollBar();
+    renderAudioWaveform();
+    if(sourceHasAudio() && !m_audioWaveformAnalysisQueued){
+        m_audioWaveformAnalysisQueued = true;
+        ensureAudioWaveformAsync();
+    }
 
     if(m_isExportInProgress && m_prj.hasVideoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
@@ -2683,7 +2756,7 @@ bool MainWindow::handleStorylineKeyDownImpl(const KRArgs& args){
             if(state == MediaPlaybackState::Playing){
                 m_player.Pause();
             }else{
-                m_player.Play();
+                playPreviewFromCurrentPosition();
             }
         }
         args.Handled(true);
@@ -2796,7 +2869,10 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         previewWindow.Title(L"ClipRazor: Lossless Video Cutter - video preview");
 
         Controls::Grid root{};
-        root.Background(Media::SolidColorBrush(winrt::Microsoft::UI::ColorHelper::FromArgb(0xFF, 0x08, 0x08, 0x08)));
+        root.RequestedTheme(requestedElementTheme());
+        if(const auto backgroundBrush{Application::Current().Resources().Lookup(box_value(L"PreviewWindowBackgroundBrush")).try_as<Media::Brush>()}; backgroundBrush){
+            root.Background(backgroundBrush);
+        }
 
         Controls::Image detachedSplash{};
         detachedSplash.Source(Media::Imaging::BitmapImage(Uri{L"ms-appx:///Assets/SplashScreen.png"}));
@@ -4301,6 +4377,7 @@ AAction MainWindow::showOptionsDialogAsync(){
     m_appSettings.maxRecentVideos = updatedSettings.maxRecentVideos;
     m_appSettings.maxRecentProjects = updatedSettings.maxRecentProjects;
     m_appSettings.pageJumpDurationIndex = updatedSettings.pageJumpDurationIndex;
+    m_appSettings.appThemeMode = updatedSettings.appThemeMode;
     m_appSettings.deleteSourceAndProjectAfterExport = updatedSettings.deleteSourceAndProjectAfterExport;
     m_appSettings.autoReevaluateCutMarkersOnPlacement = updatedSettings.autoReevaluateCutMarkersOnPlacement;
     m_appSettings.generateExportTimeReport = updatedSettings.generateExportTimeReport;
@@ -4314,6 +4391,7 @@ AAction MainWindow::showOptionsDialogAsync(){
 
     refreshRecentVideosMenu();
     refreshRecentProjectsMenu();
+    applyThemePreference();
     saveAppSettings();
 }
 
@@ -4579,8 +4657,37 @@ void MainWindow::applyAudioSettingsToPlayer(){
     m_player.Volume(allowAudio ? clamp(m_prj.audioVolumePct() / 100.0, 0.0, 1.0) : 0.0);
 }
 
+void MainWindow::playPreviewFromCurrentPosition(){
+    if(!m_player){
+        return;
+    }
+
+    applyAudioSettingsToPlayer();
+    const auto session{m_player.PlaybackSession()};
+    const auto duration{session.NaturalDuration().count()};
+    if(duration > 0 && session.Position().count() >= max<int64_t>(0, duration - 100'000)){
+        session.Position(TimeSpan{0});
+        updateTimelineCursorFromPosition(0);
+    }
+    m_player.Play();
+}
+
 void MainWindow::updateAudioUiAndPlaybackState(){
     if(!m_prj.hasVideoFile() || m_prj.videoFilePath().empty()){
+        if(AudioWaveformCanvas()){
+            AudioWaveformCanvas().Visibility(Visibility::Collapsed);
+            AudioWaveformCanvas().Children().Clear();
+        }
+        if(AudioWaveformThresholdLabel()){
+            AudioWaveformThresholdLabel().Visibility(Visibility::Collapsed);
+        }
+        if(AudioWaveformThresholdSlider()){
+            AudioWaveformThresholdSlider().Visibility(Visibility::Collapsed);
+        }
+        if(AudioWaveformThresholdValueText()){
+            AudioWaveformThresholdValueText().Visibility(Visibility::Collapsed);
+        }
+        m_audioWaveformAnalysisQueued = false;
         return;
     }
     const auto hasAudio{sourceHasAudio()};
@@ -4606,6 +4713,231 @@ void MainWindow::updateAudioUiAndPlaybackState(){
 
     m_editorHistory.isApplying = previousGuard;
     applyAudioSettingsToPlayer();
+    updateAudioWaveformUi();
+}
+
+void MainWindow::updateAudioWaveformUi(){
+    const auto hasAudio{m_prj.hasVideoFile() && sourceHasAudio()};
+    const auto visibility{hasAudio ? Visibility::Visible : Visibility::Collapsed};
+    if(!AudioWaveformCanvas() || !AudioWaveformThresholdLabel() || !AudioWaveformThresholdSlider() || !AudioWaveformThresholdValueText()){
+        return;
+    }
+    AudioWaveformCanvas().Visibility(visibility);
+    AudioWaveformThresholdLabel().Visibility(visibility);
+    AudioWaveformThresholdSlider().Visibility(visibility);
+    AudioWaveformThresholdValueText().Visibility(visibility);
+    AudioWaveformThresholdSlider().Value(m_audioWaveformThresholdDb);
+    AudioWaveformThresholdValueText().Text(formatWaveformThresholdDb(m_audioWaveformThresholdDb));
+    if(!hasAudio){
+        AudioWaveformCanvas().Children().Clear();
+        m_audioWaveformAnalysisQueued = false;
+        return;
+    }
+    renderAudioWaveform();
+}
+
+void MainWindow::renderAudioWaveform(){
+    const auto canvas{AudioWaveformCanvas()};
+    if(!canvas){
+        return;
+    }
+    canvas.Children().Clear();
+
+    if(canvas.Visibility() != Visibility::Visible || !m_prj.hasVideoFile() || !sourceHasAudio()){
+        return;
+    }
+
+    const auto width{TimelineCanvas().Width()};
+    const auto height{canvas.Height()};
+    canvas.Width(width);
+    if(width <= 0 || height <= 0){
+        return;
+    }
+
+    const auto sourcePath{std::wstring{m_prj.videoFilePath().c_str()}};
+    const auto entry{getOrCreateAudioWaveformEntry(sourcePath)};
+    vector<float> peaks;
+    vector<bool> chunksBuilt;
+    {
+        std::scoped_lock lock{g_audioWaveformCacheMutex};
+        if(entry){
+            peaks = entry->peaks;
+            chunksBuilt = entry->chunksBuilt;
+        }
+    }
+    if(!entry || peaks.empty() || chunksBuilt.empty() || std::none_of(chunksBuilt.begin(), chunksBuilt.end(), [](bool built){ return built; })){
+        return;
+    }
+
+    namespace Shapes = winrt::Microsoft::UI::Xaml::Shapes;
+    namespace Media = winrt::Microsoft::UI::Xaml::Media;
+    namespace Controls = winrt::Microsoft::UI::Xaml::Controls;
+    const auto guideY{height * (1.0 - AudioWaveformThresholdLineRatio)};
+    const auto coolBrush{Media::SolidColorBrush(winrt::Microsoft::UI::ColorHelper::FromArgb(255, 76, 163, 224))};
+    const auto hotBrush{Media::SolidColorBrush(winrt::Microsoft::UI::ColorHelper::FromArgb(255, 224, 96, 96))};
+    const auto guideBrush{Media::SolidColorBrush(winrt::Microsoft::UI::ColorHelper::FromArgb(220, 214, 170, 64))};
+
+    Shapes::Line guideLine{};
+    guideLine.X1(0.0);
+    guideLine.X2(width);
+    guideLine.Y1(guideY);
+    guideLine.Y2(guideY);
+    guideLine.Stroke(guideBrush);
+    guideLine.StrokeThickness(1.0);
+    Media::DoubleCollection dashPattern{};
+    dashPattern.Append(2.0);
+    dashPattern.Append(3.0);
+    guideLine.StrokeDashArray(dashPattern);
+    guideLine.IsHitTestVisible(false);
+    canvas.Children().Append(guideLine);
+
+    const auto columnCount{std::max(1, static_cast<int>(std::ceil(width)))};
+    for(int column{}; column < columnCount; ++column){
+        const auto firstBucket{
+            std::min<size_t>(peaks.size() - 1, static_cast<size_t>((static_cast<double>(column) / columnCount) * peaks.size()))};
+        const auto lastBucket{
+            std::min<size_t>(peaks.size() - 1, static_cast<size_t>((static_cast<double>(column + 1) / columnCount) * peaks.size()))};
+        const auto firstChunk{std::min<size_t>(chunksBuilt.size() - 1, firstBucket / kAudioWaveformBucketsPerChunk)};
+        const auto lastChunk{std::min<size_t>(chunksBuilt.size() - 1, lastBucket / kAudioWaveformBucketsPerChunk)};
+        auto hasReadyChunk{false};
+        for(auto chunk{firstChunk}; chunk <= lastChunk; ++chunk){
+            hasReadyChunk = hasReadyChunk || chunksBuilt[chunk];
+        }
+        if(!hasReadyChunk){
+            continue;
+        }
+
+        float peak{};
+        for(size_t bucket{firstBucket}; bucket <= lastBucket; ++bucket){
+            const auto chunk{std::min<size_t>(chunksBuilt.size() - 1, bucket / kAudioWaveformBucketsPerChunk)};
+            if(chunksBuilt[chunk]){
+                peak = std::max(peak, peaks[bucket]);
+            }
+        }
+        const auto barHeight{std::clamp(audioWaveformHeightRatio(peak, m_audioWaveformThresholdDb) * height, 0.0, height)};
+        if(barHeight <= 0.5){
+            continue;
+        }
+
+        Shapes::Rectangle bar{};
+        bar.Width(1.0);
+        bar.Height(barHeight);
+        bar.Fill(audioWaveformPeakIsHot(peak, m_audioWaveformThresholdDb) ? hotBrush : coolBrush);
+        bar.IsHitTestVisible(false);
+        Controls::Canvas::SetLeft(bar, static_cast<double>(column));
+        Controls::Canvas::SetTop(bar, height - barHeight);
+        canvas.Children().Append(bar);
+    }
+}
+
+winrt::fire_and_forget MainWindow::ensureAudioWaveformAsync(){
+    const auto lifetime{get_strong()};
+    if(m_isClosing || !m_prj.hasVideoFile() || !sourceHasAudio() || m_prj.timelineDuration100ns() <= 0){
+        co_return;
+    }
+
+    const auto sourcePath{std::wstring{m_prj.videoFilePath().c_str()}};
+    const auto duration100ns{m_prj.timelineDuration100ns()};
+    const auto entry{getOrCreateAudioWaveformEntry(sourcePath)};
+    if(!entry || entry->ready || entry->failed){
+        renderAudioWaveform();
+        co_return;
+    }
+    if(entry->inProgress){
+        co_return;
+    }
+
+    const apartment_context uiThread{};
+    co_await resume_after(std::chrono::milliseconds{750});
+    co_await uiThread;
+    if(m_isClosing || std::wstring{m_prj.videoFilePath().c_str()} != sourcePath || !sourceHasAudio()){
+        co_return;
+    }
+    if(entry->ready || entry->failed){
+        renderAudioWaveform();
+        co_return;
+    }
+    if(entry->inProgress){
+        co_return;
+    }
+
+    entry->inProgress = true;
+    while(true){
+        co_await uiThread;
+        if(m_isClosing || std::wstring{m_prj.videoFilePath().c_str()} != sourcePath || !sourceHasAudio()){
+            break;
+        }
+
+        vector<bool> chunksBuilt;
+        {
+            std::scoped_lock lock{g_audioWaveformCacheMutex};
+            chunksBuilt = entry->chunksBuilt;
+        }
+
+        if(chunksBuilt.empty() || std::all_of(chunksBuilt.begin(), chunksBuilt.end(), [](bool built){ return built; })){
+            std::scoped_lock lock{g_audioWaveformCacheMutex};
+            entry->ready = true;
+            break;
+        }
+
+        const auto timelineWidth{std::max(1.0, TimelineCanvas().Width())};
+        const auto chunkWidth{timelineWidth / static_cast<double>(chunksBuilt.size())};
+        const auto scrollViewer{TimelineScrollViewer()};
+        const auto visibleRange{visibleAudioWaveformChunkRange(
+            scrollViewer.HorizontalOffset(),
+            std::max(0.0, scrollViewer.ViewportWidth()),
+            chunkWidth,
+            static_cast<int>(chunksBuilt.size()))};
+        const auto nextChunk{chooseNextAudioWaveformChunkIndex(chunksBuilt, visibleRange, true)};
+        if(nextChunk < 0){
+            std::scoped_lock lock{g_audioWaveformCacheMutex};
+            entry->ready = true;
+            break;
+        }
+
+        co_await resume_background();
+        const auto chunkPeaks{analyzeAudioWaveformChunkPeaks(sourcePath, duration100ns, kAudioWaveformBucketCount, static_cast<size_t>(nextChunk), chunksBuilt.size(), [weak = get_weak(), sourcePath](){
+            if(const auto self{weak.get()}){
+                return self->m_isClosing || std::wstring{self->m_prj.videoFilePath().c_str()} != sourcePath;
+            }
+            return true;
+        })};
+
+        {
+            std::scoped_lock lock{g_audioWaveformCacheMutex};
+            if(chunkPeaks.empty()){
+                entry->failed = true;
+                break;
+            }
+
+            const auto bucketStart{audioWaveformChunkBucketStart(static_cast<size_t>(nextChunk), chunksBuilt.size(), entry->peaks.size())};
+            const auto bucketEnd{std::min(entry->peaks.size(), bucketStart + chunkPeaks.size())};
+            for(size_t bucket{bucketStart}; bucket < bucketEnd; ++bucket){
+                entry->peaks[bucket] = chunkPeaks[bucket - bucketStart];
+            }
+            if(static_cast<size_t>(nextChunk) < entry->chunksBuilt.size()){
+                entry->chunksBuilt[static_cast<size_t>(nextChunk)] = true;
+            }
+        }
+
+        co_await uiThread;
+        if(m_isClosing || std::wstring{m_prj.videoFilePath().c_str()} != sourcePath){
+            break;
+        }
+        renderAudioWaveform();
+    }
+
+    co_await uiThread;
+    {
+        std::scoped_lock lock{g_audioWaveformCacheMutex};
+        entry->inProgress = false;
+        entry->ready = entry->ready || (!entry->chunksBuilt.empty() && std::all_of(entry->chunksBuilt.begin(), entry->chunksBuilt.end(), [](bool built){ return built; }));
+    }
+    m_audioWaveformAnalysisQueued = false;
+    if(m_isClosing || std::wstring{m_prj.videoFilePath().c_str()} != sourcePath){
+        co_return;
+    }
+    renderAudioWaveform();
 }
 
 winrt::fire_and_forget MainWindow::renderTimelineAsync(){
@@ -4642,12 +4974,18 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         const auto thumbnailWidth{stripPlan.thumbnailWidth};
 
         TimelineCanvas().Width(totalWidth);
+        AudioWaveformCanvas().Width(totalWidth);
         ThumbnailLayer().Children().Clear();
         CutOverlayLayer().Width(totalWidth);
         renderTimelineTicks();
+        renderAudioWaveform();
         renderKeyframeTicks();
         renderCutOverlays();
         syncTimelineHorizontalScrollBar();
+        if(sourceHasAudio() && !m_audioWaveformAnalysisQueued){
+            m_audioWaveformAnalysisQueued = true;
+            ensureAudioWaveformAsync();
+        }
 
         if(m_timelineInteraction.pendingWheelZoomAnchor){
             const auto scrollViewer{TimelineScrollViewer()};
@@ -4756,6 +5094,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
 
         if(!renderDuringExport){
             m_hasTimelineRenderCompleted = true;
+            m_audioWaveformAnalysisQueued = false;
             const auto postActions{m_tl.buildRenderPostActions(
                 m_prj.videoFileName().c_str(),
                 ::llvc::projectHasRequestedCuts(m_prj),
@@ -4771,6 +5110,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
     }catch(const winrt::hresult_error& ex){
         if(!m_isExportInProgress){
             m_hasTimelineRenderCompleted = false;
+            m_audioWaveformAnalysisQueued = false;
             wstring status{L"Failed to render story line: "};
             status += ex.message().c_str();
             setStatusMessage(status);

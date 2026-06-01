@@ -13,6 +13,7 @@
 #include <winrt/Windows.Foundation.h>
 
 import std;
+import llvc.AudioWaveform;
 import llvc.Utils;
 import llvc.Project;
 import llvc.Timeline;
@@ -391,6 +392,40 @@ void testTimelineZoomOutAtEndOfVideo(){
     const auto scrollbarAnchorAtEnd{llvc::TimelineScrollbarAnchor::capture(700.0, 700.0)};
     expect(scrollbarAnchorAtEnd.has_value(), "TimelineScrollbarAnchor should capture a valid far-right anchor at the video end");
     expectNear(scrollbarAnchorAtEnd->restoreOffset(0.0), 0.0, 0.001, "TimelineScrollbarAnchor should restore a far-right anchor to zero when zooming out removes all scrollable extent");
+}
+
+void testAudioWaveformScalingAndThresholdColor(){
+    expectEqual(llvc::formatWaveformThresholdDb(-18.2), wstring(L"-18 dB"), "formatWaveformThresholdDb should round to whole dB labels");
+    expectEqual(llvc::clampAudioPeak(-0.25f), 0.0f, "clampAudioPeak should clamp negative peaks");
+    expectEqual(llvc::clampAudioPeak(1.25f), 1.0f, "clampAudioPeak should clamp peaks above full scale");
+
+    const auto thresholdAmplitude{llvc::audioWaveformThresholdAmplitude(-6.0)};
+    expectNear(llvc::audioWaveformHeightRatio(static_cast<float>(thresholdAmplitude), -6.0), llvc::AudioWaveformThresholdLineRatio, 0.001, "audioWaveformHeightRatio should place the threshold at the guide line");
+    expectNear(llvc::audioWaveformHeightRatio(1.0f, -6.0), 1.0, 0.001, "audioWaveformHeightRatio should allow clipped/full-scale bars to reach full height");
+    expect(llvc::audioWaveformHeightRatio(static_cast<float>(thresholdAmplitude / 2.0), -6.0) < llvc::AudioWaveformThresholdLineRatio, "audioWaveformHeightRatio should keep quieter peaks below the guide line");
+
+    expect(!llvc::audioWaveformPeakIsHot(static_cast<float>(thresholdAmplitude * 0.99), -6.0), "audioWaveformPeakIsHot should keep just-below-threshold bars cool");
+    expect(llvc::audioWaveformPeakIsHot(static_cast<float>(thresholdAmplitude), -6.0), "audioWaveformPeakIsHot should turn the whole bar hot at the threshold");
+    expect(llvc::audioWaveformPeakIsHot(1.0f, -6.0), "audioWaveformPeakIsHot should keep loud clipped bars hot");
+}
+
+void testAudioWaveformChunkPlanning(){
+    const auto visibleRange{llvc::visibleAudioWaveformChunkRange(320.0, 210.0, 100.0, 12)};
+    expectEqual(visibleRange.first, 3, "visibleAudioWaveformChunkRange should locate the first visible audio chunk");
+    expectEqual(visibleRange.last, 5, "visibleAudioWaveformChunkRange should locate the last visible audio chunk");
+
+    vector<bool> built(8, false);
+    built[2] = true;
+    built[3] = true;
+    const llvc::AudioWaveformChunkRange buildRange{.first = 2, .last = 4};
+    expectEqual(llvc::chooseNextAudioWaveformChunkIndex(built, buildRange, false), 4, "chooseNextAudioWaveformChunkIndex should prefer unfinished visible chunks");
+    built[4] = true;
+    expectEqual(llvc::chooseNextAudioWaveformChunkIndex(built, buildRange, true), 5, "chooseNextAudioWaveformChunkIndex should expand outward after visible chunks are built");
+    expectEqual(llvc::chooseNextAudioWaveformChunkIndex({}, {.first = 0, .last = 0}, true), -1, "chooseNextAudioWaveformChunkIndex should report no work when there are no chunks");
+
+    expectEqual(llvc::audioWaveformChunkBucketStart(2, 8, 4096), size_t{1024}, "audioWaveformChunkBucketStart should map chunks to proportional bucket ranges");
+    expectEqual(llvc::audioWaveformChunkBucketEnd(2, 8, 4096), size_t{1536}, "audioWaveformChunkBucketEnd should map chunks to proportional bucket ranges");
+    expectEqual(llvc::audioWaveformChunkBucketEnd(7, 8, 4096), size_t{4096}, "audioWaveformChunkBucketEnd should include all remaining buckets in the last chunk");
 }
 
 void testTimelinePlanningEdgeCases(){
@@ -1318,6 +1353,8 @@ int wmain(int argc, wchar_t* argv[]){
         {"TimelineTickDensityAndLabels", &testTimelineTickDensityAndLabels},
         {"TimelineZoomAnchorsAndThumbnailPlanning", &testTimelineZoomAnchorsAndThumbnailPlanning},
         {"TimelineZoomOutAtEndOfVideo", &testTimelineZoomOutAtEndOfVideo},
+        {"AudioWaveformScalingAndThresholdColor", &testAudioWaveformScalingAndThresholdColor},
+        {"AudioWaveformChunkPlanning", &testAudioWaveformChunkPlanning},
         {"TimelinePlanningEdgeCases", &testTimelinePlanningEdgeCases},
         {"ProjectCutRangesAndBoundaries", &testProjectCutRangesAndBoundaries},
         {"ProjectSceneBoundariesClampAndIgnoreInvalidCuts", &testProjectSceneBoundariesClampAndIgnoreInvalidCuts},

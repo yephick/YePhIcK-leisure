@@ -41,6 +41,11 @@ namespace Controls = winrt::Microsoft::UI::Xaml::Controls;
 namespace{
 
 constexpr array kPageJumpSecondsOptions{0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0, 15.0, 20.0};
+constexpr array kThemeModeLabels{
+    pair{AppThemeMode::System, L"Follow system setting"},
+    pair{AppThemeMode::Light, L"Force light mode"},
+    pair{AppThemeMode::Dark, L"Force dark mode"},
+};
 
 wstring formatPageJumpSecondsLabel(double seconds){
     if(floor(seconds) == seconds){
@@ -49,11 +54,37 @@ wstring formatPageJumpSecondsLabel(double seconds){
     return std::format(L"{:.1f} seconds", seconds);
 }
 
+int32_t themeModeSelectionIndex(AppThemeMode mode){
+    for(size_t i{}; i < kThemeModeLabels.size(); ++i){
+        if(kThemeModeLabels[i].first == mode){
+            return static_cast<int32_t>(i);
+        }
+    }
+    return 0;
+}
+
+void applyDialogTheme(const XamlRoot& xamlRoot, const Controls::ContentDialog& dialog){
+    if(const auto root{xamlRoot.Content().try_as<winrt::Microsoft::UI::Xaml::FrameworkElement>()}; root){
+        switch(root.ActualTheme()){
+        case winrt::Microsoft::UI::Xaml::ElementTheme::Light:
+            dialog.RequestedTheme(winrt::Microsoft::UI::Xaml::ElementTheme::Light);
+            break;
+        case winrt::Microsoft::UI::Xaml::ElementTheme::Dark:
+            dialog.RequestedTheme(winrt::Microsoft::UI::Xaml::ElementTheme::Dark);
+            break;
+        default:
+            dialog.RequestedTheme(winrt::Microsoft::UI::Xaml::ElementTheme::Default);
+            break;
+        }
+    }
+}
+
 }
 
 DialogAction showInfoDialogAsync(const XamlRoot& xamlRoot, const hstring& title, const hstring& message){
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(xamlRoot);
+    applyDialogTheme(xamlRoot, dialog);
     dialog.Title(box_value(title));
     dialog.Content(box_value(message));
     dialog.CloseButtonText(L"OK");
@@ -97,6 +128,7 @@ DialogAction showAboutDialogAsync(const XamlRoot& xamlRoot, const hstring& versi
 winrt::Windows::Foundation::IAsyncOperation<Controls::ContentDialogResult> showUnsavedProjectPromptAsync(const XamlRoot& xamlRoot){
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(xamlRoot);
+    applyDialogTheme(xamlRoot, dialog);
     dialog.Title(box_value(L"Unsaved changes"));
     dialog.Content(box_value(L"Current project has unsaved changes. Save before continuing?"));
     dialog.PrimaryButtonText(L"Save");
@@ -143,6 +175,17 @@ DialogResult showOptionsDialogAsync(const XamlRoot& xamlRoot, AppSettingsState& 
         pageJumpValueText.Text(hstring{formatPageJumpSecondsLabel(kPageJumpSecondsOptions[static_cast<size_t>(index)])});
     });
 
+    Controls::TextBlock themeModeLabel{};
+    themeModeLabel.Text(L"App theme");
+    Controls::ComboBox themeModeCombo{};
+    for(const auto& [mode, label]: kThemeModeLabels){
+        Controls::ComboBoxItem item{};
+        item.Content(box_value(label));
+        item.Tag(box_value(static_cast<int32_t>(mode)));
+        themeModeCombo.Items().Append(item);
+    }
+    themeModeCombo.SelectedIndex(themeModeSelectionIndex(settings.appThemeMode));
+
     Controls::CheckBox deleteAfterExportCheckBox{};
     deleteAfterExportCheckBox.Content(box_value(L"Delete source video and project file after successful export"));
     deleteAfterExportCheckBox.IsChecked(settings.deleteSourceAndProjectAfterExport);
@@ -162,12 +205,15 @@ DialogResult showOptionsDialogAsync(const XamlRoot& xamlRoot, AppSettingsState& 
     panel.Children().Append(pageJumpLabel);
     panel.Children().Append(pageJumpValueText);
     panel.Children().Append(pageJumpSlider);
+    panel.Children().Append(themeModeLabel);
+    panel.Children().Append(themeModeCombo);
     panel.Children().Append(deleteAfterExportCheckBox);
     panel.Children().Append(autoReevaluateCutMarkersOnPlacementCheckBox);
     panel.Children().Append(generateExportTimeReportCheckBox);
 
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(xamlRoot);
+    applyDialogTheme(xamlRoot, dialog);
     dialog.Title(box_value(L"Options"));
     dialog.Content(panel);
     dialog.PrimaryButtonText(L"Save");
@@ -180,6 +226,12 @@ DialogResult showOptionsDialogAsync(const XamlRoot& xamlRoot, AppSettingsState& 
     settings.maxRecentVideos = static_cast<uint32_t>(clamp(static_cast<int>(lround(videosCount.Value())), 1, 20));
     settings.maxRecentProjects = static_cast<uint32_t>(clamp(static_cast<int>(lround(projectsCount.Value())), 1, 20));
     settings.pageJumpDurationIndex = static_cast<uint32_t>(clamp(static_cast<int>(lround(pageJumpSlider.Value())), 0, static_cast<int>(kPageJumpSecondsOptions.size() - 1)));
+    if(const auto selectedItem{themeModeCombo.SelectedItem().try_as<Controls::ComboBoxItem>()}; selectedItem){
+        const auto tagValue{unbox_value<int32_t>(selectedItem.Tag())};
+        settings.appThemeMode = tagValue == static_cast<int32_t>(AppThemeMode::Light)
+            ? AppThemeMode::Light
+            : (tagValue == static_cast<int32_t>(AppThemeMode::Dark) ? AppThemeMode::Dark : AppThemeMode::System);
+    }
     settings.deleteSourceAndProjectAfterExport = deleteAfterExportCheckBox.IsChecked().GetBoolean();
     settings.autoReevaluateCutMarkersOnPlacement = autoReevaluateCutMarkersOnPlacementCheckBox.IsChecked().GetBoolean();
     settings.generateExportTimeReport = generateExportTimeReportCheckBox.IsChecked().GetBoolean();
@@ -189,6 +241,7 @@ DialogResult showOptionsDialogAsync(const XamlRoot& xamlRoot, AppSettingsState& 
 DialogResult showDeleteAfterExportPromptAsync(const XamlRoot& xamlRoot, bool canDeleteSource, bool canDeleteProject){
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(xamlRoot);
+    applyDialogTheme(xamlRoot, dialog);
     dialog.Title(box_value(
         canDeleteSource && canDeleteProject
             ? L"Delete source video and project file?"
@@ -211,6 +264,7 @@ DialogResult showDeleteAfterExportPromptAsync(const XamlRoot& xamlRoot, bool can
 DialogResult showOverwriteSourcePromptAsync(const XamlRoot& xamlRoot){
     Controls::ContentDialog dialog{};
     dialog.XamlRoot(xamlRoot);
+    applyDialogTheme(xamlRoot, dialog);
     dialog.Title(box_value(L"Overwrite source video?"));
     dialog.Content(box_value(
         L"The selected export target is the same as the source video.\n\n"

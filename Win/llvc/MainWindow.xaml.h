@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 #include <memory>
+#include <unordered_map>
 
 struct _GUID;
 import llvc.Project;
@@ -64,6 +65,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void reevaluateClearCutMarkersButton_Click(const Control& sender, const REArgs& args);
     void timelineZoomSlider_ValueChanged(const Control& sender, const RBVArgs& args);
     void timelineZoomSlider_PointerWheelChanged(const Control& sender, const PREArgs& args);
+    void audioWaveformThresholdSlider_ValueChanged(const Control& sender, const RBVArgs& args);
     void keepAudioCheckBox_Changed(const Control& sender, const REArgs& args);
     void audioCrossfadeComboBox_SelectionChanged(const Control& sender, const Control& args);
     void audioVolumeSlider_ValueChanged(const Control& sender, const RBVArgs& args);
@@ -162,6 +164,7 @@ private:
     bool m_cachedRapTimesPartial{false};
     bool m_isRapLookupInProgress{false};
     bool m_hasTimelineRenderCompleted{false};
+    bool m_audioWaveformAnalysisQueued{false};
     bool m_isUiReadyForEvents{false};
     bool m_isSyncingTimelineScrollBar{false};
     bool m_pendingSeparatePreviewRestoreOnStartup{false};
@@ -188,6 +191,7 @@ private:
     std::chrono::steady_clock::time_point m_lastExportEtaRefreshAt{};
     std::optional<double> m_lastExportEtaProgress{};
     std::wstring m_exportEtaText{};
+    double m_audioWaveformThresholdDb{-18.0};
     TimelineInteractionState m_timelineInteraction{};
     winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
     SeparatePreviewState m_separatePreview{};
@@ -222,6 +226,8 @@ private:
     AAction pickAndLoadVideoAsync();
     void loadAppSettings();
     void saveAppSettings() const;
+    winrt::Microsoft::UI::Xaml::ElementTheme requestedElementTheme() const noexcept;
+    void applyThemePreference();
     void refreshRecentVideosMenu();
     void refreshRecentProjectsMenu();
     void addRecentVideo(const hstring& path);
@@ -245,6 +251,7 @@ private:
     void syncTimelineHorizontalScrollBar();
     void updateTimelineCursorFromViewportOffset(double offset);
     void renderTimelineTicks();
+    void renderAudioWaveform();
     void seekTimelineToCanvasX(double pointerX);
     void renderKeyframeTicks();
     void renderCutOverlays();
@@ -280,6 +287,8 @@ private:
     void applyEditorCommandResult(const ::llvc::EditorCommandResult& result);
     void refreshEditorUiState();
     void updateAudioUiAndPlaybackState();
+    void updateAudioWaveformUi();
+    fire_and_forget ensureAudioWaveformAsync();
     void setVideoDetailsPanelExpanded(bool expanded);
     void refreshVideoDetailsPanel();
     static wstring buildEstimatedOutputText(
@@ -292,6 +301,7 @@ private:
         const std::optional<::llvc::EffectiveExportPlan>& effectivePlan);
     wstring buildSourcePropertiesText() const;
     void applyAudioSettingsToPlayer();
+    void playPreviewFromCurrentPosition();
     void syncAudioCrossfadeComboSelection();
     void updatePreviewPlaceholderVisibility();
     void setStatusMessage(const wstring& message);

@@ -10,7 +10,83 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
                 <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
-            <!-- Other app resources here -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="WindowBackdropBrush" Color="#FF050607"/>
+                    <SolidColorBrush x:Key="ControlStripBrush" Color="#CC101010"/>
+                    <SolidColorBrush x:Key="ControlStripBorderBrush" Color="#70606060"/>
+                    <SolidColorBrush x:Key="ToolPanelBrush" Color="#E61A1A1A"/>
+                    <SolidColorBrush x:Key="ToolPanelBorderBrush" Color="#707070"/>
+                    <SolidColorBrush x:Key="TimelineHostBrush" Color="#111111"/>
+                    <SolidColorBrush x:Key="TimelineHostBorderBrush" Color="#404040"/>
+                    <SolidColorBrush x:Key="TimelineTickBrush" Color="#222222"/>
+                    <SolidColorBrush x:Key="TimelineScrollTrackBrush" Color="#2F2F2F"/>
+                    <SolidColorBrush x:Key="TimelineScrollTrackBorderBrush" Color="#6A6A6A"/>
+                    <SolidColorBrush x:Key="TimelineScrollBarBrush" Color="#2A2A2A"/>
+                    <SolidColorBrush x:Key="TimelineScrollBarForegroundBrush" Color="#CFCFCF"/>
+                    <SolidColorBrush x:Key="StatusPanelBrush" Color="#141414"/>
+                    <SolidColorBrush x:Key="StatusPanelBorderBrush" Color="#4A4A4A"/>
+                    <SolidColorBrush x:Key="ExportOverlayScrimBrush" Color="#B8141414"/>
+                    <SolidColorBrush x:Key="ExportOverlayPanelBrush" Color="#F61B1B1B"/>
+                    <SolidColorBrush x:Key="ExportOverlayPanelBorderBrush" Color="#AAE0E0E0"/>
+                    <SolidColorBrush x:Key="PreviewWindowBackgroundBrush" Color="#080808"/>
+                    <SolidColorBrush x:Key="AccentWarningBrush" Color="#FFDAA520"/>
+                    <SolidColorBrush x:Key="ErrorTextBrush" Color="#FFFF8585"/>
+                    <SolidColorBrush x:Key="TimelineCursorBrush" Color="#FF35C759"/>
+                    <SolidColorBrush x:Key="OverlayMutedTextBrush" Color="#FFEAEAEA"/>
+                    <SolidColorBrush x:Key="OverlayAccentTextBrush" Color="#FFB8D8FF"/>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="WindowBackdropBrush" Color="#FFF6F2EA"/>
+                    <SolidColorBrush x:Key="ControlStripBrush" Color="#EFFFFFFB"/>
+                    <SolidColorBrush x:Key="ControlStripBorderBrush" Color="#D8CEC1B2"/>
+                    <SolidColorBrush x:Key="ToolPanelBrush" Color="#F4FFFFFF"/>
+                    <SolidColorBrush x:Key="ToolPanelBorderBrush" Color="#C8C8C8"/>
+                    <SolidColorBrush x:Key="TimelineHostBrush" Color="#FFF8F8F8"/>
+                    <SolidColorBrush x:Key="TimelineHostBorderBrush" Color="#C8C8C8"/>
+                    <SolidColorBrush x:Key="TimelineTickBrush" Color="#FFEDEDED"/>
+                    <SolidColorBrush x:Key="TimelineScrollTrackBrush" Color="#FFF1F1F1"/>
+                    <SolidColorBrush x:Key="TimelineScrollTrackBorderBrush" Color="#C0C0C0"/>
+                    <SolidColorBrush x:Key="TimelineScrollBarBrush" Color="#FFE7E7E7"/>
+                    <SolidColorBrush x:Key="TimelineScrollBarForegroundBrush" Color="#FF404040"/>
+                    <SolidColorBrush x:Key="StatusPanelBrush" Color="#F7FFFFFF"/>
+                    <SolidColorBrush x:Key="StatusPanelBorderBrush" Color="#D0D0D0"/>
+                    <SolidColorBrush x:Key="ExportOverlayScrimBrush" Color="#99F3F0EB"/>
+                    <SolidColorBrush x:Key="ExportOverlayPanelBrush" Color="#FFFDFBF7"/>
+                    <SolidColorBrush x:Key="ExportOverlayPanelBorderBrush" Color="#D7CFC2"/>
+                    <SolidColorBrush x:Key="PreviewWindowBackgroundBrush" Color="#FFF7F4EE"/>
+                    <SolidColorBrush x:Key="AccentWarningBrush" Color="#FF9A6700"/>
+                    <SolidColorBrush x:Key="ErrorTextBrush" Color="#FFB42318"/>
+                    <SolidColorBrush x:Key="TimelineCursorBrush" Color="#FF0A7D33"/>
+                    <SolidColorBrush x:Key="OverlayMutedTextBrush" Color="#FF4F4A43"/>
+                    <SolidColorBrush x:Key="OverlayAccentTextBrush" Color="#FF0E5A8A"/>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="WindowBackdropBrush" Color="#FF050607"/>
+                    <SolidColorBrush x:Key="ControlStripBrush" Color="#CC101010"/>
+                    <SolidColorBrush x:Key="ControlStripBorderBrush" Color="#70606060"/>
+                    <SolidColorBrush x:Key="ToolPanelBrush" Color="#E61A1A1A"/>
+                    <SolidColorBrush x:Key="ToolPanelBorderBrush" Color="#707070"/>
+                    <SolidColorBrush x:Key="TimelineHostBrush" Color="#111111"/>
+                    <SolidColorBrush x:Key="TimelineHostBorderBrush" Color="#404040"/>
+                    <SolidColorBrush x:Key="TimelineTickBrush" Color="#222222"/>
+                    <SolidColorBrush x:Key="TimelineScrollTrackBrush" Color="#2F2F2F"/>
+                    <SolidColorBrush x:Key="TimelineScrollTrackBorderBrush" Color="#6A6A6A"/>
+                    <SolidColorBrush x:Key="TimelineScrollBarBrush" Color="#2A2A2A"/>
+                    <SolidColorBrush x:Key="TimelineScrollBarForegroundBrush" Color="#CFCFCF"/>
+                    <SolidColorBrush x:Key="StatusPanelBrush" Color="#141414"/>
+                    <SolidColorBrush x:Key="StatusPanelBorderBrush" Color="#4A4A4A"/>
+                    <SolidColorBrush x:Key="ExportOverlayScrimBrush" Color="#B8141414"/>
+                    <SolidColorBrush x:Key="ExportOverlayPanelBrush" Color="#F61B1B1B"/>
+                    <SolidColorBrush x:Key="ExportOverlayPanelBorderBrush" Color="#AAE0E0E0"/>
+                    <SolidColorBrush x:Key="PreviewWindowBackgroundBrush" Color="#080808"/>
+                    <SolidColorBrush x:Key="AccentWarningBrush" Color="#FFDAA520"/>
+                    <SolidColorBrush x:Key="ErrorTextBrush" Color="#FFFF8585"/>
+                    <SolidColorBrush x:Key="TimelineCursorBrush" Color="#FF35C759"/>
+                    <SolidColorBrush x:Key="OverlayMutedTextBrush" Color="#FFEAEAEA"/>
+                    <SolidColorBrush x:Key="OverlayAccentTextBrush" Color="#FFB8D8FF"/>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

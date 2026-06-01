@@ -10,6 +10,7 @@
     <Midl Include="MainWindow.idl" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AudioWaveform.ixx" />
     <ClCompile Include="EditorController.ixx" />
     <ClCompile Include="EditorCommands.ixx" />
     <ClCompile Include="ExportCoordinator.ixx" />
@@ -91,5 +92,9 @@
   </ItemGroup>
   <ItemGroup>
     <AppxManifest Include="Package.appxmanifest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natvis" />
+    <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natstepfilter" />
   </ItemGroup>
 </Project>

@@ -10,6 +10,9 @@
     <ClCompile Include="llvc-tests.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\llvc\AudioWaveform.ixx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\llvc\Utils.ixx">
       <Filter>Source Files</Filter>
     </ClCompile>
