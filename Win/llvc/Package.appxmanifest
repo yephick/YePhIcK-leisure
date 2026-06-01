@@ -50,19 +50,6 @@
         <uap:InitialRotationPreference>
           <uap:Rotation Preference="landscape"/></uap:InitialRotationPreference>
       </uap:VisualElements>
-      <Extensions>
-        <uap:Extension Category="windows.fileTypeAssociation">
-          <uap:FileTypeAssociation Name="llvcproject">
-            <uap:DisplayName>ClipRazor project</uap:DisplayName>
-            <uap:Logo>Assets\Square44x44LogoProject.png</uap:Logo>
-            <uap:SupportedFileTypes>
-              <uap:FileType>.llvc</uap:FileType>
-            </uap:SupportedFileTypes>
-            <uap:InfoTip>Project file for ClipRazor: Lossless Video Cutter</uap:InfoTip>
-            <uap:EditFlags OpenIsSafe="true"/>
-          </uap:FileTypeAssociation>
-        </uap:Extension>
-      </Extensions>
     </Application>
   </Applications>
 
