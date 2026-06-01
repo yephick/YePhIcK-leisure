@@ -236,6 +236,15 @@ void testUtilsWorkflowPolicies(){
     expect(zeroCapacityRecent.empty(), "pushRecentItemFront should trim everything when maxCount is zero");
 }
 
+void testMediaMkvInputIsRecognized(){
+    const auto lower{llvc::createVideoSource(L"sample.mkv")};
+    expect(static_cast<bool>(lower), "createVideoSource should recognize .mkv inputs");
+    expectEqual(lower->sourcePath(), wstring(L"sample.mkv"), "MKV source should preserve its path");
+
+    const auto upper{llvc::createVideoSource(L"sample.MKV")};
+    expect(static_cast<bool>(upper), "createVideoSource should recognize uppercase .MKV inputs");
+}
+
 void testTimelineIntervalNormalization(){
     constexpr auto sentinel{numeric_limits<uint32_t>::max()};
     const auto normalized{llvc::normalizeAndMergeIndexIntervals({
@@ -1302,6 +1311,7 @@ int wmain(int argc, wchar_t* argv[]){
     const vector<NamedTest> tests{
         {"UtilsParsing", &testUtilsParsing},
         {"UtilsWorkflowPolicies", &testUtilsWorkflowPolicies},
+        {"MediaMkvInputIsRecognized", &testMediaMkvInputIsRecognized},
         {"TimelineIntervalNormalization", &testTimelineIntervalNormalization},
         {"TimelineMath", &testTimelineMath},
         {"TimelineDerivedHelpers", &testTimelineDerivedHelpers},

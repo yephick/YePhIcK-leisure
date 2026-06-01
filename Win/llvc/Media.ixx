@@ -138,6 +138,7 @@ enum class SourceFormatId : uint8_t{
     Unknown,
     Mp4,
     Mov,
+    Mkv,
     Avi,
     Webm,
     Wmv,
@@ -186,10 +187,11 @@ const array<GUID, 1> WEBM_ALLOWED_VIDEO_SUBTYPES{MFVideoFormat_VP90};
 const array<GUID, 1> WMV_ALLOWED_VIDEO_SUBTYPES{VC1_VIDEO_SUBTYPE};
 const array<GUID, 2> MPEG_TS_ALLOWED_VIDEO_SUBTYPES{MFVideoFormat_H264, MFVideoFormat_H264_ES};
 
-const array<FormatProfile, 6>& supportedFormatProfiles(){
-    static const array<FormatProfile, 6> profiles{{
+const array<FormatProfile, 7>& supportedFormatProfiles(){
+    static const array<FormatProfile, 7> profiles{{
         {.id = SourceFormatId::Mp4, .extension = L".mp4", .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".mp4", L".mov"}, .candidateExportExtensionCount = 2, .audioExportPolicy = AudioExportPolicy::Allowed, .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
         {.id = SourceFormatId::Mov, .extension = L".mov", .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".mp4", L".mov"}, .candidateExportExtensionCount = 2, .audioExportPolicy = AudioExportPolicy::Allowed, .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
+        {.id = SourceFormatId::Mkv, .extension = L".mkv", .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".mp4", nullptr}, .candidateExportExtensionCount = 1, .audioExportPolicy = AudioExportPolicy::Allowed, .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
         {.id = SourceFormatId::Avi, .extension = L".avi", .allowedVideoSubtypes = AVI_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".mp4", nullptr}, .candidateExportExtensionCount = 1, .audioExportPolicy = AudioExportPolicy::Disabled, .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter, .requiresAviValidation = true},
         {.id = SourceFormatId::Webm, .extension = L".webm", .allowedVideoSubtypes = WEBM_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".webm", nullptr}, .candidateExportExtensionCount = 1, .audioExportPolicy = AudioExportPolicy::Disabled, .exportProbeKind = ExportProbeKind::CustomWriter},
         {.id = SourceFormatId::Wmv, .extension = L".wmv", .allowedVideoSubtypes = WMV_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".wmv", nullptr}, .candidateExportExtensionCount = 1, .audioExportPolicy = AudioExportPolicy::Disabled, .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
@@ -760,6 +762,9 @@ com_ptr<IMFMediaType> ProfileMedia::selectExportVideoType(const com_ptr<IMFSourc
     case SourceFormatId::Mov:
         failureReason = L"No stream-copy video media type found. Require H.264 or HEVC in MP4/MOV.";
         break;
+    case SourceFormatId::Mkv:
+        failureReason = L"No stream-copy video media type found. Require H.264 or HEVC in MKV.";
+        break;
     case SourceFormatId::Webm:
         failureReason = L"No stream-copy video media type found. Require VP9 in WebM.";
         break;
@@ -1034,9 +1039,16 @@ protected:
     wstring containerName() const override{ return L"MOV"; }
 };
 
+class MkvMedia final : public ProfileMedia{
+public:
+    explicit MkvMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[2]) {}
+protected:
+    wstring containerName() const override{ return L"MKV"; }
+};
+
 class AviMedia final : public ProfileMedia{
 public:
-    explicit AviMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[2]) {}
+    explicit AviMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[3]) {}
 protected:
     wstring containerName() const override{ return L"AVI"; }
     void describeAudioSupport(bool hasAudio, VideoSource::InspectionResult& result) const override{
@@ -1049,7 +1061,7 @@ protected:
 
 class WebmMedia final : public ProfileMedia{
 public:
-    explicit WebmMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[3]) {}
+    explicit WebmMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[4]) {}
 protected:
     wstring containerName() const override{ return L"WEBM"; }
     void describeAudioSupport(bool hasAudio, VideoSource::InspectionResult& result) const override{
@@ -1062,7 +1074,7 @@ protected:
 
 class WmvMedia final : public ProfileMedia{
 public:
-    explicit WmvMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[4]) {}
+    explicit WmvMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[5]) {}
 protected:
     wstring containerName() const override{ return L"WMV"; }
     void describeAudioSupport(bool hasAudio, VideoSource::InspectionResult& result) const override{
@@ -1075,7 +1087,7 @@ protected:
 
 class MpegTsMedia final : public ProfileMedia{
 public:
-    explicit MpegTsMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[5]) {}
+    explicit MpegTsMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[6]) {}
 protected:
     wstring containerName() const override{ return L"MPEG-TS"; }
 };
@@ -1091,6 +1103,7 @@ unique_ptr<VideoSource> createVideoSource(const wstring& sourcePath){
     switch(profile->id){
     case SourceFormatId::Mp4: return make_unique<Mp4Media>(sourcePath);
     case SourceFormatId::Mov: return make_unique<MovMedia>(sourcePath);
+    case SourceFormatId::Mkv: return make_unique<MkvMedia>(sourcePath);
     case SourceFormatId::Avi: return make_unique<AviMedia>(sourcePath);
     case SourceFormatId::Webm: return make_unique<WebmMedia>(sourcePath);
     case SourceFormatId::Wmv: return make_unique<WmvMedia>(sourcePath);

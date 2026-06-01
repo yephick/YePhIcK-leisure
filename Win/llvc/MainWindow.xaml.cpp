@@ -508,6 +508,7 @@ enum class SourceFormatId : uint8_t{
     Unknown,
     Mp4,
     Mov,
+    Mkv,
     Avi,
     Webm,
     Wmv
@@ -560,8 +561,8 @@ const array<GUID, 1> WEBM_ALLOWED_VIDEO_SUBTYPES{
 const array<GUID, 1> WMV_ALLOWED_VIDEO_SUBTYPES{
     VC1_VIDEO_SUBTYPE};
 
-const array<FormatProfile, 5>& supportedFormatProfiles(){
-    static const array<FormatProfile, 5> profiles{{
+const array<FormatProfile, 6>& supportedFormatProfiles(){
+    static const array<FormatProfile, 6> profiles{{
         FormatProfile{
             .id = SourceFormatId::Mp4,
             .extension = L".mp4",
@@ -576,6 +577,14 @@ const array<FormatProfile, 5>& supportedFormatProfiles(){
             .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES,
             .candidateExportExtensions = {L".mp4", L".mov"},
             .candidateExportExtensionCount = 2,
+            .audioExportPolicy = AudioExportPolicy::Allowed,
+            .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
+        FormatProfile{
+            .id = SourceFormatId::Mkv,
+            .extension = L".mkv",
+            .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES,
+            .candidateExportExtensions = {L".mp4", nullptr},
+            .candidateExportExtensionCount = 1,
             .audioExportPolicy = AudioExportPolicy::Allowed,
             .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
         FormatProfile{
@@ -3388,7 +3397,7 @@ void MainWindow::resetProjectStateImpl(){
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
     syncTimelineHorizontalScrollBar();
 
-    setStatusMessage(L"Load or drag-and-drop a .llvc/.mp4/.mov/.avi/.webm/.wmv file to begin.");
+    setStatusMessage(L"Load or drag-and-drop a .llvc/.mp4/.mov/.mkv/.avi/.webm/.wmv file to begin.");
     clearErrorMessage();
     refreshStatusInfoSection();
     updateWindowTitle();
@@ -4397,7 +4406,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
 
     const auto items{co_await view.GetStorageItemsAsync()};
     if(items.Size() != 1){
-        setStatusMessage(L"Only support a single .llvc/.mp4/.mov/.avi/.webm/.wmv file");
+        setStatusMessage(L"Only support a single .llvc/.mp4/.mov/.mkv/.avi/.webm/.wmv file");
         co_return;
     }
 
@@ -4418,7 +4427,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
     }
 
     if(!isSupportedMediaPath(file.Path().c_str())){
-        setStatusMessage(L"Only .llvc, .mp4, .mov, .avi (H.264), .webm (VP9), and .wmv (VC-1) files are supported");
+        setStatusMessage(L"Only .llvc, .mp4, .mov, .mkv (H.264/HEVC), .avi (H.264), .webm (VP9), and .wmv (VC-1) files are supported");
         co_return;
     }
 
