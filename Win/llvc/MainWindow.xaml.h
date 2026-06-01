@@ -156,8 +156,10 @@ private:
     std::unique_ptr<::llvc::VideoSource> m_media{};
     hstring m_cachedRapSourcePath{};
     vector<int64_t> m_cachedRapTimes100ns{};
+    vector<int64_t> m_cachedRapLookupTargetTimes100ns{};
     bool m_cachedRapLookupAttempted{false};
     bool m_cachedRapLookupSucceeded{false};
+    bool m_cachedRapTimesPartial{false};
     bool m_isRapLookupInProgress{false};
     bool m_hasTimelineRenderCompleted{false};
     bool m_isUiReadyForEvents{false};
@@ -266,7 +268,7 @@ private:
     void tryFocusTimelineCanvas(const FState focusState);
     bool handleStorylineKeyDown(const KRArgs& args);
     std::optional<::llvc::EffectiveExportPlan> tryBuildEffectiveExportPlan(const std::function<void(double)>& progressCallback = {}) const;
-    bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns) const;
+    bool tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns, bool allowPartial = false, const vector<int64_t>* requiredPartialTargets100ns = nullptr) const;
     bool reevaluateClearCutMarkers(bool pushUndoState);
     bool reevaluateAll(bool pushUndoState);
     void queueRapLookup(bool queueReevaluate, int nudgeDirection);
@@ -314,7 +316,6 @@ private:
     AAction promptDeleteSourceAndProjectAfterExportAsync(const std::wstring& exportedPath);
     void setOperationInProgress(bool active, bool indeterminate = false);
     void setOperationProgress(double percent);
-    void refreshExportEta(double percent);
     static std::wstring formatRemainingDurationText(std::chrono::seconds remaining);
     static wstring formatTimelineDurationText(int64_t duration100ns);
     static wstring formatDateTimeText(const winrt::Windows::Foundation::DateTime& value);

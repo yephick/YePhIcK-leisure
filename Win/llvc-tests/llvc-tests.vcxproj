@@ -91,6 +91,7 @@
     <ClCompile Include="..\llvc\VideoContainer.ixx" />
     <ClCompile Include="..\llvc\Export.ixx" />
     <ClCompile Include="..\llvc\Media.ixx" />
+    <ClCompile Include="..\llvc\ExportCoordinator.ixx" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

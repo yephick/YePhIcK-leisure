@@ -30,6 +30,8 @@ DialogResult showOverwriteSourcePromptAsync(const XamlRoot& xamlRoot);
 
 }
 
+module :private;
+
 namespace llvc{
 
 using namespace std;

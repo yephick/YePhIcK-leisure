@@ -10,6 +10,7 @@
 #include <mferror.h>
 #include <mfobjects.h>
 #include <winrt/base.h>
+#include <winrt/Windows.Foundation.h>
 
 import std;
 import llvc.Utils;
@@ -21,6 +22,7 @@ import llvc.Export;
 import llvc.VideoStream;
 import llvc.VideoContainer;
 import llvc.Media;
+import llvc.ExportCoordinator;
 
 using namespace std;
 namespace{
@@ -173,6 +175,27 @@ llvc::IndexedFrameSample marker(int64_t time100ns, bool evaluated = false, bool 
         .sampleIndex = sampleIndex,
     };
 }
+
+struct FakeExportMediaSource final: llvc::VideoSource{
+    using llvc::VideoSource::VideoSource;
+
+    InspectionResult inspect() const override{
+        return {};
+    }
+
+    vector<int64_t> collectRapTimes100ns(const vector<int64_t>& = {}, const function<void(double)>& = {}, const function<bool()>& = {}) const override{
+        return {};
+    }
+
+    void exportLossless(const ExportRequest& request) const override{
+        ofstream output(filesystem::path{request.temporaryOutputPath}, ios::binary | ios::trunc);
+        output << "fake export";
+        output.close();
+        if(request.onVideoProgress){
+            request.onVideoProgress(100.0);
+        }
+    }
+};
 
 void testUtilsParsing(){
     const auto parsed{llvc::parseInt64List(L" 30,10,abc,10, 20 ,-5 ")};
@@ -443,6 +466,38 @@ void testProjectTailCutPreservesLastMarker(){
     expectEqual(plan.effectiveCutRanges100ns, vector<pair<int64_t, int64_t>>{{600, 1'000}}, "tail cut should preserve the last marker instead of nudging it to the next RAP");
 }
 
+void testProjectDurationFormattingSupportsHours(){
+    expectEqual(llvc::formatDuration100ns(0), wstring(L"00:00.000"), "formatDuration100ns should format zero duration");
+    expectEqual(llvc::formatDuration100ns(17LL * 60LL * 10'000'000LL + 25LL * 10'000'000LL + 5470000LL), wstring(L"17:25.547"), "formatDuration100ns should keep short durations in mm:ss.mmm form");
+    expectEqual(llvc::formatDuration100ns(
+        14LL * 60LL * 60LL * 10'000'000LL
+        + 17LL * 60LL * 10'000'000LL
+        + 29LL * 10'000'000LL
+        + 8210000LL), wstring(L"14:17:29.821"), "formatDuration100ns should render long durations as h:mm:ss.mmm instead of total minutes");
+}
+
+void testProjectRapLookupTargetsUseCutBoundaries(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(100, true, true), marker(300, false, false), marker(600, false, false), marker(1'000, false, false)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({1, 2});
+
+    const auto targets{llvc::buildRapLookupTimesForExportAlignment(project, 1'000)};
+    expectEqual(targets, vector<int64_t>{100, 300, 600}, "buildRapLookupTimesForExportAlignment should include cut boundaries and markers once, excluding the timeline edge");
+}
+
+void testProjectRapLookupTargetsNormalizeAndClamp(){
+    llvc::Project project{};
+    project.timelineDuration100ns(2'000);
+    project.frameIndex({marker(0), marker(500), marker(500), marker(2'000), marker(2'500)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({0, 1, 2, 3});
+
+    const auto targets{llvc::buildRapLookupTimesForExportAlignment(project, 2'000)};
+    expectEqual(targets, vector<int64_t>{500}, "buildRapLookupTimesForExportAlignment should sort, dedup, and skip source edges/out-of-range times");
+}
+
 void testProjectMarkerToggleAndSceneRemap(){
     llvc::Project project{};
     project.timelineDuration100ns(100'000'000);
@@ -617,6 +672,80 @@ void testExportPreflightAndPlanSummary(){
     filesystem::remove(tempPath);
 }
 
+void testExportCoordinatorDoesNotRequireFullRapReevaluationForExport(){
+    const auto tempDir{filesystem::temp_directory_path()};
+    const auto sourcePath{tempDir / L"llvc-tests-coordinator-source.mp4"};
+    const auto tempOutputPath{tempDir / L"llvc-tests-coordinator-output.tmp"};
+    const auto outputPath{tempDir / L"llvc-tests-coordinator-output.mp4"};
+    {
+        ofstream source(sourcePath, ios::binary | ios::trunc);
+        source << "source";
+    }
+    filesystem::remove(tempOutputPath);
+    filesystem::remove(outputPath);
+
+    llvc::Project project{};
+    project.videoFilePath(winrt::hstring{sourcePath.wstring()});
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(200, false, false), marker(600, false, false)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({1});
+
+    FakeExportMediaSource media{sourcePath.wstring()};
+    llvc::VideoSource::InspectionResult mediaInfo{};
+    mediaInfo.audioExportSupport = llvc::CapabilityState::NotApplicable;
+
+    bool ensureRapCalled{};
+    bool reevaluateCalled{};
+    bool buildPlanCalled{};
+    llvc::ExportCoordinatorResult result{};
+    llvc::runExportAsync(llvc::ExportCoordinatorRequest{
+        .project = &project,
+        .media = &media,
+        .mediaInfo = &mediaInfo,
+        .sourcePath = sourcePath.wstring(),
+        .outputPath = outputPath.wstring(),
+        .temporaryOutputPath = tempOutputPath.wstring(),
+        .sourceDuration100ns = 1'000,
+        .sourceHasAudio = false,
+        .needsRapReevaluation = true,
+        .ensureRapMarkersAvailableAsync = [&ensureRapCalled](const wstring&, const function<void(double)>& progressCallback) -> winrt::Windows::Foundation::IAsyncOperation<bool>{
+            ensureRapCalled = true;
+            if(progressCallback){
+                progressCallback(100.0);
+            }
+            co_return true;
+        },
+        .reevaluateCutMarkers = [&reevaluateCalled](bool){
+            reevaluateCalled = true;
+            return false;
+        },
+        .buildEffectiveExportPlan = [&buildPlanCalled](const function<void(double)>&) -> optional<llvc::EffectiveExportPlan>{
+            buildPlanCalled = true;
+            return llvc::EffectiveExportPlan{
+                .requestedCutRanges100ns = {{200, 600}},
+                .effectiveCutRanges100ns = {{220, 550}},
+                .sourceDuration100ns = 1'000,
+                .requestedOutputDuration100ns = 600,
+                .effectiveOutputDuration100ns = 670,
+                .hasRequestedCuts = true,
+                .emptyAfterAlignment = false,
+                .materiallyDifferent = true,
+            };
+        },
+    }, result).get();
+
+    expect(ensureRapCalled, "runExportAsync should request RAP data when reevaluation is needed");
+    expect(!reevaluateCalled, "runExportAsync should not require full marker reevaluation after boundary-only export RAP lookup");
+    expect(buildPlanCalled, "runExportAsync should build the non-mutating effective export plan");
+    expect(result.succeeded, "runExportAsync should continue when the effective export plan is ready");
+    expect(filesystem::exists(outputPath), "runExportAsync should move the temporary output into place");
+
+    filesystem::remove(sourcePath);
+    filesystem::remove(tempOutputPath);
+    filesystem::remove(outputPath);
+}
+
 void testExportCutTimelineMapping(){
     const vector<pair<int64_t, int64_t>> cutRanges{
         {0, 100},
@@ -637,6 +766,21 @@ void testExportCutTimelineMapping(){
 
     expectEqual(250 - llvc::removedDurationBefore(cutRanges, 250), int64_t{150}, "timeline mapping should preserve samples before later cuts");
     expectEqual(700 - llvc::removedDurationBefore(cutRanges, 700), int64_t{300}, "timeline mapping should collapse removed spans before later samples");
+}
+
+void testExportVideoReadRangesSkipCutHeavySourceSpans(){
+    const vector<pair<int64_t, int64_t>> effectiveCutRanges{
+        {0, 183'451'427'043},
+        {194'133'346'597, 305'542'854'597},
+        {313'756'180'422, 514'498'210'000},
+    };
+
+    const auto readRanges{llvc::buildVideoExportReadRanges100ns(effectiveCutRanges, 514'498'210'000)};
+    expectEqual(readRanges, vector<pair<int64_t, int64_t>>{
+        {183'451'427'043, 194'133'346'597},
+        {305'542'854'597, 313'756'180'422},
+    }, "buildVideoExportReadRanges100ns should seek directly to kept spans for cut-heavy exports");
+    expect(readRanges.front().first > 0, "cut-heavy export should not start reading video samples at the beginning of the source");
 }
 
 void testExportAudioCrossfade(){
@@ -1170,6 +1314,9 @@ int wmain(int argc, wchar_t* argv[]){
         {"ProjectNoCutPlanAndEmptyAlignment", &testProjectNoCutPlanAndEmptyAlignment},
         {"ProjectEffectiveExportAlignment", &testProjectEffectiveExportAlignment},
         {"ProjectTailCutPreservesLastMarker", &testProjectTailCutPreservesLastMarker},
+        {"ProjectDurationFormattingSupportsHours", &testProjectDurationFormattingSupportsHours},
+        {"ProjectRapLookupTargetsUseCutBoundaries", &testProjectRapLookupTargetsUseCutBoundaries},
+        {"ProjectRapLookupTargetsNormalizeAndClamp", &testProjectRapLookupTargetsNormalizeAndClamp},
         {"ProjectMarkerToggleAndSceneRemap", &testProjectMarkerToggleAndSceneRemap},
         {"ProjectAudioNormalization", &testProjectAudioNormalization},
         {"ProjectRapMarkersSelectionNormalization", &testProjectRapMarkersSelectionNormalization},
@@ -1179,7 +1326,9 @@ int wmain(int argc, wchar_t* argv[]){
         {"ProjectEffectiveExportPreservesAlreadySafeTailCut", &testProjectEffectiveExportPreservesAlreadySafeTailCut},
         {"ProjectEstimateCoordinatorHelpers", &testProjectEstimateCoordinatorHelpers},
         {"ExportPreflightAndPlanSummary", &testExportPreflightAndPlanSummary},
+        {"ExportCoordinatorDoesNotRequireFullRapReevaluationForExport", &testExportCoordinatorDoesNotRequireFullRapReevaluationForExport},
         {"ExportCutTimelineMapping", &testExportCutTimelineMapping},
+        {"ExportVideoReadRangesSkipCutHeavySourceSpans", &testExportVideoReadRangesSkipCutHeavySourceSpans},
         {"ExportAudioCrossfade", &testExportAudioCrossfade},
         {"ExportH264SampleNormalization", &testExportH264SampleNormalization},
         {"ExportH264ParameterSetExtraction", &testExportH264ParameterSetExtraction},
