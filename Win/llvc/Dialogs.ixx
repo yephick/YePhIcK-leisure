@@ -30,6 +30,8 @@ DialogResult showOverwriteSourcePromptAsync(const XamlRoot& xamlRoot);
 
 }
 
+module :private;
+
 namespace llvc{
 
 using namespace std;
@@ -63,7 +65,7 @@ DialogAction showQuickManualDialogAsync(const XamlRoot& xamlRoot){
         xamlRoot,
         L"Quick manual",
         L"Functions:\n"
-        L"* Load video: Open .mp4/.mov/.avi/.webm/.wmv source footage for timeline editing.\n"
+        L"* Load video: Open .mp4/.mov/.mkv/.avi/.webm/.wmv source footage for timeline editing.\n"
         L"* Cut markers: Right-Click on the timeline/tick bar to toggle a marker at the desired frame. Markers split the video into scenes.\n"
         L"* Cut scene toggling: Ctrl+Left-Click a scene block to mark/unmark that whole scene for cutting; dark overlays indicate sections that will be removed.\n"
         L"* Boundary RAP nudging: Ctrl+< shrinks the current scene by nudging both scene edges inward to RAPs, Ctrl+> expands by nudging both edges outward to RAPs.\n"
@@ -88,7 +90,7 @@ DialogAction showAboutDialogAsync(const XamlRoot& xamlRoot, const hstring& versi
         + L"\n\nVersion "
         + wstring{version.c_str()}
         + L"\n\n"
-        + L"\xA9 02'2026 YePhIcK"};
+        + L"\xA9 02'2026-06'2026 YePhIcK"};
     co_await showInfoDialogAsync(xamlRoot, L"About ClipRazor: Lossless Video Cutter", hstring{aboutText});
 }
 

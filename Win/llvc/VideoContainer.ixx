@@ -74,6 +74,7 @@ struct VideoContainerExportRequest final{
 VideoWriteStats writeWebmVp9VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, int64_t outputDuration100ns, uint32_t width, uint32_t height, uint32_t fpsNum, uint32_t fpsDen, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel);
 VideoWriteStats writeMpegTsH264VideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const std::wstring& outputPath, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, const com_ptr<IMFMediaType>& videoMediaType, int64_t sourceDuration100ns, const com_ptr<IMFSourceReader>& audioReader, DWORD audioStreamIndex, const com_ptr<IMFMediaType>& audioMediaType, bool keepAudio, const function<void(double)>& progressCallback, const function<void(double)>& audioProgressCallback, const function<bool()>& shouldCancel);
 VideoWriteStats writeMediaFoundationVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, IMFSinkWriter* writer, DWORD writerVideoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel);
+vector<pair<int64_t, int64_t>> buildVideoExportReadRanges100ns(const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, int64_t sourceDuration100ns);
 void writeVideoContainerForExport(VideoContainerExportKind exportKind, const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const com_ptr<IMFMediaType>& sourceVideoType, GUID videoSubtype, uint32_t nalLengthFieldSize, const VideoContainerExportRequest& request);
 
 }
@@ -889,83 +890,102 @@ private:
     uint8_t m_videoContinuityCounter{};
 };
 
+vector<pair<int64_t, int64_t>> buildVideoExportReadRanges100ns(const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, int64_t sourceDuration100ns){
+    return invertCutRanges100ns(effectiveCutRanges100ns, sourceDuration100ns);
+}
+
 VideoWriteStats processVideoSamplesForExport(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, const vector<pair<int64_t, int64_t>>& effectiveCutRanges100ns, GUID videoSubtype, uint32_t nalLengthFieldSize, int64_t sourceDuration100ns, const function<void(const com_ptr<IMFSample>&, int64_t, int64_t, bool)>& writeSample, const function<void()>& onDroppedByCut, const function<void(double)>& progressCallback, const function<bool()>& shouldCancel){
     auto waitingForCleanPoint{false};
     int64_t lastInTime100ns{-1};
     VideoWriteStats stats{};
+    const auto keepRanges100ns{buildVideoExportReadRanges100ns(effectiveCutRanges100ns, sourceDuration100ns)};
+    const auto totalKeepDuration100ns{[&]{
+        int64_t total{};
+        for(const auto& [start, end]: keepRanges100ns){
+            total += max<int64_t>(0, end - start);
+        }
+        return total;
+    }()};
 
     if(progressCallback){
         progressCallback(0.0);
     }
 
-    for(;;){
-        if(shouldCancel && shouldCancel()){
-            throwHresult(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
-        }
-
-        DWORD actualStream{};
-        DWORD flags{};
-        LONGLONG timestamp{};
-        com_ptr<IMFSample> sample;
-        const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
-        if(FAILED(hr)){
-            checkHresult(hr);
-        }
-        if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
-            break;
-        }
-        if(!sample){
+    for(size_t rangeIndex{}; rangeIndex < keepRanges100ns.size(); ++rangeIndex){
+        const auto [keepStart100ns, keepEnd100ns]{keepRanges100ns[rangeIndex]};
+        if(keepEnd100ns <= keepStart100ns){
             continue;
         }
-
-        ++stats.readSampleCount;
-
-        LONGLONG sampleTime100ns{};
-        if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
-            sampleTime100ns = timestamp;
-        }
-        const auto inTime100ns{max<int64_t>(0, sampleTime100ns)};
-        if(inTime100ns > lastInTime100ns){
-            lastInTime100ns = inTime100ns;
-        }
-
-        auto dropped{false};
-        for(const auto& [start, end] : effectiveCutRanges100ns){
-            if(inTime100ns < start){
-                break;
-            }
-            if(inTime100ns < end){
-                dropped = true;
-                break;
-            }
-        }
-        if(dropped){
-            ++stats.droppedByCutCount;
+        if(rangeIndex > 0){
             waitingForCleanPoint = true;
             if(onDroppedByCut){
                 onDroppedByCut();
             }
-            continue;
         }
 
-        const auto isContainerSync{isContainerSyncSample(sample)};
-        const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
-        const auto keyframe{isContainerSync && isBitstreamRap};
-        if(waitingForCleanPoint){
-            if(!keyframe){
-                ++stats.droppedWaitingRapCount;
+        PROPVARIANT startPos{};
+        startPos.vt = VT_I8;
+        startPos.hVal.QuadPart = keepStart100ns;
+        checkHresult(reader->SetCurrentPosition(GUID_NULL, startPos));
+        PropVariantClear(&startPos);
+
+        for(;;){
+            if(shouldCancel && shouldCancel()){
+                throwHresult(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+            }
+
+            DWORD actualStream{};
+            DWORD flags{};
+            LONGLONG timestamp{};
+            com_ptr<IMFSample> sample;
+            const auto hr{reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put())};
+            if(FAILED(hr)){
+                checkHresult(hr);
+            }
+            if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+                break;
+            }
+            if(!sample){
                 continue;
             }
-            waitingForCleanPoint = false;
-        }
 
-        const auto outTime100ns{inTime100ns - removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
-        writeSample(sample, inTime100ns, outTime100ns, keyframe);
-        ++stats.writtenSampleCount;
+            ++stats.readSampleCount;
 
-        if(progressCallback && sourceDuration100ns > 0 && (stats.readSampleCount % 24 == 0)){
-            const auto pct{(100.0 * inTime100ns) / sourceDuration100ns};
-            progressCallback(pct);
+            LONGLONG sampleTime100ns{};
+            if(FAILED(sample->GetSampleTime(&sampleTime100ns))){
+                sampleTime100ns = timestamp;
+            }
+            const auto inTime100ns{max<int64_t>(0, sampleTime100ns)};
+            if(inTime100ns > lastInTime100ns){
+                lastInTime100ns = inTime100ns;
+            }
+            if(inTime100ns < keepStart100ns){
+                ++stats.droppedByCutCount;
+                continue;
+            }
+            if(inTime100ns >= keepEnd100ns){
+                break;
+            }
+
+            const auto isContainerSync{isContainerSyncSample(sample)};
+            const auto isBitstreamRap{isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false)};
+            const auto keyframe{isContainerSync && isBitstreamRap};
+            if(waitingForCleanPoint){
+                if(!keyframe){
+                    ++stats.droppedWaitingRapCount;
+                    continue;
+                }
+                waitingForCleanPoint = false;
+            }
+
+            const auto outTime100ns{inTime100ns - removedDurationBefore(effectiveCutRanges100ns, inTime100ns)};
+            writeSample(sample, inTime100ns, outTime100ns, keyframe);
+            ++stats.writtenSampleCount;
+
+            if(progressCallback && totalKeepDuration100ns > 0 && (stats.writtenSampleCount % 24 == 0)){
+                const auto pct{(100.0 * outTime100ns) / totalKeepDuration100ns};
+                progressCallback(clamp(pct, 0.0, 100.0));
+            }
         }
     }
 

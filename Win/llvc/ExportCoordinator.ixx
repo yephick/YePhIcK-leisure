@@ -42,7 +42,7 @@ struct ExportCoordinatorRequest final{
     function<std::optional<EffectiveExportPlan>(const function<void(double)>&)> buildEffectiveExportPlan{};
     function<void(const wstring&)> onStatus{};
     function<void(double)> onOverallProgress{};
-    function<void(ExportStage, wstring, optional<double>, bool)> onStageState{};
+    function<void(ExportStage, wstring, std::optional<double>, bool)> onStageState{};
     function<bool()> shouldCancel{};
 };
 
@@ -132,19 +132,6 @@ winrt::Windows::Foundation::IAsyncAction runExportAsync(const ExportCoordinatorR
                 }
             })};
         if(!rapReady){
-            result.canceled = isCanceled(request);
-            result.errorMessage = result.canceled ? hstring{} : hstring{L"Could not build a RAP-aligned cut plan for the current source."};
-            co_return;
-        }
-    }
-
-    if(request.needsRapReevaluation){
-        if(isCanceled(request)){
-            result.canceled = true;
-            co_return;
-        }
-
-        if(!request.reevaluateCutMarkers(false)){
             result.canceled = isCanceled(request);
             result.errorMessage = result.canceled ? hstring{} : hstring{L"Could not build a RAP-aligned cut plan for the current source."};
             co_return;

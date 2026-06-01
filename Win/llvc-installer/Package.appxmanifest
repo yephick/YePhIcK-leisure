@@ -13,7 +13,7 @@
   <Identity
     Name="YePhIcK.4394808465EB4"
     Publisher="CN=3B6D3FB8-6F98-49E9-9B13-B044937D2F99"
-    Version="1.3.0.0" />
+    Version="1.4.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="34e9f797-5a26-458f-89f7-42e58038c600" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
@@ -73,14 +73,18 @@
             <uap:SupportedFileTypes>
               <uap:FileType>.mp4</uap:FileType>
               <uap:FileType>.mov</uap:FileType>
+              <uap:FileType>.mkv</uap:FileType>
               <uap:FileType>.avi</uap:FileType>
               <uap:FileType>.webm</uap:FileType>
               <uap:FileType>.wmv</uap:FileType>
+              <uap:FileType>.ts</uap:FileType>
+              <uap:FileType>.mts</uap:FileType>
+              <uap:FileType>.m2ts</uap:FileType>
             </uap:SupportedFileTypes>
-            <uap:InfoTip>Open supported video files in ClipRazor: Lossless Video Cutter</uap:InfoTip>
+            <uap:InfoTip>Cut supported video files in ClipRazor: Lossless Video Cutter</uap:InfoTip>
             <uap:EditFlags OpenIsSafe="true"/>
             <uap2:SupportedVerbs>
-              <uap3:Verb Id="openwithllvc" Parameters="&quot;%1&quot;">Open with ClipRazor</uap3:Verb>
+              <uap3:Verb Id="cutwithcliprazor" Parameters="&quot;%1&quot;">Cut with ClipRazor</uap3:Verb>
             </uap2:SupportedVerbs>
           </uap3:FileTypeAssociation>
         </uap3:Extension>

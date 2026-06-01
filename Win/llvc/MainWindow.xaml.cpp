@@ -24,8 +24,6 @@
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Microsoft.UI.Xaml.Shapes.h>
-#include <winrt/Windows.UI.h>
-#include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Media.Core.h>
@@ -61,7 +59,6 @@ using namespace winrt::Windows::Media::Playback;
 using namespace winrt::Windows::Storage;
 using namespace winrt::Windows::Storage::Pickers;
 using namespace winrt::Windows::System;
-using namespace winrt::Windows::UI::Core;
 
 namespace winrt::llvc::implementation{
 
@@ -511,6 +508,7 @@ enum class SourceFormatId : uint8_t{
     Unknown,
     Mp4,
     Mov,
+    Mkv,
     Avi,
     Webm,
     Wmv
@@ -563,8 +561,8 @@ const array<GUID, 1> WEBM_ALLOWED_VIDEO_SUBTYPES{
 const array<GUID, 1> WMV_ALLOWED_VIDEO_SUBTYPES{
     VC1_VIDEO_SUBTYPE};
 
-const array<FormatProfile, 5>& supportedFormatProfiles(){
-    static const array<FormatProfile, 5> profiles{{
+const array<FormatProfile, 6>& supportedFormatProfiles(){
+    static const array<FormatProfile, 6> profiles{{
         FormatProfile{
             .id = SourceFormatId::Mp4,
             .extension = L".mp4",
@@ -579,6 +577,14 @@ const array<FormatProfile, 5>& supportedFormatProfiles(){
             .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES,
             .candidateExportExtensions = {L".mp4", L".mov"},
             .candidateExportExtensionCount = 2,
+            .audioExportPolicy = AudioExportPolicy::Allowed,
+            .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
+        FormatProfile{
+            .id = SourceFormatId::Mkv,
+            .extension = L".mkv",
+            .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES,
+            .candidateExportExtensions = {L".mp4", nullptr},
+            .candidateExportExtensionCount = 1,
             .audioExportPolicy = AudioExportPolicy::Allowed,
             .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
         FormatProfile{
@@ -998,7 +1004,7 @@ wstring getAppManifestDescriptionString(){
 
 bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
     if(!reader){
-        failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video in v1. This file uses unknown codec.");
+        failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video. This file uses unknown codec.");
         return false;
     }
 
@@ -1012,7 +1018,7 @@ bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD 
             break;
         }
         if(FAILED(hr)){
-            failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video in v1. This file could not be inspected.");
+            failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video. This file could not be inspected.");
             return false;
         }
 
@@ -1165,13 +1171,21 @@ constexpr auto P_CUT_SCENES{L"cut_scenes"};
 constexpr auto PROJECT_KEY{L"llvc project"};
 constexpr auto PROJECT_EXT{L".llvc"};
 
+using CoreVirtualKeyStates = winrt::Windows::UI::Core::CoreVirtualKeyStates;
+constexpr auto CORE_KEY_STATE_DOWN{static_cast<std::underlying_type_t<CoreVirtualKeyStates>>(CoreVirtualKeyStates::Down)};
+
 bool isControlModifierActive(VirtualKeyModifiers modifiers){
     if((modifiers & VirtualKeyModifiers::Control) == VirtualKeyModifiers::Control){
         return true;
     }
 
-    const auto ctrlState{InputKeyboardSource::GetKeyStateForCurrentThread(VirtualKey::Control)};
-    return (ctrlState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down;
+    const auto state{InputKeyboardSource::GetKeyStateForCurrentThread(VirtualKey::Control)};
+    return (static_cast<std::underlying_type_t<CoreVirtualKeyStates>>(state) & CORE_KEY_STATE_DOWN) != 0;
+}
+
+bool isModifierDown(VirtualKey key){
+    const auto state{InputKeyboardSource::GetKeyStateForCurrentThread(key)};
+    return (static_cast<std::underlying_type_t<CoreVirtualKeyStates>>(state) & CORE_KEY_STATE_DOWN) != 0;
 }
 
 wstring audioVolumeGlyph(bool keepAudio, int32_t volumePct){
@@ -2321,7 +2335,7 @@ void MainWindow::tryFocusTimelineCanvas(FState focusState){
     }
 }
 
-bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns) const{
+bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns, bool allowPartial, const vector<int64_t>* requiredPartialTargets100ns) const{
     rapTimes100ns.clear();
 
     if(!m_prj.hasVideoFile()){
@@ -2331,6 +2345,14 @@ bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns) const{
     const hstring sourcePath{m_prj.videoFilePath()};
     if(sourcePath != m_cachedRapSourcePath || !m_cachedRapLookupAttempted || !m_cachedRapLookupSucceeded){
         return false;
+    }
+    if(m_cachedRapTimesPartial){
+        if(!allowPartial){
+            return false;
+        }
+        if(requiredPartialTargets100ns && *requiredPartialTargets100ns != m_cachedRapLookupTargetTimes100ns){
+            return false;
+        }
     }
 
     rapTimes100ns = m_cachedRapTimes100ns;
@@ -2367,7 +2389,9 @@ std::optional<::llvc::EffectiveExportPlan> MainWindow::tryBuildEffectiveExportPl
     }
 
     vector<int64_t> rapTimes100ns;
-    if(!tryGetRapTimes100ns(rapTimes100ns)){
+    const auto rapLookupTargets100ns{::llvc::buildRapLookupTimesForExportAlignment(m_prj, sourceDuration100ns)};
+
+    if(!tryGetRapTimes100ns(rapTimes100ns, true, &rapLookupTargets100ns)){
         return std::nullopt;
     }
 
@@ -2418,15 +2442,10 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage,
     vector<int64_t> rapTimes100ns;
     vector<int64_t> markerTimes100ns;
     if(progressCallback){
-        const auto markers{m_prj.buildRapMarkersFromSelection()};
-        markerTimes100ns.reserve(markers.size());
-        for(const auto& marker: markers){
-            markerTimes100ns.push_back(marker.time100ns);
-        }
-        sort(markerTimes100ns.begin(), markerTimes100ns.end());
-        markerTimes100ns.erase(unique(markerTimes100ns.begin(), markerTimes100ns.end()), markerTimes100ns.end());
+        markerTimes100ns = ::llvc::buildRapLookupTimesForExportAlignment(m_prj, m_prj.timelineDuration100ns());
     }
-    if(tryGetRapTimes100ns(rapTimes100ns)){
+    const auto allowPartialRapTimes{!markerTimes100ns.empty()};
+    if(tryGetRapTimes100ns(rapTimes100ns, allowPartialRapTimes, &markerTimes100ns)){
         if(progressCallback && !markerTimes100ns.empty()){
             progressCallback(100.0);
         }
@@ -2437,7 +2456,7 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage,
         if(m_isExportInProgress && m_cancelExportRequested.load()){
             co_return false;
         }
-        if(tryGetRapTimes100ns(rapTimes100ns)){
+        if(tryGetRapTimes100ns(rapTimes100ns, allowPartialRapTimes, &markerTimes100ns)){
             co_return true;
         }
         if(!m_prj.hasVideoFile() || m_prj.videoFilePath() != sourcePath){
@@ -2453,7 +2472,7 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage,
         co_await winrt::resume_after(std::chrono::milliseconds(50));
     }
 
-    if(tryGetRapTimes100ns(rapTimes100ns)){
+    if(tryGetRapTimes100ns(rapTimes100ns, allowPartialRapTimes, &markerTimes100ns)){
         co_return true;
     }
     if(m_cachedRapLookupAttempted && sourcePath == m_cachedRapSourcePath && !m_cachedRapLookupSucceeded){
@@ -2503,8 +2522,10 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage,
     if(sameSourceLoaded && !lookupCanceled){
         m_cachedRapSourcePath = sourcePath;
         m_cachedRapTimes100ns = lookupSucceeded ? rapTimes100ns : vector<int64_t>{};
+        m_cachedRapLookupTargetTimes100ns = lookupSucceeded ? markerTimes100ns : vector<int64_t>{};
         m_cachedRapLookupAttempted = true;
         m_cachedRapLookupSucceeded = lookupSucceeded;
+        m_cachedRapTimesPartial = lookupSucceeded && !markerTimes100ns.empty();
     }
 
     m_isRapLookupInProgress = false;
@@ -2579,10 +2600,8 @@ bool MainWindow::handleStorylineKeyDownImpl(const KRArgs& args){
         return true;
     }
 
-    const auto ctrlState{InputKeyboardSource::GetKeyStateForCurrentThread(VirtualKey::Control)};
-    const auto ctrlDown{(ctrlState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down};
-    const auto shiftState{InputKeyboardSource::GetKeyStateForCurrentThread(VirtualKey::Shift)};
-    const auto shiftDown{(shiftState & CoreVirtualKeyStates::Down) == CoreVirtualKeyStates::Down};
+    const auto ctrlDown{isModifierDown(VirtualKey::Control)};
+    const auto shiftDown{isModifierDown(VirtualKey::Shift)};
 
     if(!focusInDialog && ctrlDown){
         if(args.Key() == VirtualKey::Z){
@@ -2777,7 +2796,7 @@ bool MainWindow::setSeparatePreviewWindowOpen(bool open){
         previewWindow.Title(L"ClipRazor: Lossless Video Cutter - video preview");
 
         Controls::Grid root{};
-        root.Background(Media::SolidColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(0xFF, 0x08, 0x08, 0x08)));
+        root.Background(Media::SolidColorBrush(winrt::Microsoft::UI::ColorHelper::FromArgb(0xFF, 0x08, 0x08, 0x08)));
 
         Controls::Image detachedSplash{};
         detachedSplash.Source(Media::Imaging::BitmapImage(Uri{L"ms-appx:///Assets/SplashScreen.png"}));
@@ -3343,8 +3362,10 @@ void MainWindow::resetProjectStateImpl(){
     m_mediaInfo = {};
     m_cachedRapSourcePath.clear();
     m_cachedRapTimes100ns.clear();
+    m_cachedRapLookupTargetTimes100ns.clear();
     m_cachedRapLookupAttempted = false;
     m_cachedRapLookupSucceeded = false;
+    m_cachedRapTimesPartial = false;
     m_lastReevaluatedEditorSnapshot.reset();
     m_lastReevaluatedRapSourcePath.clear();
     m_cachedEffectiveExportPlanSnapshot.reset();
@@ -3376,7 +3397,7 @@ void MainWindow::resetProjectStateImpl(){
     Controls::Canvas::SetLeft(TimelineCursor(), 0);
     syncTimelineHorizontalScrollBar();
 
-    setStatusMessage(L"Load or drag-and-drop a .llvc/.mp4/.mov/.avi/.webm/.wmv file to begin.");
+    setStatusMessage(L"Load or drag-and-drop a .llvc/.mp4/.mov/.mkv/.avi/.webm/.wmv file to begin.");
     clearErrorMessage();
     refreshStatusInfoSection();
     updateWindowTitle();
@@ -3588,12 +3609,7 @@ void MainWindow::refreshVideoDetailsPanel(){
 }
 
 wstring MainWindow::formatTimelineDurationText(int64_t duration100ns){
-    const auto clamped{max<int64_t>(0, duration100ns)};
-    const auto totalMs{(clamped + 5'000) / 10'000};
-    const auto minutes{totalMs / 60'000};
-    const auto seconds{(totalMs / 1'000) % 60};
-    const auto millis{totalMs % 1'000};
-    return std::format(L"{:02}:{:02}.{:03}", minutes, seconds, millis);
+    return ::llvc::formatDuration100ns(duration100ns);
 }
 
 
@@ -4214,44 +4230,6 @@ void MainWindow::setOperationProgress(double percent){
     }
 }
 
-void MainWindow::refreshExportEta(double percent){
-    (void)percent;
-    updateExportStageEta();
-    return;
-
-    if(!m_isExportInProgress){
-        m_exportEtaText.clear();
-        return;
-    }
-
-    const auto clampedPercent{clamp(percent, 0.0, 100.0)};
-    if(clampedPercent <= 0.0){
-        m_exportEtaText = L"Estimating remaining time...";
-        return;
-    }
-    if(clampedPercent >= 100.0){
-        m_exportEtaText.clear();
-        return;
-    }
-
-    const auto now{chrono::steady_clock::now()};
-    if(m_lastExportEtaProgress && !m_exportEtaText.empty() && (now - m_lastExportEtaRefreshAt) < chrono::seconds(2)){
-        return;
-    }
-
-    const auto elapsed{chrono::duration_cast<chrono::seconds>(now - m_currentExportStartedAt)};
-    if(elapsed <= chrono::seconds::zero()){
-        m_exportEtaText = L"Estimating remaining time...";
-        return;
-    }
-
-    const auto totalEstimateSeconds{static_cast<double>(elapsed.count()) / (clampedPercent / 100.0)};
-    const auto remainingSeconds{(std::max<int64_t>)(0, static_cast<int64_t>(llround(totalEstimateSeconds - elapsed.count())))};
-    m_lastExportEtaRefreshAt = now;
-    m_lastExportEtaProgress = clampedPercent;
-    m_exportEtaText = L"About " + formatRemainingDurationText(chrono::seconds{remainingSeconds}) + L" remaining";
-}
-
 std::wstring MainWindow::formatRemainingDurationText(std::chrono::seconds remaining){
     const auto totalSeconds{(std::max<int64_t>)(0, remaining.count())};
     const auto hours{totalSeconds / 3600};
@@ -4428,7 +4406,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
 
     const auto items{co_await view.GetStorageItemsAsync()};
     if(items.Size() != 1){
-        setStatusMessage(L"Only support a single .llvc/.mp4/.mov/.avi/.webm/.wmv file");
+        setStatusMessage(L"Only support a single .llvc/.mp4/.mov/.mkv/.avi/.webm/.wmv file");
         co_return;
     }
 
@@ -4449,7 +4427,7 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
     }
 
     if(!isSupportedMediaPath(file.Path().c_str())){
-        setStatusMessage(L"Only .llvc, .mp4, .mov, .avi (H.264), .webm (VP9), and .wmv (VC-1) files are supported");
+        setStatusMessage(L"Only .llvc, .mp4, .mov, .mkv (H.264/HEVC), .avi (H.264), .webm (VP9), and .wmv (VC-1) files are supported");
         co_return;
     }
 
@@ -4499,8 +4477,10 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_media = createVideoSource(filePath.c_str());
     m_cachedRapSourcePath.clear();
     m_cachedRapTimes100ns.clear();
+    m_cachedRapLookupTargetTimes100ns.clear();
     m_cachedRapLookupAttempted = false;
     m_cachedRapLookupSucceeded = false;
+    m_cachedRapTimesPartial = false;
     m_lastReevaluatedEditorSnapshot.reset();
     m_lastReevaluatedRapSourcePath.clear();
     m_cachedEffectiveExportPlanSnapshot.reset();
@@ -4927,35 +4907,6 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             refreshStatusInfoSection();
             refreshVideoDetailsPanel();
             co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export blocked", L"Could not build a RAP-aligned cut plan for the current source.");
-            co_return;
-        }
-    }
-
-    if(needsRapReevaluation){
-        if(m_cancelExportRequested){
-            m_isExportInProgress = false;
-            m_lastExportSucceeded = false;
-            m_exportOverlayHasFinalState = true;
-            setExportOverlayStageState(ExportOverlayStage::Rap, L"Canceled", 0.0, false);
-            setStatusMessage(L"Export canceled");
-            clearErrorMessage();
-            setOperationInProgress(false);
-            updateExportOverlayActionButtons();
-            co_return;
-        }
-
-        if(!reevaluateClearCutMarkers(false)){
-            m_isExportInProgress = false;
-            m_lastExportSucceeded = false;
-            m_exportOverlayHasFinalState = true;
-            setExportOverlayStageState(ExportOverlayStage::Rap, m_cancelExportRequested ? L"Canceled" : L"Failed", 0.0, false);
-            setStatusMessage(m_cancelExportRequested ? L"Export canceled" : L"Could not build a RAP-aligned cut plan for the current source");
-            clearErrorMessage();
-            setOperationInProgress(false);
-            updateExportOverlayActionButtons();
-            if(!m_cancelExportRequested){
-                co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export blocked", L"Could not build a RAP-aligned cut plan for the current source.");
-            }
             co_return;
         }
     }
