@@ -90,7 +90,7 @@ DialogAction showAboutDialogAsync(const XamlRoot& xamlRoot, const hstring& versi
         + L"\n\nVersion "
         + wstring{version.c_str()}
         + L"\n\n"
-        + L"\xA9 02'2026 YePhIcK"};
+        + L"\xA9 02'2026-06'2026 YePhIcK"};
     co_await showInfoDialogAsync(xamlRoot, L"About ClipRazor: Lossless Video Cutter", hstring{aboutText});
 }
 

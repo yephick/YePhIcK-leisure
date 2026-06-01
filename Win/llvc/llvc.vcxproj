@@ -269,7 +269,9 @@
     <Image Include="Assets\Square150x150Logo.png" />
     <Image Include="Assets\Square44x44Logo.png" />
     <Image Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
+    <Image Include="Assets\Square44x44LogoProject.png" />
     <Image Include="Assets\StoreLogo.png" />
+    <Image Include="Assets\store_logo_150x150.png" />
     <Image Include="Assets\Wide310x150Logo.png" />
   </ItemGroup>
   <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">

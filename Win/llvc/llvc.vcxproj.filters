@@ -51,6 +51,12 @@
     <Image Include="Assets\LockScreenLogo.png">
       <Filter>Assets</Filter>
     </Image>
+    <Image Include="Assets\Square44x44LogoProject.png">
+      <Filter>Assets</Filter>
+    </Image>
+    <Image Include="Assets\store_logo_150x150.png">
+      <Filter>Assets</Filter>
+    </Image>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Assets">

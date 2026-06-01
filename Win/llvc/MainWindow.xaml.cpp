@@ -1004,7 +1004,7 @@ wstring getAppManifestDescriptionString(){
 
 bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD videoStreamIndex, com_ptr<IMFMediaType>& selectedVideoType, wstring& failureReason){
     if(!reader){
-        failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video in v1. This file uses unknown codec.");
+        failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video. This file uses unknown codec.");
         return false;
     }
 
@@ -1018,7 +1018,7 @@ bool IsAviH264StreamCopyCandidate(const com_ptr<IMFSourceReader>& reader, DWORD 
             break;
         }
         if(FAILED(hr)){
-            failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video in v1. This file could not be inspected.");
+            failureReason = BuildUnsupportedAviReason(L"AVI is supported only for H.264 video. This file could not be inspected.");
             return false;
         }
 
