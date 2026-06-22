@@ -1,6 +1,6 @@
 ﻿local addonName = ...
 
-local AGG_VER = GetAddOnMetadata(addonName, "Version")
+local AGG_VER = C_AddOns.GetAddOnMetadata(addonName, "Version")
 
 -- ---------------------------------------------------------------------------
 -- Minimal version check (addon messages on local zone channel 1)
@@ -41,9 +41,9 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 
 local function PrintStartup()
-    local version = GetAddOnMetadata(addonName, "Version")
-    local author = GetAddOnMetadata(addonName, "Author")
-    local coauthor = GetAddOnMetadata(addonName, "X-CoAuthor")
+    local version = C_AddOns.GetAddOnMetadata(addonName, "Version")
+    local author = C_AddOns.GetAddOnMetadata(addonName, "Author")
+    local coauthor = C_AddOns.GetAddOnMetadata(addonName, "X-CoAuthor")
     print(CTITLE .. "v" .. AGG_VER .. ", vibed by: " .. author .. " & " .. coauthor)
     if GetSetting("DBG_en", false) == true then
         local BUILD_NO = select(4, GetBuildInfo())

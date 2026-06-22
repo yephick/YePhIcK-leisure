@@ -1,15 +1,15 @@
 -- === About Window =========================================================
 local addonName = ...
 
-TITLE = GetAddOnMetadata(addonName, "Title")
+TITLE = C_AddOns.GetAddOnMetadata(addonName, "Title")
 CTITLE = "|cff40fd11" .. TITLE .. "|r "
 
 local ADDON_PATH = "Interface\\AddOns\\" .. addonName .. "\\"
 local QR_PATH = ADDON_PATH .. "QR\\"
-local ICON_PPME = QR_PATH .. GetAddOnMetadata(addonName, "X-QrPayPalMe")
-local ICON_DISC = QR_PATH .. GetAddOnMetadata(addonName, "X-QrDiscord")
-local ICON_ATT  = QR_PATH .. GetAddOnMetadata(addonName, "X-QrDiscord-ATT")
-ICON_MAIN = ADDON_PATH .. GetAddOnMetadata(addonName, "X-IconMain") .. ".tga"
+local ICON_PPME = QR_PATH .. C_AddOns.GetAddOnMetadata(addonName, "X-QrPayPalMe")
+local ICON_DISC = QR_PATH .. C_AddOns.GetAddOnMetadata(addonName, "X-QrDiscord")
+local ICON_ATT  = QR_PATH .. C_AddOns.GetAddOnMetadata(addonName, "X-QrDiscord-ATT")
+ICON_MAIN = ADDON_PATH .. C_AddOns.GetAddOnMetadata(addonName, "X-IconMain") .. ".tga"
 
 AboutUI = {
   frame = nil,
