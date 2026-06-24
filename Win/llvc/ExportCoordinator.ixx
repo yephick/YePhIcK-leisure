@@ -138,6 +138,19 @@ winrt::Windows::Foundation::IAsyncAction runExportAsync(const ExportCoordinatorR
         }
     }
 
+    if(request.needsRapReevaluation){
+        if(isCanceled(request)){
+            result.canceled = true;
+            co_return;
+        }
+
+        if(!request.reevaluateCutMarkers(false)){
+            result.canceled = isCanceled(request);
+            result.errorMessage = result.canceled ? hstring{} : hstring{L"Could not build a RAP-aligned cut plan for the current source."};
+            co_return;
+        }
+    }
+
     const auto effectivePlanOpt{request.buildEffectiveExportPlan({})};
     if(!effectivePlanOpt){
         result.errorMessage = L"The export plan is not ready yet. Wait for the RAP analysis to finish and try again.";

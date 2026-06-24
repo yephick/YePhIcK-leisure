@@ -63,8 +63,6 @@ EffectiveExportPlan buildDirectEffectiveExportPlan(const Project& project, int64
 ExportPreflightState buildExportPreflightState(const Project& project, bool hasMedia, bool supportsLosslessExport, bool hasSupportedExportExtensions, bool sourceHasAudio, bool supportsAudioExport);
 EffectiveExportPlanSummary summarizeEffectiveExportPlan(const EffectiveExportPlan& plan);
 ExportOverlayEstimates buildExportOverlayEstimates(uint64_t sourceSizeBytes, int64_t sourceDuration100ns, int64_t outputDuration100ns, bool keepAudio, bool sourceHasAudio, uint64_t audioBitrateBytesPerSecond);
-wstring formatDuration100ns(int64_t duration100ns);
-vector<int64_t> buildRapLookupTimesForExportAlignment(const Project& project, int64_t sourceDuration100ns);
 
 struct Project final{
     using AAction = ::winrt::Windows::Foundation::IAsyncAction;
@@ -281,44 +279,6 @@ ExportOverlayEstimates buildExportOverlayEstimates(uint64_t sourceSizeBytes, int
     }
 
     return estimates;
-}
-
-wstring formatDuration100ns(int64_t duration100ns){
-    const auto clamped{max<int64_t>(0, duration100ns)};
-    const auto totalMs{(clamped + 5'000) / 10'000};
-    const auto hours{totalMs / 3'600'000};
-    const auto minutes{(totalMs / 60'000) % 60};
-    const auto seconds{(totalMs / 1'000) % 60};
-    const auto millis{totalMs % 1'000};
-    if(hours > 0){
-        return std::format(L"{}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis);
-    }
-    return std::format(L"{:02}:{:02}.{:03}", minutes, seconds, millis);
-}
-
-vector<int64_t> buildRapLookupTimesForExportAlignment(const Project& project, int64_t sourceDuration100ns){
-    vector<int64_t> times;
-    const auto clampedDuration{max<int64_t>(0, sourceDuration100ns)};
-    const auto addTime{[clampedDuration, &times](int64_t time100ns){
-        if(time100ns > 0 && time100ns < clampedDuration){
-            times.push_back(time100ns);
-        }
-    }};
-
-    const auto cutRanges{project.buildCutRanges100ns()};
-    times.reserve(cutRanges.size() * 2 + project.frameIndex().size());
-    for(const auto& [start100ns, end100ns]: cutRanges){
-        addTime(start100ns);
-        addTime(end100ns);
-    }
-
-    for(const auto& marker: project.buildRapMarkersFromSelection()){
-        addTime(marker.time100ns);
-    }
-
-    sort(times.begin(), times.end());
-    times.erase(unique(times.begin(), times.end()), times.end());
-    return times;
 }
 
 using namespace winrt;
