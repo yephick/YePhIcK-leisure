@@ -35,6 +35,7 @@
 
 import std;
 import llvc.AudioWaveform;
+import llvc.Dialogs;
 import llvc.EditorController;
 import llvc.Export;
 import llvc.Media;
@@ -1723,11 +1724,16 @@ void MainWindow::timelineScrollViewer_ViewChanged(const Control&, const SVVCArgs
 
     if(m_isExportInProgress && m_prj.hasVideoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
+    }else if(m_hasTimelineRenderCompleted){
+        queueTimelineViewportRender();
     }
 }
 
 void MainWindow::timelineScrollViewer_SizeChanged(const Control&, const SCArgs&){
     syncTimelineHorizontalScrollBar();
+    if(m_hasTimelineRenderCompleted){
+        queueTimelineViewportRender();
+    }
 }
 
 void MainWindow::timelineScrollViewer_PointerWheelChanged(const Control&, const PREArgs& args){
@@ -2066,7 +2072,22 @@ void MainWindow::seekTimelineToCanvasX(double pointerX){
     }
     const auto target100ns{*target100nsOpt};
 
-    m_player.PlaybackSession().Position(TimeSpan{target100ns});
+    const auto session{m_player.PlaybackSession()};
+    const auto wasPlaying{session.PlaybackState() == MediaPlaybackState::Playing};
+    session.Position(TimeSpan{target100ns});
+    if(!wasPlaying){
+        try{
+            const auto frameStep100ns{m_tl.frameStep100ns(m_mediaInfo.frameRate.num, m_mediaInfo.frameRate.den)};
+            if(target100ns + frameStep100ns < duration100ns){
+                m_player.StepForwardOneFrame();
+                m_player.StepBackwardOneFrame();
+            }else if(target100ns >= frameStep100ns){
+                m_player.StepBackwardOneFrame();
+                m_player.StepForwardOneFrame();
+            }
+        }catch(...){
+        }
+    }
     updateTimelineCursorFromPosition(target100ns);
 }
 
@@ -4940,7 +4961,27 @@ winrt::fire_and_forget MainWindow::ensureAudioWaveformAsync(){
     renderAudioWaveform();
 }
 
-winrt::fire_and_forget MainWindow::renderTimelineAsync(){
+void MainWindow::queueTimelineViewportRender(){
+    if(m_isClosing || m_isExportInProgress || !m_prj.hasVideoFile()){
+        return;
+    }
+
+    renderTimelineViewportAfterDelayAsync(++m_timelineViewportRenderRequestVersion);
+}
+
+winrt::fire_and_forget MainWindow::renderTimelineViewportAfterDelayAsync(uint64_t requestVersion){
+    const auto lifetime{get_strong()};
+    const apartment_context uiThread{};
+    co_await resume_after(std::chrono::milliseconds{120});
+    co_await uiThread;
+    if(m_isClosing || requestVersion != m_timelineViewportRenderRequestVersion || !m_hasTimelineRenderCompleted){
+        co_return;
+    }
+
+    renderTimelineAsync(true);
+}
+
+winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
     const auto lifetime{get_strong()};
 
     if(m_isClosing || !m_prj.hasVideoFile() || m_timelineDurationSeconds <= 0){
@@ -4952,9 +4993,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
 
     if(!DispatcherQueue().HasThreadAccess()){
         const auto weak{get_weak()};
-        DispatcherQueue().TryEnqueue([weak](){
+        DispatcherQueue().TryEnqueue([weak, viewportOnly](){
             if(const auto self{weak.get()}){
-                self->renderTimelineAsync();
+                self->renderTimelineAsync(viewportOnly);
             }
         });
         co_return;
@@ -4962,7 +5003,8 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
 
     try{
         const auto renderDuringExport{m_isExportInProgress};
-        if(!renderDuringExport){
+        if(!renderDuringExport && !viewportOnly){
+            m_hasTimelineRenderCompleted = false;
             setOperationInProgress(true, true);
         }
 
@@ -4972,15 +5014,30 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         const auto totalWidth{stripPlan.totalWidth};
         const auto thumbnailCount{stripPlan.thumbnailCount};
         const auto thumbnailWidth{stripPlan.thumbnailWidth};
+        const auto sourcePath{m_prj.videoFilePath()};
+        const auto thumbnailPlanChanged{
+            m_thumbnailPlanSourcePath != sourcePath
+            || m_thumbnailPlanCount != thumbnailCount
+            || fabs(m_thumbnailPlanTotalWidth - totalWidth) > 0.5
+            || fabs(m_thumbnailPlanWidth - thumbnailWidth) > 0.5};
 
         TimelineCanvas().Width(totalWidth);
         AudioWaveformCanvas().Width(totalWidth);
-        ThumbnailLayer().Children().Clear();
         CutOverlayLayer().Width(totalWidth);
-        renderTimelineTicks();
-        renderAudioWaveform();
-        renderKeyframeTicks();
-        renderCutOverlays();
+        if(thumbnailPlanChanged){
+            ThumbnailLayer().Children().Clear();
+            m_thumbnailBuilt.assign(static_cast<size_t>(thumbnailCount), false);
+            m_thumbnailPlanSourcePath = sourcePath;
+            m_thumbnailPlanCount = thumbnailCount;
+            m_thumbnailPlanTotalWidth = totalWidth;
+            m_thumbnailPlanWidth = thumbnailWidth;
+        }
+        if(thumbnailPlanChanged || !viewportOnly){
+            renderTimelineTicks();
+            renderAudioWaveform();
+            renderKeyframeTicks();
+            renderCutOverlays();
+        }
         syncTimelineHorizontalScrollBar();
         if(sourceHasAudio() && !m_audioWaveformAnalysisQueued){
             m_audioWaveformAnalysisQueued = true;
@@ -5007,9 +5064,19 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
             m_timelineInteraction.pendingScrollbarAnchor.reset();
         }
 
+        const auto scrollViewer{TimelineScrollViewer()};
+        const auto visibleRange{m_tl.visibleThumbnailRange(
+            scrollViewer.HorizontalOffset(),
+            max(0.0, scrollViewer.ViewportWidth()),
+            thumbnailWidth,
+            thumbnailCount)};
+        const auto bufferedRange{m_tl.expandThumbnailRange(visibleRange, 1, thumbnailCount)};
+        const auto allowOffscreenThumbnailExpansion{viewportOnly};
+        auto nextIndex{m_tl.chooseNextThumbnailIndex(m_thumbnailBuilt, bufferedRange, allowOffscreenThumbnailExpansion)};
+
         const auto useSourceReaderThumbnails{m_mediaInfo.container == L"MPEG-TS"};
         winrt::Windows::Media::Editing::MediaComposition composition{};
-        if(!useSourceReaderThumbnails){
+        if(nextIndex >= 0 && !useSourceReaderThumbnails){
             const auto clipFile{co_await StorageFile::GetFileFromPathAsync(m_prj.videoFilePath())};
             const auto clip{co_await winrt::Windows::Media::Editing::MediaClip::CreateFromFileAsync(clipFile)};
             composition.Clips().Append(clip);
@@ -5019,24 +5086,12 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
             co_return;
         }
 
-        vector<bool> thumbnailBuilt(thumbnailCount, false);
-
-        for(int builtCount{0}; builtCount < thumbnailCount; ++builtCount){
+        while(nextIndex >= 0){
             if(renderVersion != m_timelineRenderVersion || m_isClosing){
                 if(m_isClosing){
                     setOperationInProgress(false);
                 }
                 co_return;
-            }
-
-            const auto scrollViewer{TimelineScrollViewer()};
-            const auto viewportWidth{max(0.0, scrollViewer.ViewportWidth())};
-            const auto viewportLeft{scrollViewer.HorizontalOffset()};
-            const auto visibleRange{m_tl.visibleThumbnailRange(viewportLeft, viewportWidth, thumbnailWidth, thumbnailCount)};
-            const auto nextIndex{m_tl.chooseNextThumbnailIndex(thumbnailBuilt, visibleRange, !renderDuringExport)};
-
-            if(nextIndex < 0){
-                break;
             }
 
             const auto t{(nextIndex + 0.5) / thumbnailCount};
@@ -5047,11 +5102,11 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
 
             auto thumbnailCreated{false};
             if(useSourceReaderThumbnails){
-                const wstring sourcePath{m_prj.videoFilePath().c_str()};
+                const wstring sourceFilePath{m_prj.videoFilePath().c_str()};
                 const auto thumbnailTime100ns{static_cast<int64_t>(max(0.0, t * m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
                 const apartment_context uiThread{};
                 co_await resume_background();
-                const auto decodedThumbnail{tryDecodeThumbnailWithSourceReader(sourcePath, thumbnailTime100ns, 180, 96)};
+                const auto decodedThumbnail{tryDecodeThumbnailWithSourceReader(sourceFilePath, thumbnailTime100ns, 180, 96)};
                 co_await uiThread;
                 if(renderVersion != m_timelineRenderVersion || m_isClosing){
                     if(m_isClosing){
@@ -5078,12 +5133,12 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
                 thumbnailCreated = true;
             }
 
-            thumbnailBuilt[nextIndex] = true;
+            m_thumbnailBuilt[static_cast<size_t>(nextIndex)] = true;
             if(thumbnailCreated){
                 Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
                 ThumbnailLayer().Children().Append(image);
-                renderCutOverlays();
             }
+            nextIndex = m_tl.chooseNextThumbnailIndex(m_thumbnailBuilt, bufferedRange, allowOffscreenThumbnailExpansion);
         }
 
         if(!renderDuringExport && m_player && m_player.PlaybackSession().PlaybackState() == MediaPlaybackState::Playing){
@@ -5092,7 +5147,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
         }
         syncTimelineHorizontalScrollBar();
 
-        if(!renderDuringExport){
+        if(!renderDuringExport && !viewportOnly){
             m_hasTimelineRenderCompleted = true;
             m_audioWaveformAnalysisQueued = false;
             const auto postActions{m_tl.buildRenderPostActions(
@@ -5106,9 +5161,10 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(){
             if(postActions.shouldQueueRapLookup){
                 queueRapLookup(false, 0);
             }
+            renderTimelineAsync(true);
         }
     }catch(const winrt::hresult_error& ex){
-        if(!m_isExportInProgress){
+        if(!m_isExportInProgress && !viewportOnly){
             m_hasTimelineRenderCompleted = false;
             m_audioWaveformAnalysisQueued = false;
             wstring status{L"Failed to render story line: "};

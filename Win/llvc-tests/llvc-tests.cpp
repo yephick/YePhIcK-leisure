@@ -365,6 +365,14 @@ void testTimelineZoomAnchorsAndThumbnailPlanning(){
     expectEqual(visibleRange.first, 3, "visibleThumbnailRange should locate the first visible thumbnail");
     expectEqual(visibleRange.last, 5, "visibleThumbnailRange should locate the last visible thumbnail");
 
+    const auto bufferedRange{timeline.expandThumbnailRange(visibleRange, 1, 12)};
+    expectEqual(bufferedRange.first, 2, "expandThumbnailRange should include one thumbnail before the viewport");
+    expectEqual(bufferedRange.last, 6, "expandThumbnailRange should include one thumbnail after the viewport");
+    const auto leftEdgeRange{timeline.expandThumbnailRange({.first = 0, .last = 2}, 2, 12)};
+    expectEqual(leftEdgeRange.first, 0, "expandThumbnailRange should clamp its left buffer");
+    const auto rightEdgeRange{timeline.expandThumbnailRange({.first = 10, .last = 11}, 2, 12)};
+    expectEqual(rightEdgeRange.last, 11, "expandThumbnailRange should clamp its right buffer");
+
     vector<bool> built(8, false);
     built[2] = true;
     built[3] = true;

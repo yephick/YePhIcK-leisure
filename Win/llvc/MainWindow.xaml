@@ -9,7 +9,7 @@
     mc:Ignorable="d"
     Title="ClipRazor: Lossless Video Cutter">
 
-    <Grid Padding="12" RowSpacing="10" AllowDrop="True" DragOver="window_DragOver" Drop="window_Drop" PreviewKeyDown="window_PreviewKeyDown" KeyDown="window_KeyDown" PointerReleased="rootGrid_PointerReleased">
+    <Grid x:Name="RootGrid" Padding="12" RowSpacing="10" AllowDrop="True" DragOver="window_DragOver" Drop="window_Drop" PreviewKeyDown="window_PreviewKeyDown" KeyDown="window_KeyDown" PointerReleased="rootGrid_PointerReleased">
         <Grid.Background>
             <ImageBrush ImageSource="ms-appx:///Assets/SplashScreen.png" Stretch="UniformToFill" Opacity="0.10"/>
         </Grid.Background>
@@ -160,6 +160,9 @@
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <Button x:Name="ReevaluateClearCutMarkersButton" Content="⟳" Width="34" IsTabStop="False" Click="reevaluateClearCutMarkersButton_Click" ToolTipService.ToolTip="Reevaluate clear cut markers"/>
+                    <TextBlock x:Name="AudioWaveformThresholdLabel" Text="Loudness ref" VerticalAlignment="Center" Visibility="Collapsed"/>
+                    <Slider x:Name="AudioWaveformThresholdSlider" Width="150" IsTabStop="False" Minimum="-60" Maximum="-3" Value="-18" SmallChange="1" LargeChange="6" StepFrequency="1" ValueChanged="audioWaveformThresholdSlider_ValueChanged" Visibility="Collapsed"/>
+                    <TextBlock x:Name="AudioWaveformThresholdValueText" Text="-18 dB" MinWidth="48" VerticalAlignment="Center" Visibility="Collapsed"/>
                     <TextBlock Text="Zoom" VerticalAlignment="Center"/>
                     <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="24" Value="4" SmallChange="1" LargeChange="4" ValueChanged="timelineZoomSlider_ValueChanged" PointerWheelChanged="timelineZoomSlider_PointerWheelChanged"/>
                 </StackPanel>
@@ -180,6 +183,7 @@
                                 <Canvas x:Name="CutOverlayLayer" Height="86"/>
                                 <Rectangle x:Name="TimelineCursor" Canvas.Left="0" Width="3" Height="86" Fill="Green"/>
                             </Canvas>
+                            <Canvas x:Name="AudioWaveformCanvas" Height="48" Background="#222222" Visibility="Collapsed"/>
                         </StackPanel>
                     </ScrollViewer>
 

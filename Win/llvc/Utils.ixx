@@ -36,6 +36,12 @@ struct WindowPlacementState final{
     bool maximized{false};
 };
 
+enum class AppThemeMode : int32_t{
+    System = 0,
+    Light = 1,
+    Dark = 2,
+};
+
 struct AppSettingsState final{
     vector<winrt::hstring> recentVideos{};
     vector<winrt::hstring> recentProjects{};
@@ -43,6 +49,7 @@ struct AppSettingsState final{
     uint32_t maxRecentProjects{5};
     uint32_t pageJumpDurationIndex{5};
     double timelineZoom{7.0};
+    AppThemeMode appThemeMode{AppThemeMode::System};
     bool deleteSourceAndProjectAfterExport{false};
     bool autoReevaluateCutMarkersOnPlacement{false};
     bool generateExportTimeReport{false};
@@ -124,6 +131,7 @@ constexpr auto S_MAX_RECENT_VIDEOS{L"MaxRecentVideos"};
 constexpr auto S_MAX_RECENT_PROJECTS{L"MaxRecentProjects"};
 constexpr auto S_PAGE_JUMP_SECONDS{L"PageJumpSeconds"};
 constexpr auto S_TIMELINE_ZOOM{L"TimelineZoom"};
+constexpr auto S_APP_THEME_MODE{L"AppThemeMode"};
 constexpr auto S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT{L"DeleteSourceAndProjectAfterExport"};
 constexpr auto S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT{L"AutoReevaluateCutMarkersOnPlacement"};
 constexpr auto S_GENERATE_EXPORT_TIME_REPORT{L"GenerateExportTimeReport"};
@@ -502,6 +510,12 @@ AppSettingsState loadAppSettings(){
             state.timelineZoom = parsed;
         }
     }
+    if(values.HasKey(S_APP_THEME_MODE)){
+        const auto parsed{unbox_value<int32_t>(values.Lookup(S_APP_THEME_MODE))};
+        if(parsed >= static_cast<int32_t>(AppThemeMode::System) && parsed <= static_cast<int32_t>(AppThemeMode::Dark)){
+            state.appThemeMode = static_cast<AppThemeMode>(parsed);
+        }
+    }
 
     if(values.HasKey(S_RECENT_VIDEOS)){
         state.recentVideos = splitRecentItems(unbox_value<hstring>(values.Lookup(S_RECENT_VIDEOS)).c_str());
@@ -548,6 +562,7 @@ void saveAppSettings(const AppSettingsState& state){
     values.Insert(S_MAX_RECENT_PROJECTS, box_value(static_cast<int32_t>(state.maxRecentProjects)));
     values.Insert(S_PAGE_JUMP_SECONDS, box_value(allowedPageJumpSeconds[min<size_t>(state.pageJumpDurationIndex, allowedPageJumpSeconds.size() - 1)]));
     values.Insert(S_TIMELINE_ZOOM, box_value(state.timelineZoom));
+    values.Insert(S_APP_THEME_MODE, box_value(static_cast<int32_t>(state.appThemeMode)));
     values.Insert(S_DELETE_SOURCE_AND_PROJECT_AFTER_EXPORT, box_value(state.deleteSourceAndProjectAfterExport));
     values.Insert(S_AUTO_REEVALUATE_CUT_MARKERS_ON_PLACEMENT, box_value(state.autoReevaluateCutMarkersOnPlacement));
     values.Insert(S_GENERATE_EXPORT_TIME_REPORT, box_value(state.generateExportTimeReport));
