@@ -28,7 +28,6 @@
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Media.Core.h>
-#include <winrt/Windows.Media.Editing.h>
 #include <winrt/Windows.Media.Playback.h>
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.System.h>
@@ -1550,16 +1549,28 @@ bool MainWindow::reevaluateAll(bool pushUndoState){
         return false;
     }
 
-    vector<int64_t> rapTimes100ns;
-    if(!tryGetRapTimes100ns(rapTimes100ns)){
-        m_pendingReevaluateWithoutUndoAfterRapLookup = !pushUndoState;
-        queueRapLookup(true, 0);
-        return false;
-    }
-
     const auto originalMarkers{m_prj.frameIndex()};
     if(originalMarkers.empty()){
         setStatusMessage(L"No clear cut markers to reevaluate");
+        return false;
+    }
+
+    vector<int64_t> rapTimes100ns;
+    auto markerTimes100ns{::llvc::buildRapLookupTimesForExportAlignment(m_prj, m_prj.timelineDuration100ns())};
+    if(markerTimes100ns.empty()){
+        markerTimes100ns.reserve(originalMarkers.size());
+        for(const auto& marker: originalMarkers){
+            if(marker.time100ns > 0 && marker.time100ns < m_prj.timelineDuration100ns()){
+                markerTimes100ns.push_back(marker.time100ns);
+            }
+        }
+        sort(markerTimes100ns.begin(), markerTimes100ns.end());
+        markerTimes100ns.erase(unique(markerTimes100ns.begin(), markerTimes100ns.end()), markerTimes100ns.end());
+    }
+
+    if(!tryGetRapTimes100ns(rapTimes100ns, !markerTimes100ns.empty(), &markerTimes100ns)){
+        m_pendingReevaluateWithoutUndoAfterRapLookup = !pushUndoState;
+        queueRapLookup(true, 0);
         return false;
     }
 
@@ -1826,7 +1837,8 @@ bool MainWindow::evaluatePlacedMarkerAtTime100ns(int64_t time100ns){
     }
 
     vector<int64_t> rapTimes100ns;
-    if(!tryGetRapTimes100ns(rapTimes100ns)){
+    vector<int64_t> markerTimes100ns{time100ns};
+    if(!tryGetRapTimes100ns(rapTimes100ns, true, &markerTimes100ns)){
         if(find(m_pendingAutoEvaluateMarkerTimes100ns.begin(), m_pendingAutoEvaluateMarkerTimes100ns.end(), time100ns) == m_pendingAutoEvaluateMarkerTimes100ns.end()){
             m_pendingAutoEvaluateMarkerTimes100ns.push_back(time100ns);
         }
@@ -2444,8 +2456,13 @@ bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns, bool allowP
         if(!allowPartial){
             return false;
         }
-        if(requiredPartialTargets100ns && *requiredPartialTargets100ns != m_cachedRapLookupTargetTimes100ns){
-            return false;
+        if(requiredPartialTargets100ns){
+            auto requestedTargets{*requiredPartialTargets100ns};
+            sort(requestedTargets.begin(), requestedTargets.end());
+            requestedTargets.erase(unique(requestedTargets.begin(), requestedTargets.end()), requestedTargets.end());
+            if(!includes(m_cachedRapLookupTargetTimes100ns.begin(), m_cachedRapLookupTargetTimes100ns.end(), requestedTargets.begin(), requestedTargets.end())){
+                return false;
+            }
         }
     }
 
@@ -2534,9 +2551,18 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage,
     MFLifetime mf{};
     const hstring sourcePath{m_prj.videoFilePath()};
     vector<int64_t> rapTimes100ns;
-    vector<int64_t> markerTimes100ns;
-    if(progressCallback){
-        markerTimes100ns = ::llvc::buildRapLookupTimesForExportAlignment(m_prj, m_prj.timelineDuration100ns());
+    auto markerTimes100ns{::llvc::buildRapLookupTimesForExportAlignment(m_prj, m_prj.timelineDuration100ns())};
+    if(markerTimes100ns.empty()){
+        const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
+        const auto& markers{m_prj.frameIndex()};
+        markerTimes100ns.reserve(markers.size());
+        for(const auto& marker: markers){
+            if(marker.time100ns > 0 && marker.time100ns < sourceDuration100ns){
+                markerTimes100ns.push_back(marker.time100ns);
+            }
+        }
+        sort(markerTimes100ns.begin(), markerTimes100ns.end());
+        markerTimes100ns.erase(unique(markerTimes100ns.begin(), markerTimes100ns.end()), markerTimes100ns.end());
     }
     const auto allowPartialRapTimes{!markerTimes100ns.empty()};
     if(tryGetRapTimes100ns(rapTimes100ns, allowPartialRapTimes, &markerTimes100ns)){
@@ -4983,6 +5009,7 @@ winrt::fire_and_forget MainWindow::renderTimelineViewportAfterDelayAsync(uint64_
 
 winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
     const auto lifetime{get_strong()};
+    uint64_t renderVersion{};
 
     if(m_isClosing || !m_prj.hasVideoFile() || m_timelineDurationSeconds <= 0){
         if(!m_isExportInProgress){
@@ -5008,7 +5035,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             setOperationInProgress(true, true);
         }
 
-        const auto renderVersion{++m_timelineRenderVersion};
+        renderVersion = ++m_timelineRenderVersion;
         const auto stripPlan{m_tl.buildThumbnailStripPlan(m_timelineDurationSeconds, timelineZoomValueFromIndex(TimelineZoomSlider().Value()))};
         constexpr auto thumbnailImageHeight{86.0};
         const auto totalWidth{stripPlan.totalWidth};
@@ -5074,14 +5101,6 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
         const auto allowOffscreenThumbnailExpansion{viewportOnly};
         auto nextIndex{m_tl.chooseNextThumbnailIndex(m_thumbnailBuilt, bufferedRange, allowOffscreenThumbnailExpansion)};
 
-        const auto useSourceReaderThumbnails{m_mediaInfo.container == L"MPEG-TS"};
-        winrt::Windows::Media::Editing::MediaComposition composition{};
-        if(nextIndex >= 0 && !useSourceReaderThumbnails){
-            const auto clipFile{co_await StorageFile::GetFileFromPathAsync(m_prj.videoFilePath())};
-            const auto clip{co_await winrt::Windows::Media::Editing::MediaClip::CreateFromFileAsync(clipFile)};
-            composition.Clips().Append(clip);
-        }
-
         if(renderVersion != m_timelineRenderVersion){
             co_return;
         }
@@ -5100,8 +5119,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             image.Height(thumbnailImageHeight);
             image.Stretch(Media::Stretch::UniformToFill);
 
-            auto thumbnailCreated{false};
-            if(useSourceReaderThumbnails){
+            const auto decodeThumbnailWithSourceReader = [&]() -> winrt::Windows::Foundation::IAsyncOperation<bool>{
                 const wstring sourceFilePath{m_prj.videoFilePath().c_str()};
                 const auto thumbnailTime100ns{static_cast<int64_t>(max(0.0, t * m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
                 const apartment_context uiThread{};
@@ -5112,26 +5130,16 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
                     if(m_isClosing){
                         setOperationInProgress(false);
                     }
-                    co_return;
+                    co_return false;
                 }
                 if(decodedThumbnail){
                     image.Source(createWriteableBitmapFromDecodedThumbnail(*decodedThumbnail));
-                    thumbnailCreated = true;
+                    co_return true;
                 }
-            }else{
-                const auto stream{co_await composition.GetThumbnailAsync(secondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, winrt::Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
-                if(renderVersion != m_timelineRenderVersion || m_isClosing){
-                    if(m_isClosing){
-                        setOperationInProgress(false);
-                    }
-                    co_return;
-                }
+                co_return false;
+            };
 
-                Media::Imaging::BitmapImage bitmap{};
-                co_await bitmap.SetSourceAsync(stream);
-                image.Source(bitmap);
-                thumbnailCreated = true;
-            }
+            const auto thumbnailCreated{co_await decodeThumbnailWithSourceReader()};
 
             m_thumbnailBuilt[static_cast<size_t>(nextIndex)] = true;
             if(thumbnailCreated){
@@ -5164,6 +5172,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             renderTimelineAsync(true);
         }
     }catch(const winrt::hresult_error& ex){
+        if(renderVersion != m_timelineRenderVersion || m_isClosing){
+            co_return;
+        }
         if(!m_isExportInProgress && !viewportOnly){
             m_hasTimelineRenderCompleted = false;
             m_audioWaveformAnalysisQueued = false;

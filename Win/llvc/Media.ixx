@@ -568,6 +568,121 @@ vector<int64_t> collectCleanPointTimes100ns(const wstring& filePath, const vecto
     }
 
     check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
+
+    com_ptr<IMFMediaType> videoType;
+    (void)reader->GetNativeMediaType(videoStreamIndex, 0, videoType.put());
+    GUID videoSubtype{GUID_NULL};
+    if(videoType){
+        (void)videoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype);
+    }
+    const auto nalLengthFieldSize{videoType ? getNalLengthFieldSize(videoType, videoSubtype) : uint32_t{0}};
+
+    auto sortedMarkerTimes{markerTimes100ns};
+    sort(sortedMarkerTimes.begin(), sortedMarkerTimes.end());
+    sortedMarkerTimes.erase(unique(sortedMarkerTimes.begin(), sortedMarkerTimes.end()), sortedMarkerTimes.end());
+    sortedMarkerTimes.erase(remove_if(sortedMarkerTimes.begin(), sortedMarkerTimes.end(), [](int64_t time100ns){ return time100ns <= 0; }), sortedMarkerTimes.end());
+    if(!sortedMarkerTimes.empty()){
+        constexpr auto initialSearchWindow100ns{30LL * HNS_PER_SECOND};
+        constexpr auto maxSearchWindow100ns{10LL * 60LL * HNS_PER_SECOND};
+
+        const auto sampleIsRap = [&](const com_ptr<IMFSample>& sample){
+            if(!sample){
+                return false;
+            }
+            if(!isContainerSyncSample(sample)){
+                return false;
+            }
+            return isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false);
+        };
+
+        const auto seekReader = [&](int64_t time100ns){
+            PROPVARIANT startPos{};
+            startPos.vt = VT_I8;
+            startPos.hVal.QuadPart = max<int64_t>(0, time100ns);
+            check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
+            PropVariantClear(&startPos);
+        };
+
+        for(size_t markerIndex{}; markerIndex < sortedMarkerTimes.size(); ++markerIndex){
+            if(cancelRequested && cancelRequested()){
+                throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+            }
+
+            const auto markerTime100ns{sortedMarkerTimes[markerIndex]};
+            auto searchWindow100ns{initialSearchWindow100ns};
+            optional<int64_t> leftRap100ns;
+            optional<int64_t> rightRap100ns;
+
+            for(;;){
+                const auto searchStart100ns{max<int64_t>(0, markerTime100ns - searchWindow100ns)};
+                const auto searchEnd100ns{markerTime100ns + searchWindow100ns};
+                seekReader(searchStart100ns);
+
+                int64_t lastSampleTime100ns{-1};
+                uint32_t stagnantTimeCount{};
+                for(;;){
+                    if(cancelRequested && cancelRequested()){
+                        throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+                    }
+
+                    DWORD actualStream{};
+                    DWORD flags{};
+                    LONGLONG timestamp{};
+                    com_ptr<IMFSample> sample;
+                    check_hresult(reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put()));
+
+                    if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+                        break;
+                    }
+                    if(!sample){
+                        continue;
+                    }
+
+                    LONGLONG sampleTime{};
+                    if(FAILED(sample->GetSampleTime(&sampleTime))){
+                        sampleTime = timestamp;
+                    }
+                    const auto currentTime100ns{resolveReaderSampleTime100ns(sampleTime, timestamp)};
+                    if(currentTime100ns <= lastSampleTime100ns){
+                        if(++stagnantTimeCount > 4096){
+                            break;
+                        }
+                    }else{
+                        stagnantTimeCount = 0;
+                        lastSampleTime100ns = currentTime100ns;
+                    }
+
+                    if(sampleIsRap(sample)){
+                        rapTimes.push_back(currentTime100ns);
+                        if(currentTime100ns <= markerTime100ns){
+                            leftRap100ns = currentTime100ns;
+                        }else{
+                            rightRap100ns = currentTime100ns;
+                            break;
+                        }
+                    }
+
+                    if(currentTime100ns > searchEnd100ns){
+                        break;
+                    }
+                }
+
+                if((rightRap100ns && (leftRap100ns || searchStart100ns == 0)) || searchWindow100ns >= maxSearchWindow100ns){
+                    break;
+                }
+                searchWindow100ns = min<int64_t>(searchWindow100ns * 2, maxSearchWindow100ns);
+            }
+
+            if(progressCallback){
+                progressCallback((100.0 * static_cast<double>(markerIndex + 1)) / static_cast<double>(sortedMarkerTimes.size()));
+            }
+        }
+
+        sort(rapTimes.begin(), rapTimes.end());
+        rapTimes.erase(unique(rapTimes.begin(), rapTimes.end()), rapTimes.end());
+        return rapTimes;
+    }
+
     size_t nextMarkerIndex{};
 
     for(;;){
