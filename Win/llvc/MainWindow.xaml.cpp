@@ -1550,16 +1550,28 @@ bool MainWindow::reevaluateAll(bool pushUndoState){
         return false;
     }
 
-    vector<int64_t> rapTimes100ns;
-    if(!tryGetRapTimes100ns(rapTimes100ns)){
-        m_pendingReevaluateWithoutUndoAfterRapLookup = !pushUndoState;
-        queueRapLookup(true, 0);
-        return false;
-    }
-
     const auto originalMarkers{m_prj.frameIndex()};
     if(originalMarkers.empty()){
         setStatusMessage(L"No clear cut markers to reevaluate");
+        return false;
+    }
+
+    vector<int64_t> rapTimes100ns;
+    auto markerTimes100ns{::llvc::buildRapLookupTimesForExportAlignment(m_prj, m_prj.timelineDuration100ns())};
+    if(markerTimes100ns.empty()){
+        markerTimes100ns.reserve(originalMarkers.size());
+        for(const auto& marker: originalMarkers){
+            if(marker.time100ns > 0 && marker.time100ns < m_prj.timelineDuration100ns()){
+                markerTimes100ns.push_back(marker.time100ns);
+            }
+        }
+        sort(markerTimes100ns.begin(), markerTimes100ns.end());
+        markerTimes100ns.erase(unique(markerTimes100ns.begin(), markerTimes100ns.end()), markerTimes100ns.end());
+    }
+
+    if(!tryGetRapTimes100ns(rapTimes100ns, !markerTimes100ns.empty(), &markerTimes100ns)){
+        m_pendingReevaluateWithoutUndoAfterRapLookup = !pushUndoState;
+        queueRapLookup(true, 0);
         return false;
     }
 
@@ -1826,7 +1838,8 @@ bool MainWindow::evaluatePlacedMarkerAtTime100ns(int64_t time100ns){
     }
 
     vector<int64_t> rapTimes100ns;
-    if(!tryGetRapTimes100ns(rapTimes100ns)){
+    vector<int64_t> markerTimes100ns{time100ns};
+    if(!tryGetRapTimes100ns(rapTimes100ns, true, &markerTimes100ns)){
         if(find(m_pendingAutoEvaluateMarkerTimes100ns.begin(), m_pendingAutoEvaluateMarkerTimes100ns.end(), time100ns) == m_pendingAutoEvaluateMarkerTimes100ns.end()){
             m_pendingAutoEvaluateMarkerTimes100ns.push_back(time100ns);
         }
@@ -2444,8 +2457,13 @@ bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns, bool allowP
         if(!allowPartial){
             return false;
         }
-        if(requiredPartialTargets100ns && *requiredPartialTargets100ns != m_cachedRapLookupTargetTimes100ns){
-            return false;
+        if(requiredPartialTargets100ns){
+            auto requestedTargets{*requiredPartialTargets100ns};
+            sort(requestedTargets.begin(), requestedTargets.end());
+            requestedTargets.erase(unique(requestedTargets.begin(), requestedTargets.end()), requestedTargets.end());
+            if(!includes(m_cachedRapLookupTargetTimes100ns.begin(), m_cachedRapLookupTargetTimes100ns.end(), requestedTargets.begin(), requestedTargets.end())){
+                return false;
+            }
         }
     }
 
@@ -2534,9 +2552,18 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage,
     MFLifetime mf{};
     const hstring sourcePath{m_prj.videoFilePath()};
     vector<int64_t> rapTimes100ns;
-    vector<int64_t> markerTimes100ns;
-    if(progressCallback){
-        markerTimes100ns = ::llvc::buildRapLookupTimesForExportAlignment(m_prj, m_prj.timelineDuration100ns());
+    auto markerTimes100ns{::llvc::buildRapLookupTimesForExportAlignment(m_prj, m_prj.timelineDuration100ns())};
+    if(markerTimes100ns.empty()){
+        const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
+        const auto& markers{m_prj.frameIndex()};
+        markerTimes100ns.reserve(markers.size());
+        for(const auto& marker: markers){
+            if(marker.time100ns > 0 && marker.time100ns < sourceDuration100ns){
+                markerTimes100ns.push_back(marker.time100ns);
+            }
+        }
+        sort(markerTimes100ns.begin(), markerTimes100ns.end());
+        markerTimes100ns.erase(unique(markerTimes100ns.begin(), markerTimes100ns.end()), markerTimes100ns.end());
     }
     const auto allowPartialRapTimes{!markerTimes100ns.empty()};
     if(tryGetRapTimes100ns(rapTimes100ns, allowPartialRapTimes, &markerTimes100ns)){
