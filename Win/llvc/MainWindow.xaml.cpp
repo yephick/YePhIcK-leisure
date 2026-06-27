@@ -28,7 +28,6 @@
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Media.Core.h>
-#include <winrt/Windows.Media.Editing.h>
 #include <winrt/Windows.Media.Playback.h>
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.System.h>
@@ -5010,6 +5009,7 @@ winrt::fire_and_forget MainWindow::renderTimelineViewportAfterDelayAsync(uint64_
 
 winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
     const auto lifetime{get_strong()};
+    uint64_t renderVersion{};
 
     if(m_isClosing || !m_prj.hasVideoFile() || m_timelineDurationSeconds <= 0){
         if(!m_isExportInProgress){
@@ -5035,7 +5035,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             setOperationInProgress(true, true);
         }
 
-        const auto renderVersion{++m_timelineRenderVersion};
+        renderVersion = ++m_timelineRenderVersion;
         const auto stripPlan{m_tl.buildThumbnailStripPlan(m_timelineDurationSeconds, timelineZoomValueFromIndex(TimelineZoomSlider().Value()))};
         constexpr auto thumbnailImageHeight{86.0};
         const auto totalWidth{stripPlan.totalWidth};
@@ -5101,14 +5101,6 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
         const auto allowOffscreenThumbnailExpansion{viewportOnly};
         auto nextIndex{m_tl.chooseNextThumbnailIndex(m_thumbnailBuilt, bufferedRange, allowOffscreenThumbnailExpansion)};
 
-        const auto useSourceReaderThumbnails{m_mediaInfo.container == L"MPEG-TS"};
-        winrt::Windows::Media::Editing::MediaComposition composition{};
-        if(nextIndex >= 0 && !useSourceReaderThumbnails){
-            const auto clipFile{co_await StorageFile::GetFileFromPathAsync(m_prj.videoFilePath())};
-            const auto clip{co_await winrt::Windows::Media::Editing::MediaClip::CreateFromFileAsync(clipFile)};
-            composition.Clips().Append(clip);
-        }
-
         if(renderVersion != m_timelineRenderVersion){
             co_return;
         }
@@ -5127,8 +5119,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             image.Height(thumbnailImageHeight);
             image.Stretch(Media::Stretch::UniformToFill);
 
-            auto thumbnailCreated{false};
-            if(useSourceReaderThumbnails){
+            const auto decodeThumbnailWithSourceReader = [&]() -> winrt::Windows::Foundation::IAsyncOperation<bool>{
                 const wstring sourceFilePath{m_prj.videoFilePath().c_str()};
                 const auto thumbnailTime100ns{static_cast<int64_t>(max(0.0, t * m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
                 const apartment_context uiThread{};
@@ -5139,26 +5130,16 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
                     if(m_isClosing){
                         setOperationInProgress(false);
                     }
-                    co_return;
+                    co_return false;
                 }
                 if(decodedThumbnail){
                     image.Source(createWriteableBitmapFromDecodedThumbnail(*decodedThumbnail));
-                    thumbnailCreated = true;
+                    co_return true;
                 }
-            }else{
-                const auto stream{co_await composition.GetThumbnailAsync(secondsToTimeSpan(t * m_timelineDurationSeconds), 180, 96, winrt::Windows::Media::Editing::VideoFramePrecision::NearestFrame)};
-                if(renderVersion != m_timelineRenderVersion || m_isClosing){
-                    if(m_isClosing){
-                        setOperationInProgress(false);
-                    }
-                    co_return;
-                }
+                co_return false;
+            };
 
-                Media::Imaging::BitmapImage bitmap{};
-                co_await bitmap.SetSourceAsync(stream);
-                image.Source(bitmap);
-                thumbnailCreated = true;
-            }
+            const auto thumbnailCreated{co_await decodeThumbnailWithSourceReader()};
 
             m_thumbnailBuilt[static_cast<size_t>(nextIndex)] = true;
             if(thumbnailCreated){
@@ -5191,6 +5172,9 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             renderTimelineAsync(true);
         }
     }catch(const winrt::hresult_error& ex){
+        if(renderVersion != m_timelineRenderVersion || m_isClosing){
+            co_return;
+        }
         if(!m_isExportInProgress && !viewportOnly){
             m_hasTimelineRenderCompleted = false;
             m_audioWaveformAnalysisQueued = false;
