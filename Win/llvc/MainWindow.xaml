@@ -9,10 +9,7 @@
     mc:Ignorable="d"
     Title="ClipRazor: Lossless Video Cutter">
 
-    <Grid x:Name="RootGrid" Padding="12" RowSpacing="10" AllowDrop="True" DragOver="window_DragOver" Drop="window_Drop" PreviewKeyDown="window_PreviewKeyDown" KeyDown="window_KeyDown" PointerReleased="rootGrid_PointerReleased">
-        <Grid.Background>
-            <ImageBrush ImageSource="ms-appx:///Assets/SplashScreen.png" Stretch="UniformToFill" Opacity="0.10"/>
-        </Grid.Background>
+    <Grid x:Name="RootGrid" Background="{ThemeResource WindowBackdropBrush}" Padding="12" RowSpacing="10" AllowDrop="True" DragOver="window_DragOver" Drop="window_Drop" PreviewKeyDown="window_PreviewKeyDown" KeyDown="window_KeyDown" PointerReleased="rootGrid_PointerReleased">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -20,6 +17,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
+
+        <Image Grid.RowSpan="5" Source="ms-appx:///Assets/SplashScreen.png" Stretch="UniformToFill" Opacity="0.05" IsHitTestVisible="False"/>
 
         <controls:MenuBar x:Name="MainMenuBar" Grid.Row="0" IsTabStop="False">
             <controls:MenuBarItem Title="File">
@@ -69,7 +68,7 @@
         </controls:MenuBar>
 
         <Grid Grid.Row="1">
-            <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="4" Padding="8">
+            <Border BorderBrush="{ThemeResource ToolPanelBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="8">
                 <controls:MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
             </Border>
 
@@ -77,7 +76,7 @@
                     Content="❯" Click="videoDetailsOpenMarker_Click" ToolTipService.ToolTip="Show source video details"/>
 
             <Border x:Name="VideoDetailsPanel" Width="340" HorizontalAlignment="Left" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
-                    BorderBrush="#707070" BorderThickness="1" Background="#E6101010" Visibility="Collapsed">
+                    BorderBrush="{ThemeResource ToolPanelBorderBrush}" BorderThickness="1" Background="{ThemeResource ToolPanelBrush}" Visibility="Collapsed">
                 <Grid>
                     <ScrollViewer Margin="0,0,30,0" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Spacing="6">
@@ -94,7 +93,7 @@
                     Content="❮" Click="cheatSheetOpenMarker_Click" ToolTipService.ToolTip="Show quick actions" IsTabStop="False"/>
 
             <Border x:Name="CheatSheetPanel" Width="242" HorizontalAlignment="Right" VerticalAlignment="Stretch" Margin="4" Padding="10" CornerRadius="4"
-                    BorderBrush="#707070" BorderThickness="1" Background="#E6101010" IsTabStop="False" Visibility="Collapsed">
+                    BorderBrush="{ThemeResource ToolPanelBorderBrush}" BorderThickness="1" Background="{ThemeResource ToolPanelBrush}" IsTabStop="False" Visibility="Collapsed">
                 <Grid IsTabStop="False">
                     <Button x:Name="CheatSheetCollapseMarker" Width="24" HorizontalAlignment="Left" VerticalAlignment="Stretch" Padding="0"
                             Content="❯" Click="cheatSheetCollapseMarker_Click" ToolTipService.ToolTip="Hide quick actions" IsTabStop="False"/>
@@ -155,7 +154,7 @@
                     </ComboBox>
                     <TextBlock x:Name="AudioVolumeIconText" Text="🔉" VerticalAlignment="Center"/>
                     <Slider x:Name="AudioVolumeSlider" Width="120" IsEnabled="False" Minimum="0" Maximum="250" SmallChange="5" LargeChange="5" StepFrequency="5" Value="100" ValueChanged="audioVolumeSlider_ValueChanged" ToolTipService.ToolTip="Preview uses MediaPlayer volume (max 100%); export applies full boost."/>
-                    <TextBlock x:Name="AudioPreviewBoostHintText" Text="Preview audio is capped at 100%; boosted volume is export-only." Foreground="#FFDAA520" VerticalAlignment="Center" Visibility="Collapsed"/>
+                    <TextBlock x:Name="AudioPreviewBoostHintText" Text="Preview audio is capped at 100%; boosted volume is export-only." Foreground="{ThemeResource AccentWarningBrush}" VerticalAlignment="Center" Visibility="Collapsed"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" VerticalAlignment="Center">
@@ -168,7 +167,7 @@
                 </StackPanel>
             </Grid>
 
-            <Border Grid.Row="1" BorderThickness="1" BorderBrush="#404040" Background="#111111" CornerRadius="4" Padding="6">
+            <Border Grid.Row="1" BorderThickness="1" BorderBrush="{ThemeResource TimelineHostBorderBrush}" Background="{ThemeResource TimelineHostBrush}" CornerRadius="4" Padding="6">
                 <Grid RowSpacing="4">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -177,18 +176,18 @@
 
                     <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Hidden" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" ViewChanged="timelineScrollViewer_ViewChanged" SizeChanged="timelineScrollViewer_SizeChanged" PointerWheelChanged="timelineScrollViewer_PointerWheelChanged">
                         <StackPanel Spacing="4">
-                            <Canvas x:Name="TimelineTickCanvas" Height="24" Background="#222222" PointerReleased="timelineTickCanvas_PointerReleased"/>
-                            <Canvas x:Name="TimelineCanvas" Height="86" IsTabStop="True" Loaded="timelineCanvas_Loaded" PointerPressed="timelineCanvas_PointerPressed" PointerMoved="timelineCanvas_PointerMoved" PointerReleased="timelineCanvas_PointerReleased" PointerCanceled="timelineCanvas_PointerCanceled" PointerCaptureLost="timelineCanvas_PointerCaptureLost" Background="#111111">
+                            <Canvas x:Name="TimelineTickCanvas" Height="24" Background="{ThemeResource TimelineTickBrush}" PointerReleased="timelineTickCanvas_PointerReleased"/>
+                            <Canvas x:Name="TimelineCanvas" Height="86" IsTabStop="True" Loaded="timelineCanvas_Loaded" PointerPressed="timelineCanvas_PointerPressed" PointerMoved="timelineCanvas_PointerMoved" PointerReleased="timelineCanvas_PointerReleased" PointerCanceled="timelineCanvas_PointerCanceled" PointerCaptureLost="timelineCanvas_PointerCaptureLost" Background="{ThemeResource TimelineHostBrush}">
                                 <Canvas x:Name="ThumbnailLayer" Height="86"/>
                                 <Canvas x:Name="CutOverlayLayer" Height="86"/>
-                                <Rectangle x:Name="TimelineCursor" Canvas.Left="0" Width="3" Height="86" Fill="Green"/>
+                                <Rectangle x:Name="TimelineCursor" Canvas.Left="0" Width="3" Height="86" Fill="{ThemeResource TimelineCursorBrush}"/>
                             </Canvas>
-                            <Canvas x:Name="AudioWaveformCanvas" Height="48" Background="#222222" Visibility="Collapsed"/>
+                            <Canvas x:Name="AudioWaveformCanvas" Height="48" Background="{ThemeResource TimelineTickBrush}" Visibility="Collapsed"/>
                         </StackPanel>
                     </ScrollViewer>
 
-                    <Border Grid.Row="1" Margin="0,4,0,0" Padding="0" MinHeight="28" Background="#2f2f2f" BorderBrush="#6A6A6A" BorderThickness="1" CornerRadius="2">
-                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" IsTabStop="False" Height="28" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="6,2" Background="#2A2A2A" Foreground="#CFCFCF" Visibility="Visible" ValueChanged="timelineHorizontalScrollBar_ValueChanged"/>
+                    <Border Grid.Row="1" Margin="0,4,0,0" Padding="0" MinHeight="28" Background="{ThemeResource TimelineScrollTrackBrush}" BorderBrush="{ThemeResource TimelineScrollTrackBorderBrush}" BorderThickness="1" CornerRadius="2">
+                        <Slider x:Name="TimelineHorizontalScrollBar" Minimum="0" IsTabStop="False" Height="28" MinWidth="120" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="6,2" Background="{ThemeResource TimelineScrollBarBrush}" Foreground="{ThemeResource TimelineScrollBarForegroundBrush}" Visibility="Visible" ValueChanged="timelineHorizontalScrollBar_ValueChanged"/>
                     </Border>
                 </Grid>
             </Border>
@@ -200,7 +199,7 @@
             <Button x:Name="StopButton" Content="⏹︎" FontFamily="Segoe UI Symbol" IsTabStop="False" Click="stopButton_Click" ToolTipService.ToolTip="Stop"/>
         </StackPanel>
 
-        <Border Grid.Row="4" BorderThickness="1" BorderBrush="#4A4A4A" CornerRadius="4" Background="#141414" Padding="8,6">
+        <Border Grid.Row="4" BorderThickness="1" BorderBrush="{ThemeResource StatusPanelBorderBrush}" CornerRadius="4" Background="{ThemeResource StatusPanelBrush}" Padding="8,6">
             <Grid ColumnSpacing="12" VerticalAlignment="Center">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -215,8 +214,8 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock x:Name="StatusText" Grid.Row="0" Text="Load or drag-and-drop an .mp4/.mov/.avi (H.264 only) file to preview." TextTrimming="CharacterEllipsis"/>
-                    <TextBlock x:Name="ErrorText" Grid.Row="1" Foreground="#FFFF8585" Text="" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+                    <TextBlock x:Name="StatusText" Grid.Row="0" Text="Load or drag-and-drop an .mp4/.mov/.mkv/.avi/.webm/.wmv file to preview." TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="ErrorText" Grid.Row="1" Foreground="{ThemeResource ErrorTextBrush}" Text="" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
                 </Grid>
 
                 <TextBlock x:Name="InfoText" Grid.Column="1" Margin="0,0,10,0" Text="Estimated output: --:--.---" VerticalAlignment="Center" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"/>
@@ -225,18 +224,18 @@
             </Grid>
         </Border>
 
-        <Grid x:Name="ExportOverlay" Grid.RowSpan="5" Background="#B8141414" Visibility="Collapsed">
-            <Border MaxWidth="920" MaxHeight="820" Padding="22" Margin="18" CornerRadius="10" Background="#F61B1B1B" BorderBrush="#AAE0E0E0" BorderThickness="1.5"
+        <Grid x:Name="ExportOverlay" Grid.RowSpan="5" Background="{ThemeResource ExportOverlayScrimBrush}" Visibility="Collapsed">
+            <Border MaxWidth="920" MaxHeight="820" Padding="22" Margin="18" CornerRadius="10" Background="{ThemeResource ExportOverlayPanelBrush}" BorderBrush="{ThemeResource ExportOverlayPanelBorderBrush}" BorderThickness="1.5"
                     HorizontalAlignment="Stretch" VerticalAlignment="Center">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Spacing="16">
                         <TextBlock Text="Export in progress" FontSize="28" FontWeight="SemiBold"/>
-                        <TextBlock x:Name="ExportOverlayStatusText" Text="Preparing export..." TextWrapping="WrapWholeWords" FontSize="15" Foreground="#FFEAEAEA"/>
+                        <TextBlock x:Name="ExportOverlayStatusText" Text="Preparing export..." TextWrapping="WrapWholeWords" FontSize="15" Foreground="{ThemeResource OverlayMutedTextBrush}"/>
 
                         <StackPanel Spacing="6">
                             <ProgressBar x:Name="ExportOverlayProgressBar" Height="30" Minimum="0" Maximum="100" Value="0"/>
                             <TextBlock x:Name="ExportOverlayProgressLabel" Text="Preparing export..." FontSize="15" HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="ExportOverlayEtaLabel" Text="" FontSize="13" HorizontalAlignment="Center" Foreground="#FFB8D8FF"/>
+                            <TextBlock x:Name="ExportOverlayEtaLabel" Text="" FontSize="13" HorizontalAlignment="Center" Foreground="{ThemeResource OverlayAccentTextBrush}"/>
                         </StackPanel>
 
                         <StackPanel Spacing="10">
