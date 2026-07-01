@@ -302,7 +302,20 @@ vector<float> analyzeAudioWaveformChunkPeaks(
             ? sampleDuration
             : static_cast<LONGLONG>((frameCount * 10'000'000LL) / sampleRate)};
 
-        for(size_t frameIndex{}; frameIndex < frameCount; ++frameIndex){
+        // Optimize by downsampling frames when there are far more frames than buckets in this chunk.
+        const size_t bucketsInThisChunk = bucketEnd > bucketStart ? (bucketEnd - bucketStart) : 0;
+        const size_t desiredSamplesPerBucket = 2; // tradeoff: accuracy vs speed
+        const size_t desiredSamplesTarget = bucketsInThisChunk * desiredSamplesPerBucket;
+        size_t frameStep = 1;
+        if(desiredSamplesTarget > 0 && frameCount > desiredSamplesTarget){
+            frameStep = std::max<size_t>(1, static_cast<size_t>(frameCount / desiredSamplesTarget));
+        }
+
+        // Track buckets that have reached a full peak to allow early exit.
+        std::vector<char> bucketHasFullPeak(bucketsInThisChunk);
+        size_t filledBucketCount = 0;
+
+        for(size_t frameIndex = 0; frameIndex < frameCount; frameIndex += frameStep){
             float monoPeak{};
             for(uint32_t channel{}; channel < channelCount; ++channel){
                 monoPeak = std::max(monoPeak, std::abs(floatSamples[(frameIndex * channelCount) + channel]));
@@ -320,7 +333,20 @@ vector<float> analyzeAudioWaveformChunkPeaks(
             const auto bucketIndex{
                 std::min<size_t>(bucketCount - 1, static_cast<size_t>((clampedTime100ns * static_cast<int64_t>(bucketCount)) / duration100ns))};
             if(bucketIndex >= bucketStart && bucketIndex < bucketEnd){
-                peaks[bucketIndex - bucketStart] = std::max(peaks[bucketIndex - bucketStart], clampAudioPeak(monoPeak));
+                const auto localIndex = bucketIndex - bucketStart;
+                const auto clampedPeak = clampAudioPeak(monoPeak);
+                if(peaks[localIndex] < clampedPeak){
+                    peaks[localIndex] = clampedPeak;
+                    if(bucketsInThisChunk > 0 && !bucketHasFullPeak[localIndex] && peaks[localIndex] >= 1.0f){
+                        bucketHasFullPeak[localIndex] = 1;
+                        ++filledBucketCount;
+                    }
+                }
+            }
+
+            if(bucketsInThisChunk > 0 && filledBucketCount >= bucketsInThisChunk){
+                // All buckets have reached full peak; we can stop early.
+                break;
             }
         }
 

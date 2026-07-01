@@ -20,7 +20,6 @@ import llvc.Media;
 import llvc.Utils;
 import llvc.EditorController;
 import llvc.EditorCommands;
-import llvc.Dialogs;
 import llvc.ExportCoordinator;
 
 namespace winrt::llvc::implementation{
@@ -154,6 +153,12 @@ private:
     winrt::event_token m_positionTimerTickToken{};
     double m_timelineDurationSeconds{0};
     uint64_t m_timelineRenderVersion{0};
+    uint64_t m_timelineViewportRenderRequestVersion{0};
+    hstring m_thumbnailPlanSourcePath{};
+    vector<bool> m_thumbnailBuilt{};
+    double m_thumbnailPlanTotalWidth{};
+    double m_thumbnailPlanWidth{};
+    int m_thumbnailPlanCount{};
     MediaInspectionResult m_mediaInfo{};
     std::unique_ptr<::llvc::VideoSource> m_media{};
     hstring m_cachedRapSourcePath{};
@@ -244,7 +249,9 @@ private:
     static wstring guidToCodecName(const _GUID& subtype, bool isVideo);
     AAction loadVideoFileAsync(const SFile& file);
     AAction showOptionsDialogAsync();
-    fire_and_forget renderTimelineAsync();
+    fire_and_forget renderTimelineAsync(bool viewportOnly = false);
+    fire_and_forget renderTimelineViewportAfterDelayAsync(uint64_t requestVersion);
+    void queueTimelineViewportRender();
     void updateTimelineCursorFromPlayback();
     void updateTimelineCursorFromPosition(int64_t position100ns);
     int64_t currentNavigationTime100ns();

@@ -36,7 +36,7 @@ struct WindowPlacementState final{
     bool maximized{false};
 };
 
-enum class AppThemeMode : uint32_t{
+enum class AppThemeMode : int32_t{
     System = 0,
     Light = 1,
     Dark = 2,
@@ -511,16 +511,9 @@ AppSettingsState loadAppSettings(){
         }
     }
     if(values.HasKey(S_APP_THEME_MODE)){
-        switch(unbox_value<int32_t>(values.Lookup(S_APP_THEME_MODE))){
-        case static_cast<int32_t>(AppThemeMode::Light):
-            state.appThemeMode = AppThemeMode::Light;
-            break;
-        case static_cast<int32_t>(AppThemeMode::Dark):
-            state.appThemeMode = AppThemeMode::Dark;
-            break;
-        default:
-            state.appThemeMode = AppThemeMode::System;
-            break;
+        const auto parsed{unbox_value<int32_t>(values.Lookup(S_APP_THEME_MODE))};
+        if(parsed >= static_cast<int32_t>(AppThemeMode::System) && parsed <= static_cast<int32_t>(AppThemeMode::Dark)){
+            state.appThemeMode = static_cast<AppThemeMode>(parsed);
         }
     }
 

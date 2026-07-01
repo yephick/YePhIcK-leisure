@@ -138,7 +138,6 @@ enum class SourceFormatId : uint8_t{
     Unknown,
     Mp4,
     Mov,
-    Mkv,
     Avi,
     Webm,
     Wmv,
@@ -187,11 +186,10 @@ const array<GUID, 1> WEBM_ALLOWED_VIDEO_SUBTYPES{MFVideoFormat_VP90};
 const array<GUID, 1> WMV_ALLOWED_VIDEO_SUBTYPES{VC1_VIDEO_SUBTYPE};
 const array<GUID, 2> MPEG_TS_ALLOWED_VIDEO_SUBTYPES{MFVideoFormat_H264, MFVideoFormat_H264_ES};
 
-const array<FormatProfile, 7>& supportedFormatProfiles(){
-    static const array<FormatProfile, 7> profiles{{
+const array<FormatProfile, 6>& supportedFormatProfiles(){
+    static const array<FormatProfile, 6> profiles{{
         {.id = SourceFormatId::Mp4, .extension = L".mp4", .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".mp4", L".mov"}, .candidateExportExtensionCount = 2, .audioExportPolicy = AudioExportPolicy::Allowed, .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
         {.id = SourceFormatId::Mov, .extension = L".mov", .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".mp4", L".mov"}, .candidateExportExtensionCount = 2, .audioExportPolicy = AudioExportPolicy::Allowed, .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
-        {.id = SourceFormatId::Mkv, .extension = L".mkv", .allowedVideoSubtypes = MP4_MOV_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".mp4", nullptr}, .candidateExportExtensionCount = 1, .audioExportPolicy = AudioExportPolicy::Allowed, .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
         {.id = SourceFormatId::Avi, .extension = L".avi", .allowedVideoSubtypes = AVI_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".mp4", nullptr}, .candidateExportExtensionCount = 1, .audioExportPolicy = AudioExportPolicy::Disabled, .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter, .requiresAviValidation = true},
         {.id = SourceFormatId::Webm, .extension = L".webm", .allowedVideoSubtypes = WEBM_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".webm", nullptr}, .candidateExportExtensionCount = 1, .audioExportPolicy = AudioExportPolicy::Disabled, .exportProbeKind = ExportProbeKind::CustomWriter},
         {.id = SourceFormatId::Wmv, .extension = L".wmv", .allowedVideoSubtypes = WMV_ALLOWED_VIDEO_SUBTYPES, .candidateExportExtensions = {L".wmv", nullptr}, .candidateExportExtensionCount = 1, .audioExportPolicy = AudioExportPolicy::Disabled, .exportProbeKind = ExportProbeKind::MediaFoundationSinkWriter},
@@ -571,134 +569,157 @@ vector<int64_t> collectCleanPointTimes100ns(const wstring& filePath, const vecto
 
     check_hresult(reader->SetStreamSelection(videoStreamIndex, TRUE));
 
-    auto readAllCleanPoints = [&](){
-        size_t nextMarkerIndex{};
-        for(;;){
+    com_ptr<IMFMediaType> videoType;
+    (void)reader->GetNativeMediaType(videoStreamIndex, 0, videoType.put());
+    GUID videoSubtype{GUID_NULL};
+    if(videoType){
+        (void)videoType->GetGUID(MF_MT_SUBTYPE, &videoSubtype);
+    }
+    const auto nalLengthFieldSize{videoType ? getNalLengthFieldSize(videoType, videoSubtype) : uint32_t{0}};
+
+    auto sortedMarkerTimes{markerTimes100ns};
+    sort(sortedMarkerTimes.begin(), sortedMarkerTimes.end());
+    sortedMarkerTimes.erase(unique(sortedMarkerTimes.begin(), sortedMarkerTimes.end()), sortedMarkerTimes.end());
+    sortedMarkerTimes.erase(remove_if(sortedMarkerTimes.begin(), sortedMarkerTimes.end(), [](int64_t time100ns){ return time100ns <= 0; }), sortedMarkerTimes.end());
+    if(!sortedMarkerTimes.empty()){
+        constexpr auto initialSearchWindow100ns{30LL * HNS_PER_SECOND};
+        constexpr auto maxSearchWindow100ns{10LL * 60LL * HNS_PER_SECOND};
+
+        const auto sampleIsRap = [&](const com_ptr<IMFSample>& sample){
+            if(!sample){
+                return false;
+            }
+            if(!isContainerSyncSample(sample)){
+                return false;
+            }
+            return isTrueRandomAccessPointSample(sample, videoSubtype, nalLengthFieldSize, false);
+        };
+
+        const auto seekReader = [&](int64_t time100ns){
+            PROPVARIANT startPos{};
+            startPos.vt = VT_I8;
+            startPos.hVal.QuadPart = max<int64_t>(0, time100ns);
+            check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
+            PropVariantClear(&startPos);
+        };
+
+        for(size_t markerIndex{}; markerIndex < sortedMarkerTimes.size(); ++markerIndex){
             if(cancelRequested && cancelRequested()){
                 throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
             }
 
-            DWORD actualStream{};
-            DWORD flags{};
-            LONGLONG timestamp{};
-            com_ptr<IMFSample> sample;
-            check_hresult(reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put()));
+            const auto markerTime100ns{sortedMarkerTimes[markerIndex]};
+            auto searchWindow100ns{initialSearchWindow100ns};
+            optional<int64_t> leftRap100ns;
+            optional<int64_t> rightRap100ns;
 
-            if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
-                break;
-            }
-            if(!sample){
-                continue;
-            }
+            for(;;){
+                const auto searchStart100ns{max<int64_t>(0, markerTime100ns - searchWindow100ns)};
+                const auto searchEnd100ns{markerTime100ns + searchWindow100ns};
+                seekReader(searchStart100ns);
 
-            UINT32 cleanPoint{};
-            if(FAILED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) || cleanPoint == 0){
-                continue;
-            }
+                int64_t lastSampleTime100ns{-1};
+                uint32_t stagnantTimeCount{};
+                for(;;){
+                    if(cancelRequested && cancelRequested()){
+                        throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
+                    }
 
-            LONGLONG sampleTime{};
-            if(FAILED(sample->GetSampleTime(&sampleTime))){
-                sampleTime = timestamp;
-            }
+                    DWORD actualStream{};
+                    DWORD flags{};
+                    LONGLONG timestamp{};
+                    com_ptr<IMFSample> sample;
+                    check_hresult(reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put()));
 
-            const auto cleanTime100ns{(std::max<int64_t>)(0, sampleTime)};
-            rapTimes.push_back(cleanTime100ns);
-            while(nextMarkerIndex < markerTimes100ns.size() && markerTimes100ns[nextMarkerIndex] <= cleanTime100ns){
-                ++nextMarkerIndex;
-                if(progressCallback && !markerTimes100ns.empty()){
-                    progressCallback((100.0 * static_cast<double>(nextMarkerIndex)) / static_cast<double>(markerTimes100ns.size()));
+                    if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+                        break;
+                    }
+                    if(!sample){
+                        continue;
+                    }
+
+                    LONGLONG sampleTime{};
+                    if(FAILED(sample->GetSampleTime(&sampleTime))){
+                        sampleTime = timestamp;
+                    }
+                    const auto currentTime100ns{resolveReaderSampleTime100ns(sampleTime, timestamp)};
+                    if(currentTime100ns <= lastSampleTime100ns){
+                        if(++stagnantTimeCount > 4096){
+                            break;
+                        }
+                    }else{
+                        stagnantTimeCount = 0;
+                        lastSampleTime100ns = currentTime100ns;
+                    }
+
+                    if(sampleIsRap(sample)){
+                        rapTimes.push_back(currentTime100ns);
+                        if(currentTime100ns <= markerTime100ns){
+                            leftRap100ns = currentTime100ns;
+                        }else{
+                            rightRap100ns = currentTime100ns;
+                            break;
+                        }
+                    }
+
+                    if(currentTime100ns > searchEnd100ns){
+                        break;
+                    }
                 }
+
+                if((rightRap100ns && (leftRap100ns || searchStart100ns == 0)) || searchWindow100ns >= maxSearchWindow100ns){
+                    break;
+                }
+                searchWindow100ns = min<int64_t>(searchWindow100ns * 2, maxSearchWindow100ns);
+            }
+
+            if(progressCallback){
+                progressCallback((100.0 * static_cast<double>(markerIndex + 1)) / static_cast<double>(sortedMarkerTimes.size()));
             }
         }
-    };
 
-    if(markerTimes100ns.empty()){
-        readAllCleanPoints();
         sort(rapTimes.begin(), rapTimes.end());
         rapTimes.erase(unique(rapTimes.begin(), rapTimes.end()), rapTimes.end());
         return rapTimes;
     }
 
-    vector<int64_t> targetTimes{markerTimes100ns};
-    sort(targetTimes.begin(), targetTimes.end());
-    targetTimes.erase(unique(targetTimes.begin(), targetTimes.end()), targetTimes.end());
+    size_t nextMarkerIndex{};
 
-    constexpr array<int64_t, 4> searchWindows100ns{
-        30LL * HNS_PER_SECOND,
-        2LL * 60LL * HNS_PER_SECOND,
-        10LL * 60LL * HNS_PER_SECOND,
-        60LL * 60LL * HNS_PER_SECOND,
-    };
-
-    for(size_t targetIndex{}; targetIndex < targetTimes.size(); ++targetIndex){
+    for(;;){
         if(cancelRequested && cancelRequested()){
             throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
         }
 
-        const auto targetTime100ns{(std::max<int64_t>)(0, targetTimes[targetIndex])};
-        auto foundBeforeOrAt{targetTime100ns <= 0};
-        auto foundAtOrAfter{false};
+        DWORD actualStream{};
+        DWORD flags{};
+        LONGLONG timestamp{};
+        com_ptr<IMFSample> sample;
+        check_hresult(reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put()));
 
-        for(const auto window100ns: searchWindows100ns){
-            const auto searchStart100ns{(std::max<int64_t>)(0, targetTime100ns - window100ns)};
-            const auto searchEnd100ns{targetTime100ns + window100ns};
-
-            PROPVARIANT startPos{};
-            startPos.vt = VT_I8;
-            startPos.hVal.QuadPart = searchStart100ns;
-            check_hresult(reader->SetCurrentPosition(GUID_NULL, startPos));
-            PropVariantClear(&startPos);
-
-            for(;;){
-                if(cancelRequested && cancelRequested()){
-                    throw hresult_error(HRESULT_FROM_WIN32(ERROR_CANCELLED), L"Export canceled.");
-                }
-
-                DWORD actualStream{};
-                DWORD flags{};
-                LONGLONG timestamp{};
-                com_ptr<IMFSample> sample;
-                check_hresult(reader->ReadSample(videoStreamIndex, 0, &actualStream, &flags, &timestamp, sample.put()));
-
-                if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
-                    break;
-                }
-                if(!sample){
-                    continue;
-                }
-
-                LONGLONG sampleTime{};
-                if(FAILED(sample->GetSampleTime(&sampleTime))){
-                    sampleTime = timestamp;
-                }
-                const auto cleanTime100ns{(std::max<int64_t>)(0, sampleTime)};
-                if(cleanTime100ns > searchEnd100ns && foundAtOrAfter){
-                    break;
-                }
-
-                UINT32 cleanPoint{};
-                if(FAILED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) || cleanPoint == 0){
-                    if(cleanTime100ns > searchEnd100ns){
-                        break;
-                    }
-                    continue;
-                }
-
-                rapTimes.push_back(cleanTime100ns);
-                foundBeforeOrAt = foundBeforeOrAt || cleanTime100ns <= targetTime100ns;
-                foundAtOrAfter = foundAtOrAfter || cleanTime100ns >= targetTime100ns;
-                if(cleanTime100ns > searchEnd100ns && foundAtOrAfter){
-                    break;
-                }
-            }
-
-            if(foundBeforeOrAt && foundAtOrAfter){
-                break;
-            }
+        if(flags & MF_SOURCE_READERF_ENDOFSTREAM){
+            break;
+        }
+        if(!sample){
+            continue;
         }
 
-        if(progressCallback){
-            progressCallback((100.0 * static_cast<double>(targetIndex + 1)) / static_cast<double>(targetTimes.size()));
+        UINT32 cleanPoint{};
+        if(FAILED(sample->GetUINT32(MFSampleExtension_CleanPoint, &cleanPoint)) || cleanPoint == 0){
+            continue;
+        }
+
+        LONGLONG sampleTime{};
+        if(FAILED(sample->GetSampleTime(&sampleTime))){
+            sampleTime = timestamp;
+        }
+
+        const auto cleanTime100ns{(std::max<int64_t>)(0, sampleTime)};
+        rapTimes.push_back(cleanTime100ns);
+        while(nextMarkerIndex < markerTimes100ns.size() && markerTimes100ns[nextMarkerIndex] <= cleanTime100ns){
+            ++nextMarkerIndex;
+            if(progressCallback){
+                progressCallback((100.0 * static_cast<double>(nextMarkerIndex)) / static_cast<double>(markerTimes100ns.size()));
+            }
         }
     }
 
@@ -761,9 +782,6 @@ com_ptr<IMFMediaType> ProfileMedia::selectExportVideoType(const com_ptr<IMFSourc
     case SourceFormatId::Mp4:
     case SourceFormatId::Mov:
         failureReason = L"No stream-copy video media type found. Require H.264 or HEVC in MP4/MOV.";
-        break;
-    case SourceFormatId::Mkv:
-        failureReason = L"No stream-copy video media type found. Require H.264 or HEVC in MKV.";
         break;
     case SourceFormatId::Webm:
         failureReason = L"No stream-copy video media type found. Require VP9 in WebM.";
@@ -1039,16 +1057,9 @@ protected:
     wstring containerName() const override{ return L"MOV"; }
 };
 
-class MkvMedia final : public ProfileMedia{
-public:
-    explicit MkvMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[2]) {}
-protected:
-    wstring containerName() const override{ return L"MKV"; }
-};
-
 class AviMedia final : public ProfileMedia{
 public:
-    explicit AviMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[3]) {}
+    explicit AviMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[2]) {}
 protected:
     wstring containerName() const override{ return L"AVI"; }
     void describeAudioSupport(bool hasAudio, VideoSource::InspectionResult& result) const override{
@@ -1061,7 +1072,7 @@ protected:
 
 class WebmMedia final : public ProfileMedia{
 public:
-    explicit WebmMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[4]) {}
+    explicit WebmMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[3]) {}
 protected:
     wstring containerName() const override{ return L"WEBM"; }
     void describeAudioSupport(bool hasAudio, VideoSource::InspectionResult& result) const override{
@@ -1074,7 +1085,7 @@ protected:
 
 class WmvMedia final : public ProfileMedia{
 public:
-    explicit WmvMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[5]) {}
+    explicit WmvMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[4]) {}
 protected:
     wstring containerName() const override{ return L"WMV"; }
     void describeAudioSupport(bool hasAudio, VideoSource::InspectionResult& result) const override{
@@ -1087,7 +1098,7 @@ protected:
 
 class MpegTsMedia final : public ProfileMedia{
 public:
-    explicit MpegTsMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[6]) {}
+    explicit MpegTsMedia(wstring sourcePath): ProfileMedia(std::move(sourcePath), supportedFormatProfiles()[5]) {}
 protected:
     wstring containerName() const override{ return L"MPEG-TS"; }
 };
@@ -1103,7 +1114,6 @@ unique_ptr<VideoSource> createVideoSource(const wstring& sourcePath){
     switch(profile->id){
     case SourceFormatId::Mp4: return make_unique<Mp4Media>(sourcePath);
     case SourceFormatId::Mov: return make_unique<MovMedia>(sourcePath);
-    case SourceFormatId::Mkv: return make_unique<MkvMedia>(sourcePath);
     case SourceFormatId::Avi: return make_unique<AviMedia>(sourcePath);
     case SourceFormatId::Webm: return make_unique<WebmMedia>(sourcePath);
     case SourceFormatId::Wmv: return make_unique<WmvMedia>(sourcePath);

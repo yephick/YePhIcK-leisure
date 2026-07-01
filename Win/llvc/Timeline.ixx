@@ -69,6 +69,7 @@ struct Timeline final{
     std::optional<int64_t> markerNavigationTarget100ns(const vector<IndexedFrameSample>& markers, int64_t current100ns, int direction) const;
     TimelineThumbnailStripPlan buildThumbnailStripPlan(double durationSeconds, double zoomSetting) const;
     TimelineThumbnailIndexRange visibleThumbnailRange(double viewportLeft, double viewportWidth, double thumbnailWidth, int thumbnailCount) const;
+    TimelineThumbnailIndexRange expandThumbnailRange(TimelineThumbnailIndexRange range, int padding, int thumbnailCount) const;
     int chooseNextThumbnailIndex(const vector<bool>& thumbnailBuilt, TimelineThumbnailIndexRange visibleRange, bool allowOffscreenExpansion) const;
     TimelineRenderPostActions buildRenderPostActions(const wstring& videoName, bool hasRequestedCuts, bool cachedRapLookupAttempted, bool isRapLookupInProgress) const;
 };
@@ -364,6 +365,18 @@ TimelineThumbnailIndexRange Timeline::visibleThumbnailRange(double viewportLeft,
     return TimelineThumbnailIndexRange{
         .first = clamp(static_cast<int>(floor(safeViewportLeft / thumbnailWidth)), 0, thumbnailCount - 1),
         .last = clamp(static_cast<int>(floor(max(safeViewportLeft, viewportRight - 1.0) / thumbnailWidth)), 0, thumbnailCount - 1),
+    };
+}
+
+TimelineThumbnailIndexRange Timeline::expandThumbnailRange(TimelineThumbnailIndexRange range, int padding, int thumbnailCount) const{
+    if(thumbnailCount <= 0){
+        return TimelineThumbnailIndexRange{};
+    }
+
+    const auto safePadding{max(0, padding)};
+    return TimelineThumbnailIndexRange{
+        .first = clamp(range.first - safePadding, 0, thumbnailCount - 1),
+        .last = clamp(range.last + safePadding, 0, thumbnailCount - 1),
     };
 }
 
