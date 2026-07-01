@@ -5141,6 +5141,13 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
 
             const auto thumbnailCreated{co_await decodeThumbnailWithSourceReader()};
 
+            if(renderVersion != m_timelineRenderVersion || m_isClosing){
+                if(m_isClosing){
+                    setOperationInProgress(false);
+                }
+                co_return;
+            }
+
             m_thumbnailBuilt[static_cast<size_t>(nextIndex)] = true;
             if(thumbnailCreated){
                 Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
