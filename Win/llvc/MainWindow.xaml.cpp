@@ -1727,7 +1727,6 @@ void MainWindow::timelineHorizontalScrollBar_ValueChanged(const Control&, const 
 
 void MainWindow::timelineScrollViewer_ViewChanged(const Control&, const SVVCArgs&){
     syncTimelineHorizontalScrollBar();
-    renderAudioWaveform();
     if(sourceHasAudio() && !m_audioWaveformAnalysisQueued){
         m_audioWaveformAnalysisQueued = true;
         ensureAudioWaveformAsync();
@@ -1735,16 +1734,14 @@ void MainWindow::timelineScrollViewer_ViewChanged(const Control&, const SVVCArgs
 
     if(m_isExportInProgress && m_prj.hasVideoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
-    }else if(m_hasTimelineRenderCompleted){
+    }else{
         queueTimelineViewportRender();
     }
 }
 
 void MainWindow::timelineScrollViewer_SizeChanged(const Control&, const SCArgs&){
     syncTimelineHorizontalScrollBar();
-    if(m_hasTimelineRenderCompleted){
-        queueTimelineViewportRender();
-    }
+    queueTimelineViewportRender();
 }
 
 void MainWindow::timelineScrollViewer_PointerWheelChanged(const Control&, const PREArgs& args){
@@ -4992,6 +4989,7 @@ void MainWindow::queueTimelineViewportRender(){
         return;
     }
 
+    ++m_timelineRenderVersion;
     renderTimelineViewportAfterDelayAsync(++m_timelineViewportRenderRequestVersion);
 }
 
@@ -5000,7 +4998,7 @@ winrt::fire_and_forget MainWindow::renderTimelineViewportAfterDelayAsync(uint64_
     const apartment_context uiThread{};
     co_await resume_after(std::chrono::milliseconds{120});
     co_await uiThread;
-    if(m_isClosing || requestVersion != m_timelineViewportRenderRequestVersion || !m_hasTimelineRenderCompleted){
+    if(m_isClosing || requestVersion != m_timelineViewportRenderRequestVersion){
         co_return;
     }
 
@@ -5034,6 +5032,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             m_hasTimelineRenderCompleted = false;
             setOperationInProgress(true, true);
         }
+        const auto completesTimelineRender{!renderDuringExport && (!viewportOnly || !m_hasTimelineRenderCompleted)};
 
         renderVersion = ++m_timelineRenderVersion;
         const auto stripPlan{m_tl.buildThumbnailStripPlan(m_timelineDurationSeconds, timelineZoomValueFromIndex(TimelineZoomSlider().Value()))};
@@ -5097,9 +5096,15 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             max(0.0, scrollViewer.ViewportWidth()),
             thumbnailWidth,
             thumbnailCount)};
-        const auto bufferedRange{m_tl.expandThumbnailRange(visibleRange, 1, thumbnailCount)};
-        const auto allowOffscreenThumbnailExpansion{viewportOnly};
-        auto nextIndex{m_tl.chooseNextThumbnailIndex(m_thumbnailBuilt, bufferedRange, allowOffscreenThumbnailExpansion)};
+        const auto visibleThumbnailCount{max(1, visibleRange.last - visibleRange.first + 1)};
+        const auto bufferedRange{m_tl.expandThumbnailRange(visibleRange, visibleThumbnailCount, thumbnailCount)};
+        const auto chooseNextThumbnailIndex = [&](){
+            const auto visibleIndex{m_tl.chooseNextThumbnailIndex(m_thumbnailBuilt, visibleRange, false)};
+            return visibleIndex >= 0
+                ? visibleIndex
+                : m_tl.chooseNextThumbnailIndex(m_thumbnailBuilt, bufferedRange, false);
+        };
+        auto nextIndex{chooseNextThumbnailIndex()};
 
         if(renderVersion != m_timelineRenderVersion){
             co_return;
@@ -5153,7 +5158,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
                 Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
                 ThumbnailLayer().Children().Append(image);
             }
-            nextIndex = m_tl.chooseNextThumbnailIndex(m_thumbnailBuilt, bufferedRange, allowOffscreenThumbnailExpansion);
+            nextIndex = chooseNextThumbnailIndex();
         }
 
         if(!renderDuringExport && m_player && m_player.PlaybackSession().PlaybackState() == MediaPlaybackState::Playing){
@@ -5162,7 +5167,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
         }
         syncTimelineHorizontalScrollBar();
 
-        if(!renderDuringExport && !viewportOnly){
+        if(completesTimelineRender){
             m_hasTimelineRenderCompleted = true;
             m_audioWaveformAnalysisQueued = false;
             const auto postActions{m_tl.buildRenderPostActions(
@@ -5176,13 +5181,12 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             if(postActions.shouldQueueRapLookup){
                 queueRapLookup(false, 0);
             }
-            renderTimelineAsync(true);
         }
     }catch(const winrt::hresult_error& ex){
         if(renderVersion != m_timelineRenderVersion || m_isClosing){
             co_return;
         }
-        if(!m_isExportInProgress && !viewportOnly){
+        if(!m_isExportInProgress && (!viewportOnly || !m_hasTimelineRenderCompleted)){
             m_hasTimelineRenderCompleted = false;
             m_audioWaveformAnalysisQueued = false;
             wstring status{L"Failed to render story line: "};
