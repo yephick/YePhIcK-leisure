@@ -1,0 +1,875 @@
+llvc architecture rework:
+
+- `MainWindow` should only be the UX coordinator and GUI owner, as such move the bulk of its objects into `Session` object that will:
+ 1. Hold on to all the current user session data and state
+ 2. Will be the one "cleared out" when a new session is started - either by something like Ctrl+N or after an export with source file deletion
+ 3. Be referenced by "activity" objects, like timeline, exporter, viewer, markers, cut scenes, etc
+
+- add an object to hold all the preview thumbnails in their scaled down(!) presentation form that will have a master list of all the pre-rendered frames and a per-zoom-level list of references (pointers) to the master list. This object is responsible for storing the preview thumbnails and serving them out to client code (the timeline object). This object should have an API to:
+ 1. Initial setup with the source reader (that will provide the total source duration to be persisted in the object), list of zoom levels (this will drive the thumbnail time spacing between each, which should trivially provide the total number of slots in that zoom level), preview thumbnail height (width is derived from the source's aspect ratio)
+ 2. provide a calculated thumbnail width
+ 3. provide a "time between preview thumbnails" for a given zoom level
+ 4. Build preview thumbnails for given time range and zoom level (queueing the work for off-thread processing). Whether a given thumbnail is ready or not can be easily derived from whether it references a thumbnail in the master list
+ 5. When "build preview thumbnails" is called while the earlier build is still in flight - move the earlier queue that is outside the new range into "later" queue and prioritize the new range right away
+ 6. serve a preview thumbnail for zoom/temiestamp pair or provide back a "future" to be resolved when the thumbnail is ready
+ 7. full reset: clear all the zoom lists and the master list, total source length, etc - prepare for a brand new session
+
+- similarly there should be an object to hold the audio waveforms to serve out for rendering with API like preview thumbnails as well
+
+- Timeline object should own the thumbnail and audio waveform preview objects and provide rendering interface to its client (main window) with a very simple interface that basically says: "current zoom level is X, viewport starts at time point Y and ends at time point Z - give me information to render it"
+
+- Markers (of all types) should be in a separate data object, which is responsible for keeping the list properly sorted, de-dupicated. This object is also responsible for collecting and owning the full list of RAP points
+
+- Cut scenes is another data object to encapsulate relevant data
+
+- both Markers and Cut scenes objects are owned by a cut planner object that is responsible for operations like marker and scene managagement
+
+- Cut planer is owned by `Project` object and `Timeline` object gets access to it via `Session` that owns `Project`
+
+=======================================================================================================
+=======================================================================================================
+=======================================================================================================
+
+llvc architecture rework - corrected continuation
+
+The architecture should be based around explicit ownership and explicit activity lifetime.
+
+MainWindow should only be the UX coordinator and GUI owner.
+
+MainWindow owns:
+    - WinUI controls
+    - dialogs
+    - menus
+    - file pickers
+    - window placement
+    - recent-file presentation
+    - visual rendering surfaces
+    - UI-specific preview host controls
+
+MainWindow should not own:
+    - loaded media state
+    - project edit state
+    - frame marker state
+    - cut scene state
+    - RAP frame list
+    - thumbnail cache
+    - audio waveform cache
+    - export state
+    - editor undo/redo state
+    - timeline render scheduling state
+
+Session owns the current user session.
+
+Session owns:
+    - Project
+    - MediaSession
+    - Timeline
+    - PreviewController
+    - ExportController
+    - EditorHistoryState
+
+Session is the reset boundary.
+
+A session reset is not logically complete until all outstanding activity work has been stopped, cancelled, drained, and cleared.
+
+No "generation" workaround should be used to paper over stale async work. If old work can still complete after reset and mutate or observe cleared state, the reset contract is wrong.
+
+Session reset contract:
+
+    Session::reset()
+        - requests cancellation on all active activities
+        - waits for activities to stop touching session-owned state
+        - clears all session-owned data
+        - resets Project
+        - resets MediaSession
+        - resets Timeline
+        - resets PreviewController
+        - resets ExportController
+        - resets EditorHistoryState
+        - returns only after the session is internally consistent
+
+Possible shape:
+
+    class Session final {
+    public:
+        void reset();
+
+        Project& project();
+        MediaSession& media();
+        Timeline& timeline();
+        PreviewController& preview();
+        ExportController& exporter();
+        EditorHistoryState& editorHistory();
+
+    private:
+        Project m_project;
+        MediaSession m_media;
+        Timeline m_timeline;
+        PreviewController m_preview;
+        ExportController m_exporter;
+        EditorHistoryState m_editorHistory;
+    };
+
+All activity objects that can queue or run work must support explicit shutdown:
+
+    class SessionActivity {
+    public:
+        void cancelOutstandingWork();
+        void waitForIdle();
+        void reset();
+    };
+
+For reset-sensitive objects, the required order is:
+
+    cancelOutstandingWork()
+    waitForIdle()
+    reset()
+
+This applies to:
+    - thumbnail building
+    - audio waveform analysis
+    - RAP frame scanning
+    - export preflight/export execution
+    - timeline viewport build queues
+    - preview decode/seek work if it owns queued work
+
+Project owns the persisted edit model.
+
+Project owns:
+    - source file path
+    - source-specific persistent project settings
+    - audio export settings
+    - CutPlanner
+    - dirty state
+    - save/load logic
+
+Project should not own:
+    - preview thumbnail pixels
+    - waveform cache
+    - active export progress
+    - active playback state
+    - GUI state
+
+Project shape:
+
+    class Project final {
+    public:
+        void reset();
+
+        const std::wstring& sourcePath() const;
+        void sourcePath(std::wstring value);
+
+        AudioExportSettings& audioSettings();
+        const AudioExportSettings& audioSettings() const;
+
+        CutPlanner& cutPlanner();
+        const CutPlanner& cutPlanner() const;
+
+        bool isDirty() const;
+        void markClean();
+        void markDirty();
+
+        void load(ProjectFileReader& reader);
+        void save(ProjectFileWriter& writer) const;
+
+    private:
+        std::wstring m_sourcePath;
+        AudioExportSettings m_audioSettings;
+        CutPlanner m_cutPlanner;
+        ProjectDirtyState m_dirty;
+    };
+
+Markers remain frame-index based.
+
+A marker is a point marker. It represents a single frame boundary/index. It does not have duration.
+
+Do not model markers as time ranges.
+Do not give markers duration.
+Do not make marker identity time-based.
+
+Marker data should be keyed by source frame index.
+
+Suggested marker model:
+
+    using FrameIndex = uint64_t;
+
+    struct EditMarker final {
+        FrameIndex frameIndex{};
+        bool isEvaluatedAgainstRap{};
+        bool wasMovedForRapSafety{};
+    };
+
+The marker set owns sorted, deduplicated frame-index data.
+
+    class MarkerSet final {
+    public:
+        void reset();
+
+        bool empty() const;
+        size_t size() const;
+
+        bool contains(FrameIndex frameIndex) const;
+
+        bool add(FrameIndex frameIndex);
+        bool remove(FrameIndex frameIndex);
+        bool toggle(FrameIndex frameIndex);
+
+        std::span<const EditMarker> markers() const;
+
+        std::optional<size_t> markerOrdinalForFrame(FrameIndex frameIndex) const;
+        std::optional<FrameIndex> previousMarkerFrame(FrameIndex frameIndex) const;
+        std::optional<FrameIndex> nextMarkerFrame(FrameIndex frameIndex) const;
+
+        void replaceAll(std::vector<EditMarker> markers);
+
+    private:
+        std::vector<EditMarker> m_markers;
+    };
+
+MarkerSet invariants:
+
+    - markers are sorted by frameIndex
+    - duplicate frameIndex values are not allowed
+    - frameIndex is the stable marker identity inside the edit model
+    - time conversion is not part of marker storage
+    - time conversion belongs at the media/timeline boundary only
+
+RAP data should also be frame-index based.
+
+The RAP list is the list of random-access frame indexes for the loaded source.
+
+    class RapFrameSet final {
+    public:
+        void reset();
+
+        bool empty() const;
+        size_t size() const;
+
+        void replaceAll(std::vector<FrameIndex> rapFrames);
+
+        bool contains(FrameIndex frameIndex) const;
+
+        std::optional<FrameIndex> previousRapAtOrBefore(FrameIndex frameIndex) const;
+        std::optional<FrameIndex> nextRapAtOrAfter(FrameIndex frameIndex) const;
+
+        std::span<const FrameIndex> frames() const;
+
+    private:
+        std::vector<FrameIndex> m_rapFrames;
+    };
+
+RapFrameSet invariants:
+
+    - RAP frames are sorted
+    - duplicate frame indexes are removed
+    - RAP frame indexes are source-frame indexes
+    - no time values are stored as primary data
+
+MarkerSet and RapFrameSet can be owned separately or combined under a planner-owned marker model.
+
+Preferred planner-owned structure:
+
+    class CutPlanner final {
+    public:
+        MarkerSet& markers();
+        const MarkerSet& markers() const;
+
+        RapFrameSet& rapFrames();
+        const RapFrameSet& rapFrames() const;
+
+        CutSceneSet& cutScenes();
+        const CutSceneSet& cutScenes() const;
+
+    private:
+        MarkerSet m_markers;
+        RapFrameSet m_rapFrames;
+        CutSceneSet m_cutScenes;
+    };
+
+Scenes should operate on frame-index data.
+
+A cut scene is not a time range as primary storage.
+
+A scene is the frame range between two neighboring edit boundaries.
+
+The planner can expose scenes as frame ranges when needed:
+
+    struct SceneFrameRange final {
+        FrameIndex firstFrame{};
+        FrameIndex endFrameExclusive{};
+        uint32_t sceneIndex{};
+        bool cut{};
+    };
+
+CutSceneSet should encapsulate the internal representation.
+
+If scene indexes remain the persisted representation, only CutSceneSet should know that.
+
+    class CutSceneSet final {
+    public:
+        void reset();
+
+        bool containsSceneIndex(uint32_t sceneIndex) const;
+
+        bool toggleScene(uint32_t sceneIndex);
+        bool setScene(uint32_t sceneIndex, bool cut);
+
+        bool toggleSceneContainingFrame(
+            FrameIndex frameIndex,
+            const MarkerSet& markers,
+            FrameIndex sourceFrameCount);
+
+        bool setSceneContainingFrame(
+            FrameIndex frameIndex,
+            bool cut,
+            const MarkerSet& markers,
+            FrameIndex sourceFrameCount);
+
+        std::vector<SceneFrameRange> buildSceneRanges(
+            const MarkerSet& markers,
+            FrameIndex sourceFrameCount) const;
+
+        std::vector<SceneFrameRange> buildCutSceneRanges(
+            const MarkerSet& markers,
+            FrameIndex sourceFrameCount) const;
+
+        std::span<const uint32_t> cutSceneIndexes() const;
+        void replaceCutSceneIndexes(std::vector<uint32_t> indexes);
+
+        void remapAfterMarkerInsertion(uint32_t insertedMarkerOrdinal);
+        void remapAfterMarkerRemoval(uint32_t removedMarkerOrdinal);
+
+    private:
+        std::vector<uint32_t> m_cutSceneIndexes;
+    };
+
+CutSceneSet invariants:
+
+    - cut scene indexes are sorted
+    - duplicate scene indexes are removed
+    - scene index interpretation depends on MarkerSet ordering
+    - only CutSceneSet remaps scene indexes after marker insertion/removal
+    - external code should not mutate raw scene indexes
+
+CutPlanner owns both marker and scene operations.
+
+    class CutPlanner final {
+    public:
+        void reset();
+
+        bool addMarker(FrameIndex frameIndex);
+        bool removeMarker(FrameIndex frameIndex);
+        bool toggleMarker(FrameIndex frameIndex);
+
+        bool toggleCutSceneContainingFrame(FrameIndex frameIndex, FrameIndex sourceFrameCount);
+        bool setCutSceneContainingFrame(FrameIndex frameIndex, bool cut, FrameIndex sourceFrameCount);
+
+        std::vector<SceneFrameRange> buildSceneRanges(FrameIndex sourceFrameCount) const;
+        std::vector<SceneFrameRange> buildCutSceneRanges(FrameIndex sourceFrameCount) const;
+
+        bool hasRequestedCuts() const;
+        bool needsRapAlignment() const;
+
+        EffectiveExportPlan buildDirectExportPlan(FrameIndex sourceFrameCount) const;
+        EffectiveExportPlan buildRapAlignedExportPlan(FrameIndex sourceFrameCount) const;
+
+        ReevaluateMarkersResult reevaluateMarkersAgainstRap();
+
+        MarkerSet& markers();
+        const MarkerSet& markers() const;
+
+        RapFrameSet& rapFrames();
+        const RapFrameSet& rapFrames() const;
+
+        CutSceneSet& cutScenes();
+        const CutSceneSet& cutScenes() const;
+
+    private:
+        MarkerSet m_markers;
+        RapFrameSet m_rapFrames;
+        CutSceneSet m_cutScenes;
+    };
+
+CutPlanner rules:
+
+    - owns all marker mutation
+    - owns all scene mutation
+    - owns scene remapping caused by marker insertion/removal
+    - owns RAP-aware marker adjustment
+    - owns direct and RAP-aligned cut plan construction
+    - exposes frame-index ranges as the canonical planning output
+    - converts to time only when calling lower-level export/media APIs that require time
+
+Timeline should still directly own its math.
+
+Timeline is not only a passive cache owner. Timeline should expose a clean rendering-oriented API and privately own the math needed for that API.
+
+Timeline owns:
+    - thumbnail preview store
+    - audio waveform store
+    - viewport/render planning state
+    - timeline coordinate math, preferably private
+    - zoom-level definitions
+    - frame/time conversion helpers needed for rendering
+
+Timeline does not own:
+    - Project
+    - CutPlanner
+    - MediaSession
+    - MainWindow controls
+
+Timeline gets access to Project through Session.
+
+    class Timeline final {
+    public:
+        void setup(const TimelineSetup& setup);
+        void reset();
+
+        TimelineRenderModel buildRenderModel(
+            const Session& session,
+            const TimelineViewportRequest& request);
+
+        FrameIndex pointToFrame(double x, double width, const Session& session) const;
+        double frameToPoint(FrameIndex frameIndex, double width, const Session& session) const;
+
+        void requestPreviewBuild(
+            const Session& session,
+            ZoomLevel zoom,
+            FrameIndex firstVisibleFrame,
+            FrameIndex endVisibleFrameExclusive);
+
+    private:
+        TimelineMath m_math;
+        ThumbnailPreviewStore m_thumbnails;
+        AudioWaveformStore m_waveforms;
+        TimelineRenderState m_renderState;
+    };
+
+TimelineMath can be private implementation detail:
+
+    class TimelineMath final {
+    public:
+        double frameToCanvasX(FrameIndex frame, FrameIndex frameCount, double canvasWidth) const;
+        FrameIndex canvasXToFrame(double x, FrameIndex frameCount, double canvasWidth) const;
+
+        ThumbnailStripPlan buildThumbnailStripPlan(
+            FrameIndex sourceFrameCount,
+            ZoomLevel zoom,
+            double thumbnailWidth) const;
+
+        VisibleRange visibleThumbnailRange(
+            double horizontalOffset,
+            double viewportWidth,
+            double thumbnailWidth,
+            size_t thumbnailCount) const;
+
+        TimelineTickPlan buildTickPlan(
+            FrameIndex firstVisibleFrame,
+            FrameIndex endVisibleFrameExclusive,
+            FrameRate frameRate,
+            ZoomLevel zoom) const;
+    };
+
+The public Timeline API should be render-oriented.
+
+MainWindow should ask:
+
+    current zoom level is X
+    viewport starts at frame Y
+    viewport ends at frame Z
+    give me information to render it
+
+Equivalent request:
+
+    struct TimelineViewportRequest final {
+        ZoomLevel zoom{};
+        FrameIndex firstVisibleFrame{};
+        FrameIndex endVisibleFrameExclusive{};
+        double viewportWidthPixels{};
+        double viewportHeightPixels{};
+    };
+
+Response:
+
+    struct TimelineRenderModel final {
+        double totalCanvasWidth{};
+        std::vector<TimelineTickRenderItem> ticks;
+        std::vector<TimelineMarkerRenderItem> markers;
+        std::vector<TimelineCutSceneRenderItem> cutScenes;
+        std::vector<TimelineThumbnailRenderItem> thumbnails;
+        std::vector<AudioWaveformRenderItem> waveform;
+    };
+
+TimelineRenderModel should contain neutral render data only.
+
+It should not contain WinUI objects.
+
+ThumbnailPreviewStore owns scaled-down presentation thumbnails.
+
+It should store thumbnails in their scaled-down presentation form, not full-resolution source frames.
+
+It should not store WinUI Image or WriteableBitmap objects.
+
+It should store neutral pixel data:
+
+    using ThumbnailId = uint32_t;
+
+    struct ThumbnailFrame final {
+        ThumbnailId id{};
+        FrameIndex frameIndex{};
+        uint32_t width{};
+        uint32_t height{};
+        std::vector<uint8_t> bgraPixels;
+    };
+
+Per-zoom slots reference the master list:
+
+    struct ThumbnailSlot final {
+        FrameIndex frameIndex{};
+        std::optional<ThumbnailId> thumbnailId{};
+        ThumbnailBuildState state{};
+    };
+
+    struct ThumbnailZoomTrack final {
+        ZoomLevel zoom{};
+        FrameIndex framesBetweenThumbnails{};
+        std::vector<ThumbnailSlot> slots;
+    };
+
+ThumbnailPreviewStore:
+
+    class ThumbnailPreviewStore final {
+    public:
+        void setup(const ThumbnailPreviewSetup& setup);
+        void reset();
+
+        uint32_t thumbnailWidth() const;
+        uint32_t thumbnailHeight() const;
+
+        FrameIndex sourceFrameCount() const;
+        FrameRate sourceFrameRate() const;
+
+        FrameIndex framesBetweenThumbnails(ZoomLevel zoom) const;
+
+        void requestBuild(
+            ZoomLevel zoom,
+            FrameIndex firstFrame,
+            FrameIndex endFrameExclusive);
+
+        std::optional<ThumbnailFrameView> tryGet(
+            ZoomLevel zoom,
+            FrameIndex frameIndex) const;
+
+        std::shared_future<ThumbnailFrameView> getAsync(
+            ZoomLevel zoom,
+            FrameIndex frameIndex);
+
+    private:
+        FrameIndex m_sourceFrameCount{};
+        FrameRate m_sourceFrameRate{};
+        uint32_t m_thumbnailWidth{};
+        uint32_t m_thumbnailHeight{};
+
+        std::vector<ThumbnailFrame> m_masterFrames;
+        std::unordered_map<FrameIndex, ThumbnailId> m_thumbnailByFrame;
+
+        std::vector<ThumbnailZoomTrack> m_zoomTracks;
+
+        ThumbnailBuildQueue m_buildQueue;
+    };
+
+Thumbnail setup:
+
+    struct ThumbnailPreviewSetup final {
+        IThumbnailSourceReader* sourceReader{};
+        FrameIndex sourceFrameCount{};
+        FrameRate sourceFrameRate{};
+        std::vector<ZoomLevel> zoomLevels;
+        uint32_t thumbnailHeight{};
+        Rational sourceAspectRatio{};
+    };
+
+thumbnailWidth is derived:
+
+    thumbnailWidth = thumbnailHeight * sourceAspectRatio.width / sourceAspectRatio.height
+
+The object should provide:
+
+    - calculated thumbnail width
+    - thumbnail height
+    - frame spacing per zoom level
+    - slot count per zoom level
+    - build request for frame range and zoom level
+    - ready/not-ready state per slot
+    - thumbnail retrieval by zoom/frame
+    - future-based retrieval by zoom/frame
+    - full reset
+
+When requestBuild is called while earlier build work is still in flight:
+
+    - keep already-running decode only if it cannot be safely cancelled
+    - cancel or deprioritize queued work outside the new requested range
+    - prioritize the new requested range immediately
+    - retain useful already-built master thumbnails
+    - do not duplicate thumbnails already present in the master list
+    - resolve waiting futures when a thumbnail becomes available
+    - reset must cancel/drain/clear before returning
+
+AudioWaveformStore should mirror ThumbnailPreviewStore.
+
+It should own waveform data, not UI bars.
+
+It should operate on frame ranges.
+
+    struct AudioWaveformSample final {
+        FrameIndex firstFrame{};
+        FrameIndex endFrameExclusive{};
+        float peak{};
+        bool ready{};
+    };
+
+    class AudioWaveformStore final {
+    public:
+        void setup(const AudioWaveformSetup& setup);
+        void reset();
+
+        void requestBuild(
+            ZoomLevel zoom,
+            FrameIndex firstFrame,
+            FrameIndex endFrameExclusive);
+
+        AudioWaveformRangeView getRange(
+            ZoomLevel zoom,
+            FrameIndex firstFrame,
+            FrameIndex endFrameExclusive,
+            double thresholdDb) const;
+
+        std::shared_future<AudioWaveformRangeView> getRangeAsync(
+            ZoomLevel zoom,
+            FrameIndex firstFrame,
+            FrameIndex endFrameExclusive);
+
+    private:
+        FrameIndex m_sourceFrameCount{};
+        FrameRate m_sourceFrameRate{};
+
+        std::vector<AudioPeakBucket> m_masterBuckets;
+        std::vector<AudioWaveformZoomTrack> m_zoomTracks;
+
+        AudioWaveformBuildQueue m_buildQueue;
+    };
+
+AudioWaveformStore reset has the same hard contract:
+
+    - cancel outstanding work
+    - wait until no worker can touch this object
+    - clear all queues
+    - clear all data
+    - return only when reset is complete
+
+PreviewController owns playback behavior, not GUI controls.
+
+MainWindow owns the actual visual preview host.
+
+PreviewController owns:
+    - current playback/navigation commands
+    - frame stepping
+    - seeking
+    - cut-scene skip behavior
+    - source playback state that is not GUI-specific
+
+PreviewController uses:
+    - Session
+    - Project
+    - CutPlanner
+    - MediaSession
+
+PreviewController should operate on frames where possible:
+
+    class PreviewController final {
+    public:
+        void reset();
+
+        void play();
+        void pause();
+        void stop();
+
+        void seekToFrame(FrameIndex frameIndex);
+        void stepFrames(int64_t deltaFrames);
+        void jumpToPercent(uint32_t percent);
+
+        FrameIndex currentFrame() const;
+
+        bool skipCurrentCutSceneDuringPlayback(
+            const CutPlanner& planner,
+            FrameIndex sourceFrameCount);
+    };
+
+ExportController owns export operation state.
+
+Export planning should operate on frame ranges first.
+
+Only the final backend boundary should convert frame ranges to timestamps/sample times if required by the container writer.
+
+    struct ExportFrameRange final {
+        FrameIndex firstFrame{};
+        FrameIndex endFrameExclusive{};
+    };
+
+    struct EffectiveExportPlan final {
+        FrameIndex sourceFrameCount{};
+        std::vector<ExportFrameRange> requestedCutRanges;
+        std::vector<ExportFrameRange> effectiveCutRanges;
+
+        FrameIndex requestedOutputFrameCount{};
+        FrameIndex effectiveOutputFrameCount{};
+
+        bool hasRequestedCuts{};
+        bool materiallyDifferent{};
+        bool emptyAfterAlignment{};
+    };
+
+ExportController:
+
+    class ExportController final {
+    public:
+        void reset();
+
+        bool isExportInProgress() const;
+        void requestCancel();
+
+        ExportPreflightState preflight(const Session& session) const;
+
+        ExportResult run(
+            Session& session,
+            const ExportRequest& request,
+            ExportObserver& observer);
+
+    private:
+        ExportOperationState m_state;
+    };
+
+ExportController reset contract:
+
+    - request cancel
+    - wait until export worker is not touching session/media/project state
+    - clear operation state
+    - return only after export state is reset
+
+MainWindow should call ExportController and observe progress.
+
+MainWindow should not build or cache effective export plans directly.
+
+Editor commands should call CutPlanner.
+
+Current command-style APIs can stay, but they should target planner-level operations.
+
+    executeToggleMarkerCommand(Project& project, EditorHistoryState& history, FrameIndex frameIndex)
+
+    executeToggleCutSceneCommand(Project& project, EditorHistoryState& history, FrameIndex frameIndex)
+
+    executeSetCutSceneCommand(Project& project, EditorHistoryState& history, FrameIndex frameIndex, bool cut)
+
+    executeRapNudgeCommand(Project& project, EditorHistoryState& history, FrameIndex frameIndex, RapNudgeMode mode)
+
+Command result remains useful:
+
+    struct EditorCommandResult final {
+        bool changed{};
+        bool refreshTimeline{};
+        bool refreshVideoDetails{};
+        bool refreshWindowTitle{};
+        bool markerCountIncreased{};
+    };
+
+The command layer should not know about WinUI.
+
+The command layer should not schedule thumbnail work.
+
+The command layer should not display status text.
+
+Session-level object relationship:
+
+    MainWindow
+        owns Session
+
+    Session
+        owns Project
+        owns MediaSession
+        owns Timeline
+        owns PreviewController
+        owns ExportController
+        owns EditorHistoryState
+
+    Project
+        owns CutPlanner
+        owns persisted audio/source settings
+
+    CutPlanner
+        owns MarkerSet
+        owns RapFrameSet
+        owns CutSceneSet
+
+    Timeline
+        owns TimelineMath
+        owns ThumbnailPreviewStore
+        owns AudioWaveformStore
+
+    MediaSession
+        owns VideoSource
+        owns media inspection data
+        owns source frame count / frame rate / duration metadata
+
+    ExportController
+        uses Project
+        uses MediaSession
+        uses CutPlanner
+        produces ExportResult
+
+    PreviewController
+        uses MediaSession
+        uses CutPlanner
+        uses Timeline frame conversion if needed
+
+MainWindow interaction should look like:
+
+    on timeline click:
+        frame = session.timeline.pointToFrame(x, width, session)
+        result = executeToggleMarkerCommand(session.project(), session.editorHistory(), frame)
+        renderModel = session.timeline.buildRenderModel(session, viewport)
+        draw(renderModel)
+
+    on cut-scene toggle:
+        frame = session.timeline.pointToFrame(x, width, session)
+        result = executeToggleCutSceneCommand(session.project(), session.editorHistory(), frame)
+        renderModel = session.timeline.buildRenderModel(session, viewport)
+        draw(renderModel)
+
+    on viewport changed:
+        request = viewportToTimelineRequest()
+        renderModel = session.timeline.buildRenderModel(session, request)
+        draw(renderModel)
+
+    on export:
+        request = collectExportRequestFromUi()
+        result = session.exporter().run(session, request, observer)
+
+    on new session:
+        session.reset()
+        clearGuiForEmptySession()
+
+Hard rules:
+
+    - no stale async work may survive Session::reset()
+    - markers are frame-index points
+    - markers do not have duration
+    - scenes operate on marker/frame-index data
+    - RAP data is frame-index based
+    - Timeline owns its math directly
+    - Timeline owns thumbnail and waveform preview stores
+    - Project owns CutPlanner
+    - CutPlanner owns Markers and CutScenes
+    - Timeline accesses CutPlanner through Session -> Project
+    - MainWindow owns GUI only
+    - UI objects are created at the UI boundary only
+    - worker/cache objects store neutral data only
