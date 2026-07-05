@@ -30,9 +30,11 @@ llvc architecture rework:
 =======================================================================================================
 =======================================================================================================
 
-llvc architecture rework - corrected continuation
 
+llvc architecture rework (that MSVC solution is under `win` directory)
 The architecture should be based around explicit ownership and explicit activity lifetime.
+
+Target C++ 23+ standard with the use of C++ modules, constexpr, constinit, coroutines, lambdas, standard library, executors. Keep the code as simple as possible, but no simpler than that. Do not over-engineer! Follow modern C++ best practices.
 
 MainWindow should only be the UX coordinator and GUI owner.
 
@@ -72,7 +74,7 @@ Session is the reset boundary.
 
 A session reset is not logically complete until all outstanding activity work has been stopped, cancelled, drained, and cleared.
 
-No "generation" workaround should be used to paper over stale async work. If old work can still complete after reset and mutate or observe cleared state, the reset contract is wrong.
+If old work can still complete after reset and mutate or observe cleared state, the reset contract is wrong.
 
 Session reset contract:
 
