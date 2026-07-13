@@ -37,9 +37,11 @@ struct ExportCoordinatorRequest final{
     bool sourceHasAudio{};
     bool needsRapReevaluation{};
 
-    function<winrt::Windows::Foundation::IAsyncOperation<bool>(const wstring&, const function<void(double)>&)> ensureRapMarkersAvailableAsync{};
-    function<bool(bool)> reevaluateCutMarkers{};
+    function<bool()> beginExportActivity{};
+    function<void()> endExportActivity{};
+    function<winrt::Windows::Foundation::IAsyncOperation<bool>(const wstring&, const vector<int64_t>&, const function<void(double)>&)> ensureRapMarkersAvailableAsync{};
     function<std::optional<EffectiveExportPlan>(const function<void(double)>&)> buildEffectiveExportPlan{};
+    function<void(const EffectiveExportPlan&)> onPlanReady{};
     function<void(const wstring&)> onStatus{};
     function<void(double)> onOverallProgress{};
     function<void(ExportStage, wstring, std::optional<double>, bool)> onStageState{};
@@ -57,7 +59,7 @@ struct ExportCoordinatorResult final{
     std::optional<chrono::milliseconds> finalizeStageDurationMs{};
 };
 
-winrt::Windows::Foundation::IAsyncAction runExportAsync(const ExportCoordinatorRequest& request, ExportCoordinatorResult& result);
+winrt::Windows::Foundation::IAsyncAction runExportAsync(ExportCoordinatorRequest request, ExportCoordinatorResult& result);
 
 }
 
@@ -100,7 +102,16 @@ void throwIfCanceled(const ExportCoordinatorRequest& request){
 
 }
 
-winrt::Windows::Foundation::IAsyncAction runExportAsync(const ExportCoordinatorRequest& request, ExportCoordinatorResult& result){
+winrt::Windows::Foundation::IAsyncAction runExportAsync(ExportCoordinatorRequest request, ExportCoordinatorResult& result){
+    if(request.beginExportActivity && !request.beginExportActivity()){
+        result.errorMessage = L"An export is already in progress.";
+        co_return;
+    }
+    struct ExportActivityGuard final{
+        function<void()>& end;
+        ~ExportActivityGuard(){ if(end){ end(); } }
+    } activity{request.endExportActivity};
+
     if(!request.project || !request.media || !request.mediaInfo){
         result.errorMessage = L"Export coordinator received incomplete request data.";
         co_return;
@@ -121,8 +132,10 @@ winrt::Windows::Foundation::IAsyncAction runExportAsync(const ExportCoordinatorR
     }
 
     if(request.needsRapReevaluation){
+        const auto rapTargets{buildRapLookupTimesForExportAlignment(*request.project, request.sourceDuration100ns)};
         const auto rapReady{co_await request.ensureRapMarkersAvailableAsync(
             L"Reevaluating cut plan to RAP frames...",
+            rapTargets,
             [onStageState = request.onStageState, onOverallProgress = request.onOverallProgress](double pct){
                 if(onStageState){
                     onStageState(ExportStage::Rap, L"In progress", pct, true);
@@ -132,19 +145,6 @@ winrt::Windows::Foundation::IAsyncAction runExportAsync(const ExportCoordinatorR
                 }
             })};
         if(!rapReady){
-            result.canceled = isCanceled(request);
-            result.errorMessage = result.canceled ? hstring{} : hstring{L"Could not build a RAP-aligned cut plan for the current source."};
-            co_return;
-        }
-    }
-
-    if(request.needsRapReevaluation){
-        if(isCanceled(request)){
-            result.canceled = true;
-            co_return;
-        }
-
-        if(!request.reevaluateCutMarkers(false)){
             result.canceled = isCanceled(request);
             result.errorMessage = result.canceled ? hstring{} : hstring{L"Could not build a RAP-aligned cut plan for the current source."};
             co_return;
@@ -162,6 +162,9 @@ winrt::Windows::Foundation::IAsyncAction runExportAsync(const ExportCoordinatorR
         co_return;
     }
     result.rapStageDurationMs = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - exportOverallStartedAt);
+    if(request.onPlanReady){
+        request.onPlanReady(result.effectivePlan);
+    }
 
     if(request.onStageState){
         request.onStageState(ExportStage::Rap, result.effectivePlan.materiallyDifferent ? L"Adjusted" : L"Done", 100.0, false);
@@ -174,7 +177,6 @@ winrt::Windows::Foundation::IAsyncAction runExportAsync(const ExportCoordinatorR
     }
 
     const auto outputDuration100ns{result.effectivePlan.effectiveOutputDuration100ns};
-    const auto effectiveCutRanges100ns{result.effectivePlan.effectiveCutRanges100ns};
     const auto hasAudioForExport{
         request.project->keepAudio()
         && request.sourceHasAudio
@@ -196,7 +198,9 @@ winrt::Windows::Foundation::IAsyncAction runExportAsync(const ExportCoordinatorR
             .temporaryOutputPath = request.temporaryOutputPath,
             .sourceDuration100ns = request.sourceDuration100ns,
             .outputDuration100ns = outputDuration100ns,
-            .effectiveCutRanges100ns = effectiveCutRanges100ns,
+            .sourceFrameCount = result.effectivePlan.sourceFrameCount,
+            .effectiveCutRanges = result.effectivePlan.effectiveCutRanges,
+            .effectiveCutRanges100ns = result.effectivePlan.effectiveCutRanges100ns,
             .keepAudio = request.project->keepAudio(),
             .audioCrossfadeMs = request.project->audioXfadeMs(),
             .audioVolumePct = request.project->audioVolumePct(),

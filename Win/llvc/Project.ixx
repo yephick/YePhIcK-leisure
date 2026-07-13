@@ -7,6 +7,7 @@ export module llvc.Project;
 
 import std;
 import llvc.Utils;
+import llvc.CutPlanner;
 
 export namespace llvc{
 
@@ -24,6 +25,11 @@ struct IndexedFrameSample{
 struct Project;
 
 struct EffectiveExportPlan{
+    FrameIndex sourceFrameCount{};
+    vector<ExportFrameRange> requestedCutRanges{};
+    vector<ExportFrameRange> effectiveCutRanges{};
+    FrameIndex requestedOutputFrameCount{};
+    FrameIndex effectiveOutputFrameCount{};
     vector<pair<int64_t, int64_t>> requestedCutRanges100ns{};
     vector<pair<int64_t, int64_t>> effectiveCutRanges100ns{};
     int64_t sourceDuration100ns{};
@@ -71,17 +77,21 @@ struct Project final{
 
     Project(): m_lastSavedProjectSnapshot{_buildProjectSnapshot()} {}
 
-    void reset(){ new (this) Project; }
+    void reset(){ *this = Project{}; }
     void setZoomWithoutDirty(double v);
     void clearTimeline();
     AAction open(const ::winrt::Windows::Storage::StorageFile& file);
     AAction save(const ::winrt::Windows::Storage::StorageFile& file);
     bool isDirty() const;
+    void markClean();
+    void markDirty();
     void videoFilePath(const ::winrt::hstring& path);
     void setZoom(double v);
     void keepAudio(bool v);
     void audioXfadeMs(int32_t valueMs);
     void audioVolumePct(int32_t valuePct);
+    void synchronizeCutPlannerFrames(FrameIndex sourceFrameCount);
+    void synchronizeLegacyEditModelFromCutPlanner(FrameIndex sourceFrameCount);
     void frameIndex(const vector<IndexedFrameSample>& v);
     void cutScenes(const vector<uint32_t>& v);
 
@@ -95,9 +105,21 @@ struct Project final{
     inline auto& frameIndex()   const{ return m_frameIndex; }
     inline auto& selKeyFrames() const{ return m_selectedKeyFrames; }
     inline auto& cutScenes()    const{ return m_cutScenes; }
+    bool hasCanonicalFrameModel() const{ return m_sourceFrameCount > 0; }
+    FrameIndex sourceFrameCount() const{ return m_sourceFrameCount; }
+    FrameIndex frameIndexForTime100ns(int64_t time100ns) const{
+        if(m_sourceFrameCount == 0 || m_timelineDuration100ns <= 0){ return 0; }
+        return min<FrameIndex>(static_cast<FrameIndex>((static_cast<long double>(max<int64_t>(0, time100ns)) * m_sourceFrameCount) / m_timelineDuration100ns), m_sourceFrameCount - 1);
+    }
+    int64_t time100nsForFrame(FrameIndex frameIndex) const{
+        return m_sourceFrameCount == 0 ? 0 : static_cast<int64_t>((static_cast<long double>(min(frameIndex, m_sourceFrameCount)) * m_timelineDuration100ns) / m_sourceFrameCount);
+    }
+    CutPlanner& cutPlanner(){ return m_cutPlanner; }
+    const CutPlanner& cutPlanner() const{ return m_cutPlanner; }
 
     vector<IndexedFrameSample> buildRapMarkersFromSelection() const;
     vector<pair<int64_t, int64_t>> buildCutRanges100ns() const;
+    EffectiveFrameExportPlan buildFrameExportPlan(bool rapAligned) const;
     vector<int64_t> buildSceneBoundaries100ns() const;
     EffectiveExportPlan buildEffectiveExportPlanWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns, const function<void(double)>& progressCallback = {}) const;
     vector<pair<int64_t, int64_t>> buildEffectiveCutRangesWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns) const;
@@ -116,6 +138,9 @@ private:
     wstring _serializeCutMarkers() const;
     static vector<IndexedFrameSample> _parseKeyframeVector(const wstring& text);
     std::optional<size_t> _sceneIndexAtTime100ns(int64_t time100ns) const;
+    void _syncCutPlannerFromLegacyState();
+    static wstring _serializePlannerMarkers(span<const EditMarker> markers);
+    static vector<EditMarker> _parsePlannerMarkers(const wstring& text);
 
 private:
     // these are persisted on disk
@@ -127,8 +152,10 @@ private:
     vector<IndexedFrameSample> m_frameIndex{};
     vector<uint32_t> m_selectedKeyFrames{};
     vector<uint32_t> m_cutScenes{};
+    CutPlanner m_cutPlanner{};
 
     int64_t m_timelineDuration100ns{0};
+    FrameIndex m_sourceFrameCount{};
     bool m_isDirty{false};
     wstring m_lastSavedProjectSnapshot{}; // must be *after* all the members to reflect proper initial state
 };
@@ -171,6 +198,22 @@ vector<int64_t> buildRapLookupTimesForExportAlignment(const Project& project, in
         return targets;
     }
 
+    if(project.hasCanonicalFrameModel()){
+        targets.reserve(project.cutPlanner().markers().size());
+        for(const auto& marker: project.cutPlanner().markers().markers()){
+            if(marker.isEvaluatedAgainstRap){
+                continue;
+            }
+            const auto time100ns{project.time100nsForFrame(marker.frameIndex)};
+            if(time100ns > 0 && time100ns < sourceDuration100ns){
+                targets.push_back(time100ns);
+            }
+        }
+        sort(targets.begin(), targets.end());
+        targets.erase(unique(targets.begin(), targets.end()), targets.end());
+        return targets;
+    }
+
     targets.reserve(project.frameIndex().size());
     for(const auto& marker: project.frameIndex()){
         if(marker.time100ns > 0 && marker.time100ns < sourceDuration100ns){
@@ -193,10 +236,15 @@ int64_t calculateOutputDuration100ns(int64_t totalDuration100ns, const vector<pa
 }
 
 bool projectHasRequestedCuts(const Project& project){
-    return !project.buildCutRanges100ns().empty();
+    return project.hasCanonicalFrameModel() && !project.cutPlanner().markers().empty()
+        ? project.cutPlanner().hasRequestedCuts()
+        : !project.buildCutRanges100ns().empty();
 }
 
 bool cutPlanUsesUnevaluatedSceneEdgeMarkers(const Project& project){
+    if(project.hasCanonicalFrameModel() && !project.cutPlanner().markers().empty() && project.cutPlanner().hasRequestedCuts()){
+        return project.cutPlanner().needsRapAlignment();
+    }
     const auto& markers{project.frameIndex()};
     if(markers.empty()){
         return false;
@@ -227,9 +275,15 @@ bool effectiveExportPlanNeedsRapAlignment(const Project& project){
 }
 
 EffectiveExportPlan buildDirectEffectiveExportPlan(const Project& project, int64_t sourceDuration100ns){
+    const auto framePlan{project.buildFrameExportPlan(false)};
     const auto cutRanges{project.buildCutRanges100ns()};
     const auto outputDuration{project.outputDuration100ns()};
     return EffectiveExportPlan{
+        .sourceFrameCount = framePlan.sourceFrameCount,
+        .requestedCutRanges = framePlan.requestedCutRanges,
+        .effectiveCutRanges = framePlan.effectiveCutRanges,
+        .requestedOutputFrameCount = framePlan.requestedOutputFrameCount,
+        .effectiveOutputFrameCount = framePlan.effectiveOutputFrameCount,
         .requestedCutRanges100ns = cutRanges,
         .effectiveCutRanges100ns = cutRanges,
         .sourceDuration100ns = sourceDuration100ns,
@@ -325,6 +379,9 @@ constexpr auto P_AUDIO_VOLUME_PCT{L"audio_volume_pct"};
 constexpr auto P_CUT_MARKERS{L"cut_markers"};
 constexpr auto P_RAP_CUT_MARKERS{L"RAP_cut_markers"};
 constexpr auto P_CUT_SCENES{L"cut_scenes"};
+constexpr auto P_FRAME_MARKERS{L"frame_markers"};
+constexpr auto P_RAP_FRAMES{L"rap_frames"};
+constexpr auto P_SOURCE_FRAME_COUNT{L"source_frame_count"};
 
 struct LoadedProjectData{
     wstring loadedFilePath;
@@ -335,6 +392,9 @@ struct LoadedProjectData{
     wstring markers;
     wstring rapMarkers;
     wstring cutScenes;
+    wstring frameMarkers;
+    wstring rapFrames;
+    wstring sourceFrameCount;
 };
 
 LoadedProjectData _parseProjectLines(const Windows::Foundation::Collections::IVector<winrt::hstring>& lines){
@@ -360,6 +420,9 @@ LoadedProjectData _parseProjectLines(const Windows::Foundation::Collections::IVe
         if(key == P_CUT_MARKERS)        { data.markers        = value; } else
         if(key == P_RAP_CUT_MARKERS)    { data.rapMarkers     = value; } else
         if(key == P_CUT_SCENES)         { data.cutScenes      = value; } else
+        if(key == P_FRAME_MARKERS)      { data.frameMarkers   = value; } else
+        if(key == P_RAP_FRAMES)         { data.rapFrames      = value; } else
+        if(key == P_SOURCE_FRAME_COUNT) { data.sourceFrameCount = value; } else
         if(key == P_KEEP_AUDIO)         { data.keepAudio      = value; } else
         if(key == P_AUDIO_CROSSFADE_MS) { data.audioXfadeMs   = value; }
         if(key == P_AUDIO_VOLUME_PCT)   { data.audioVolumePct = value; }
@@ -372,6 +435,7 @@ void Project::clearTimeline(){
     m_frameIndex.clear();
     m_selectedKeyFrames.clear();
     m_cutScenes.clear();
+    m_cutPlanner.reset();
     m_timelineDuration100ns = 0;
 }
 
@@ -408,6 +472,23 @@ Project::AAction Project::open(const ::winrt::Windows::Storage::StorageFile& fil
     }
     sort(m_cutScenes.begin(), m_cutScenes.end());
     m_cutScenes.erase(unique(m_cutScenes.begin(), m_cutScenes.end()), m_cutScenes.end());
+    if(!projectData.frameMarkers.empty()){
+        m_cutPlanner.markers().replaceAll(_parsePlannerMarkers(projectData.frameMarkers));
+        vector<FrameIndex> rapFrames;
+        for(const auto value: parseInt64List(projectData.rapFrames)){
+            if(value >= 0){ rapFrames.push_back(static_cast<FrameIndex>(value)); }
+        }
+        m_cutPlanner.rapFrames().replaceAll(move(rapFrames));
+        m_cutPlanner.cutScenes().replaceCutSceneIndexes(m_cutScenes);
+        try{ m_sourceFrameCount = static_cast<FrameIndex>(stoull(projectData.sourceFrameCount)); } catch(...){}
+        // Canonical projects never re-enter the time-based edit model.  The
+        // legacy vectors above were only used to parse compatible cut indexes.
+        m_frameIndex.clear();
+        m_selectedKeyFrames.clear();
+        m_cutScenes.clear();
+    }else{
+        _syncCutPlannerFromLegacyState();
+    }
 
     m_lastSavedProjectSnapshot = _buildProjectSnapshot();
     m_isDirty = false;
@@ -421,9 +502,15 @@ Project::AAction Project::save(const ::winrt::Windows::Storage::StorageFile& fil
     lines.emplace_back(wstring(P_KEEP_AUDIO) + L"=" + wstring(m_keepAudio ? L"1" : L"0"));
     lines.emplace_back(wstring(P_AUDIO_CROSSFADE_MS) + L"=" + to_wstring(m_audioCrossfadeMs));
     lines.emplace_back(wstring(P_AUDIO_VOLUME_PCT) + L"=" + to_wstring(m_audioVolumePct));
-    lines.emplace_back(wstring(P_CUT_MARKERS) + L"=" + _serializeCutMarkers());
-    lines.emplace_back(wstring(P_RAP_CUT_MARKERS) + L"=" + serializeInt64List(buildEvaluatedKeyframeTimes100ns(m_frameIndex)));
-    lines.emplace_back(wstring(P_CUT_SCENES) + L"=" + serializeIndexList(m_cutScenes));
+    lines.emplace_back(wstring(P_CUT_SCENES) + L"=" + serializeIndexList(vector<uint32_t>{m_cutPlanner.cutScenes().cutSceneIndexes().begin(), m_cutPlanner.cutScenes().cutSceneIndexes().end()}));
+    lines.emplace_back(wstring(P_FRAME_MARKERS) + L"=" + _serializePlannerMarkers(m_cutPlanner.markers().markers()));
+    vector<int64_t> plannerRapFrames;
+    plannerRapFrames.reserve(m_cutPlanner.rapFrames().size());
+    for(const auto frame: m_cutPlanner.rapFrames().frames()){
+        plannerRapFrames.push_back(static_cast<int64_t>(min<FrameIndex>(frame, static_cast<FrameIndex>(numeric_limits<int64_t>::max()))));
+    }
+    lines.emplace_back(wstring(P_RAP_FRAMES) + L"=" + serializeInt64List(plannerRapFrames));
+    lines.emplace_back(wstring(P_SOURCE_FRAME_COUNT) + L"=" + to_wstring(m_sourceFrameCount));
 
     co_await FileIO::WriteLinesAsync(file, single_threaded_vector<hstring>(move(lines)));
     m_lastSavedProjectSnapshot = _buildProjectSnapshot();
@@ -434,6 +521,15 @@ bool Project::isDirty() const{
     const auto curr{_buildProjectSnapshot()};
     const auto v{m_isDirty || curr != m_lastSavedProjectSnapshot};
     return v;
+}
+
+void Project::markClean(){
+    m_lastSavedProjectSnapshot = _buildProjectSnapshot();
+    m_isDirty = false;
+}
+
+void Project::markDirty(){
+    m_isDirty = true;
 }
 
 void Project::videoFilePath(const ::winrt::hstring& path){
@@ -484,12 +580,80 @@ void Project::audioVolumePct(int32_t valuePct){
 
 void Project::frameIndex(const vector<IndexedFrameSample>& v){
     m_frameIndex = std::move(v);
+    _syncCutPlannerFromLegacyState();
     m_isDirty = true;
 }
 
 void Project::cutScenes(const vector<uint32_t>& v){
     m_cutScenes = std::move(v);
+    _syncCutPlannerFromLegacyState();
     m_isDirty = true;
+}
+
+void Project::synchronizeCutPlannerFrames(FrameIndex sourceFrameCount){
+    if(sourceFrameCount == 0 || m_timelineDuration100ns <= 0){
+        return;
+    }
+
+    if(m_sourceFrameCount == sourceFrameCount && !m_cutPlanner.markers().empty()){
+        return;
+    }
+    // Canonical project files persist the planner directly.  Their legacy
+    // time-marker list is intentionally empty, so metadata arrival must not
+    // rebuild the planner from that compatibility-only representation.
+    if(m_frameIndex.empty() && !m_cutPlanner.markers().empty()){
+        m_sourceFrameCount = sourceFrameCount;
+        return;
+    }
+    const auto legacyCutRanges{buildCutRanges100ns()};
+    m_sourceFrameCount = sourceFrameCount;
+    vector<EditMarker> markers;
+    markers.reserve(m_frameIndex.size());
+    for(const auto& marker: m_frameIndex){
+        const auto frameIndex{static_cast<FrameIndex>((static_cast<long double>(max<int64_t>(0, marker.time100ns)) * sourceFrameCount) / m_timelineDuration100ns)};
+        markers.push_back(EditMarker{.frameIndex = min(frameIndex, sourceFrameCount - 1), .isEvaluatedAgainstRap = marker.evaluated, .wasMovedForRapSafety = false});
+    }
+    m_cutPlanner.markers().replaceAll(move(markers));
+
+    vector<uint32_t> plannerCutScenes;
+    for(const auto& scene: m_cutPlanner.buildSceneRanges(sourceFrameCount)){
+        const auto midpointFrame{scene.firstFrame + (scene.endFrameExclusive - scene.firstFrame) / 2};
+        const auto midpointTime100ns{static_cast<int64_t>((static_cast<long double>(midpointFrame) * m_timelineDuration100ns) / sourceFrameCount)};
+        if(any_of(legacyCutRanges.begin(), legacyCutRanges.end(), [midpointTime100ns](const auto& range){ return midpointTime100ns >= range.first && midpointTime100ns < range.second; })){
+            plannerCutScenes.push_back(scene.sceneIndex);
+        }
+    }
+    m_cutPlanner.cutScenes().replaceCutSceneIndexes(move(plannerCutScenes));
+    // Legacy timestamp/index fields are load-migration input only. Once the
+    // source frame model is known, CutPlanner is the sole edit authority.
+    m_frameIndex.clear();
+    m_selectedKeyFrames.clear();
+    m_cutScenes.clear();
+}
+
+void Project::synchronizeLegacyEditModelFromCutPlanner(FrameIndex sourceFrameCount){
+    if(sourceFrameCount == 0 || m_timelineDuration100ns <= 0){
+        return;
+    }
+
+    vector<IndexedFrameSample> markers;
+    markers.reserve(m_cutPlanner.markers().size());
+    for(const auto& marker: m_cutPlanner.markers().markers()){
+        auto time100ns{static_cast<int64_t>((static_cast<long double>(marker.frameIndex) * m_timelineDuration100ns) / sourceFrameCount)};
+        if(marker.isEvaluatedAgainstRap){
+            const auto existingRapMarker{find_if(m_frameIndex.begin(), m_frameIndex.end(), [&](const auto& existing){
+                const auto existingFrame{static_cast<FrameIndex>((static_cast<long double>(max<int64_t>(0, existing.time100ns)) * sourceFrameCount) / m_timelineDuration100ns)};
+                return existing.evaluated && existingFrame == marker.frameIndex;
+            })};
+            if(existingRapMarker != m_frameIndex.end()){
+                time100ns = existingRapMarker->time100ns;
+            }
+        }
+        markers.push_back({.time100ns = time100ns, .duration100ns = 0, .cleanPoint = marker.isEvaluatedAgainstRap, .evaluated = marker.isEvaluatedAgainstRap, .sampleIndex = static_cast<uint32_t>(min<FrameIndex>(marker.frameIndex, numeric_limits<uint32_t>::max()))});
+    }
+    m_frameIndex = move(markers);
+    m_cutScenes.assign(m_cutPlanner.cutScenes().cutSceneIndexes().begin(), m_cutPlanner.cutScenes().cutSceneIndexes().end());
+    refreshSelectedMarkers();
 }
 
 vector<IndexedFrameSample> Project::buildRapMarkersFromSelection() const{
@@ -500,6 +664,15 @@ vector<IndexedFrameSample> Project::buildRapMarkersFromSelection() const{
 }
 
 vector<pair<int64_t, int64_t>> Project::buildCutRanges100ns() const{
+    if(m_sourceFrameCount > 0 && !m_cutPlanner.markers().empty()){
+        vector<pair<int64_t, int64_t>> ranges;
+        for(const auto& range: m_cutPlanner.buildCutSceneRanges(m_sourceFrameCount)){
+            const auto start{static_cast<int64_t>((static_cast<long double>(range.firstFrame) * m_timelineDuration100ns) / m_sourceFrameCount)};
+            const auto end{static_cast<int64_t>((static_cast<long double>(range.endFrameExclusive) * m_timelineDuration100ns) / m_sourceFrameCount)};
+            if(end > start){ ranges.emplace_back(start, end); }
+        }
+        return ranges;
+    }
     const auto boundaries{buildSceneBoundaries100ns()};
     if(boundaries.size() < 2){
         return {};
@@ -530,7 +703,26 @@ vector<pair<int64_t, int64_t>> Project::buildCutRanges100ns() const{
     return merged;
 }
 
+EffectiveFrameExportPlan Project::buildFrameExportPlan(bool rapAligned) const{
+    if(m_sourceFrameCount == 0){
+        return {};
+    }
+    return rapAligned
+        ? m_cutPlanner.buildRapAlignedExportPlan(m_sourceFrameCount)
+        : m_cutPlanner.buildDirectExportPlan(m_sourceFrameCount);
+}
+
 vector<int64_t> Project::buildSceneBoundaries100ns() const{
+    if(m_sourceFrameCount > 0 && !m_cutPlanner.markers().empty()){
+        vector<int64_t> boundaries{0};
+        for(const auto& marker: m_cutPlanner.markers().markers()){
+            boundaries.push_back(static_cast<int64_t>((static_cast<long double>(min(marker.frameIndex, m_sourceFrameCount)) * m_timelineDuration100ns) / m_sourceFrameCount));
+        }
+        boundaries.push_back(m_timelineDuration100ns);
+        sort(boundaries.begin(), boundaries.end());
+        boundaries.erase(unique(boundaries.begin(), boundaries.end()), boundaries.end());
+        return boundaries;
+    }
     const auto totalDuration100ns{m_timelineDuration100ns};
     const auto markers{buildRapMarkersFromSelection()};
     vector<int64_t> boundaries;
@@ -554,6 +746,35 @@ vector<int64_t> Project::buildSceneBoundaries100ns() const{
 EffectiveExportPlan Project::buildEffectiveExportPlanWithRapPreroll(int64_t totalDuration100ns, const vector<int64_t>& rapTimes100ns, const function<void(double)>& progressCallback) const{
     EffectiveExportPlan plan{};
     plan.sourceDuration100ns = max<int64_t>(0, totalDuration100ns);
+    if(m_sourceFrameCount > 0 && !m_cutPlanner.markers().empty()){
+        // Reuse canonical RAP boundaries for unevaluated scenes, but do not
+        // realign a plan whose markers have already been reevaluated.
+        const auto framePlan{buildFrameExportPlan(effectiveExportPlanNeedsRapAlignment(*this))};
+        plan.sourceFrameCount = framePlan.sourceFrameCount;
+        plan.requestedCutRanges = framePlan.requestedCutRanges;
+        plan.effectiveCutRanges = framePlan.effectiveCutRanges;
+        plan.requestedOutputFrameCount = framePlan.requestedOutputFrameCount;
+        plan.effectiveOutputFrameCount = framePlan.effectiveOutputFrameCount;
+        plan.hasRequestedCuts = framePlan.hasRequestedCuts;
+        plan.emptyAfterAlignment = framePlan.emptyAfterAlignment;
+        plan.materiallyDifferent = framePlan.materiallyDifferent;
+        const auto toTimeRanges{[&](const vector<ExportFrameRange>& ranges){
+            vector<pair<int64_t, int64_t>> times;
+            times.reserve(ranges.size());
+            for(const auto& range: ranges){
+                const auto start{static_cast<int64_t>((static_cast<long double>(range.firstFrame) * plan.sourceDuration100ns) / m_sourceFrameCount)};
+                const auto end{static_cast<int64_t>((static_cast<long double>(range.endFrameExclusive) * plan.sourceDuration100ns) / m_sourceFrameCount)};
+                if(end > start){ times.emplace_back(start, end); }
+            }
+            return times;
+        }};
+        plan.requestedCutRanges100ns = toTimeRanges(plan.requestedCutRanges);
+        plan.effectiveCutRanges100ns = toTimeRanges(plan.effectiveCutRanges);
+        plan.requestedOutputDuration100ns = calculateOutputDuration100ns(plan.sourceDuration100ns, plan.requestedCutRanges100ns);
+        plan.effectiveOutputDuration100ns = calculateOutputDuration100ns(plan.sourceDuration100ns, plan.effectiveCutRanges100ns);
+        if(progressCallback){ progressCallback(100.0); }
+        return plan;
+    }
     plan.requestedCutRanges100ns = buildCutRanges100ns();
     plan.hasRequestedCuts = !plan.requestedCutRanges100ns.empty();
     plan.requestedOutputDuration100ns = calculateOutputDuration100ns(plan.sourceDuration100ns, plan.requestedCutRanges100ns);
@@ -699,6 +920,60 @@ void Project::refreshSelectedMarkers(){
     m_isDirty = (m_isDirty || neq);
 }
 
+void Project::_syncCutPlannerFromLegacyState(){
+    vector<EditMarker> markers;
+    markers.reserve(m_frameIndex.size());
+    vector<FrameIndex> rapFrames;
+    const auto existingRapFrames{m_cutPlanner.rapFrames().frames()};
+    rapFrames.reserve(existingRapFrames.size() + m_frameIndex.size());
+    rapFrames.insert(rapFrames.end(), existingRapFrames.begin(), existingRapFrames.end());
+    for(const auto& marker: m_frameIndex){
+        const auto frameIndex{static_cast<FrameIndex>(marker.sampleIndex)};
+        markers.push_back(EditMarker{
+            .frameIndex = frameIndex,
+            .isEvaluatedAgainstRap = marker.evaluated,
+            .wasMovedForRapSafety = false,
+        });
+        if(marker.cleanPoint || marker.evaluated){
+            rapFrames.push_back(frameIndex);
+        }
+    }
+
+    m_cutPlanner.markers().replaceAll(move(markers));
+    m_cutPlanner.rapFrames().replaceAll(move(rapFrames));
+    m_cutPlanner.cutScenes().replaceCutSceneIndexes(m_cutScenes);
+}
+
+wstring Project::_serializePlannerMarkers(span<const EditMarker> markers){
+    wstring text;
+    for(const auto& marker: markers){
+        if(!text.empty()){ text += L","; }
+        text += to_wstring(marker.frameIndex);
+        text += marker.isEvaluatedAgainstRap ? L":1" : L":0";
+        text += marker.wasMovedForRapSafety ? L":1" : L":0";
+    }
+    return text;
+}
+
+vector<EditMarker> Project::_parsePlannerMarkers(const wstring& text){
+    vector<EditMarker> markers;
+    wistringstream items{text};
+    for(wstring item; getline(items, item, L',');){
+        wistringstream fields{trim(item)};
+        vector<wstring> parts;
+        for(wstring field; getline(fields, field, L':');){ parts.push_back(move(field)); }
+        if(parts.empty() || parts.front().empty()){ continue; }
+        try{
+            markers.push_back(EditMarker{
+                .frameIndex = static_cast<FrameIndex>(stoull(parts[0])),
+                .isEvaluatedAgainstRap = parts.size() > 1 && parts[1] == L"1",
+                .wasMovedForRapSafety = parts.size() > 2 && parts[2] == L"1",
+            });
+        }catch(...){ }
+    }
+    return markers;
+}
+
 void Project::remapCutScenesAfterMarkerRemoval(uint32_t removePos){
     vector<uint32_t> updatedCuts;
     updatedCuts.reserve(m_cutScenes.size());
@@ -782,6 +1057,7 @@ bool Project::toggleSelectedKeyframeAtTime100ns(int64_t time100ns, double fps){
     }
 
     refreshSelectedMarkers();
+    _syncCutPlannerFromLegacyState();
 
     return true;
 }
@@ -800,6 +1076,7 @@ bool Project::toggleCutBlockAtTime100ns(int64_t time100ns){
         m_cutScenes.erase(it);
     }
 
+    _syncCutPlannerFromLegacyState();
     return true;
 }
 
@@ -819,6 +1096,7 @@ bool Project::setCutBlockAtTime100ns(int64_t time100ns, bool cutScene){
         m_cutScenes.erase(it);
     }
 
+    _syncCutPlannerFromLegacyState();
     return true;
 }
 
@@ -846,8 +1124,9 @@ std::optional<size_t> Project::_sceneIndexAtTime100ns(int64_t time100ns) const{
 }
 
 wstring Project::_buildProjectSnapshot() const{
+    const auto plannerCuts{vector<uint32_t>{m_cutPlanner.cutScenes().cutSceneIndexes().begin(), m_cutPlanner.cutScenes().cutSceneIndexes().end()}};
     const auto snapshot{std::format(
-        L"{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n",
+        L"{}={:.15g}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n{}={}\n",
         P_STORYLINE_ZOOM,
         m_zoom,
         P_KEEP_AUDIO,
@@ -856,12 +1135,14 @@ wstring Project::_buildProjectSnapshot() const{
         m_audioCrossfadeMs,
         P_AUDIO_VOLUME_PCT,
         m_audioVolumePct,
-        P_CUT_MARKERS,
-        _serializeCutMarkers(),
-        P_RAP_CUT_MARKERS,
-        serializeInt64List(buildEvaluatedKeyframeTimes100ns(m_frameIndex)),
         P_CUT_SCENES,
-        serializeIndexList(m_cutScenes)
+        serializeIndexList(plannerCuts),
+        P_FRAME_MARKERS,
+        _serializePlannerMarkers(m_cutPlanner.markers().markers()),
+        P_RAP_FRAMES,
+        serializeInt64List(vector<int64_t>{m_cutPlanner.rapFrames().frames().begin(), m_cutPlanner.rapFrames().frames().end()}),
+        P_SOURCE_FRAME_COUNT,
+        m_sourceFrameCount
     )};
     return snapshot;
 }

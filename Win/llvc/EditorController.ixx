@@ -3,6 +3,7 @@ module;
 export module llvc.EditorController;
 
 import std;
+import llvc.CutPlanner;
 import llvc.Project;
 import llvc.Timeline;
 
@@ -11,8 +12,9 @@ export namespace llvc{
 using namespace ::std;
 
 struct EditorSnapshot final{
-    vector<IndexedFrameSample> frameIndex{};
-    vector<uint32_t> cutScenes{};
+    vector<EditMarker> plannerMarkers{};
+    vector<FrameIndex> plannerRapFrames{};
+    vector<uint32_t> plannerCutScenes{};
     bool keepAudio{true};
     int32_t audioCrossfadeMs{0};
     int32_t audioVolumePct{100};
@@ -58,6 +60,8 @@ MarkerToggleResult toggleSelectedKeyframe(Project& project, double fps, EditorHi
 bool toggleCutBlock(Project& project, EditorHistoryState& history, int64_t time100ns);
 bool setCutBlock(Project& project, EditorHistoryState& history, int64_t time100ns, bool cutScene);
 ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, const Timeline& timeline, const vector<int64_t>& rapTimes100ns, EditorHistoryState& history, bool pushUndoState);
+ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, FrameIndex sourceFrameCount, EditorHistoryState& history, bool pushUndoState);
+EvaluatePlacedMarkerResult evaluatePlacedMarkerFrameAgainstRap(Project& project, const vector<FrameIndex>& rapFrames, FrameIndex markerFrame);
 EvaluatePlacedMarkerResult evaluatePlacedMarkerAgainstRap(Project& project, const vector<int64_t>& rapTimes100ns, int64_t markerTime100ns);
 
 }
@@ -65,9 +69,11 @@ EvaluatePlacedMarkerResult evaluatePlacedMarkerAgainstRap(Project& project, cons
 namespace llvc{
 
 EditorSnapshot captureEditorSnapshot(const Project& project){
+    const auto& planner{project.cutPlanner()};
     return EditorSnapshot{
-        .frameIndex = project.frameIndex(),
-        .cutScenes = project.cutScenes(),
+        .plannerMarkers = {planner.markers().markers().begin(), planner.markers().markers().end()},
+        .plannerRapFrames = {planner.rapFrames().frames().begin(), planner.rapFrames().frames().end()},
+        .plannerCutScenes = {planner.cutScenes().cutSceneIndexes().begin(), planner.cutScenes().cutSceneIndexes().end()},
         .keepAudio = project.keepAudio(),
         .audioCrossfadeMs = project.audioXfadeMs(),
         .audioVolumePct = project.audioVolumePct(),
@@ -78,19 +84,11 @@ bool isSameEditorSnapshot(const EditorSnapshot& left, const EditorSnapshot& righ
     if(left.keepAudio != right.keepAudio
         || left.audioCrossfadeMs != right.audioCrossfadeMs
         || left.audioVolumePct != right.audioVolumePct
-        || left.cutScenes != right.cutScenes
-        || left.frameIndex.size() != right.frameIndex.size()){
+        || left.plannerMarkers != right.plannerMarkers
+        || left.plannerRapFrames != right.plannerRapFrames
+        || left.plannerCutScenes != right.plannerCutScenes){
         return false;
     }
-
-    for(size_t i{}; i < left.frameIndex.size(); ++i){
-        const auto& a{left.frameIndex[i]};
-        const auto& b{right.frameIndex[i]};
-        if(a.time100ns != b.time100ns || a.duration100ns != b.duration100ns || a.cleanPoint != b.cleanPoint || a.evaluated != b.evaluated || a.sampleIndex != b.sampleIndex){
-            return false;
-        }
-    }
-
     return true;
 }
 
@@ -121,9 +119,12 @@ bool applyEditorSnapshot(Project& project, EditorHistoryState& history, const Ed
     }
 
     history.isApplying = true;
-    project.frameIndex(snapshot.frameIndex);
-    project.refreshSelectedMarkers();
-    project.cutScenes(snapshot.cutScenes);
+    project.cutPlanner().markers().replaceAll(snapshot.plannerMarkers);
+    project.cutPlanner().rapFrames().replaceAll(snapshot.plannerRapFrames);
+    project.cutPlanner().cutScenes().replaceCutSceneIndexes(snapshot.plannerCutScenes);
+    if(!project.hasCanonicalFrameModel()){
+        project.synchronizeLegacyEditModelFromCutPlanner(static_cast<FrameIndex>(project.timelineDuration100ns()));
+    }
     project.keepAudio(snapshot.keepAudio);
     project.audioXfadeMs(snapshot.audioCrossfadeMs);
     project.audioVolumePct(snapshot.audioVolumePct);
@@ -183,6 +184,28 @@ bool setCutBlock(Project& project, EditorHistoryState& history, int64_t time100n
     return project.setCutBlockAtTime100ns(time100ns, cutScene);
 }
 
+ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, FrameIndex sourceFrameCount, EditorHistoryState& history, bool pushUndoState){
+    ReevaluateMarkersResult result{};
+    const auto beforeState{captureEditorSnapshot(project)};
+    const auto plannerResult{project.cutPlanner().reevaluateCutScenesAgainstRap(sourceFrameCount)};
+    result.hadMarkers = plannerResult.hadMarkers;
+    result.replacedCount = plannerResult.replacedCount;
+    if(!result.hadMarkers){
+        return result;
+    }
+
+    if(plannerResult.changed && pushUndoState){
+        history.undoStack.push_back(beforeState);
+        history.redoStack.clear();
+        result.undoSnapshotCreated = true;
+    }
+    result.changed = plannerResult.changed;
+    if(result.changed){
+        project.markDirty();
+    }
+    return result;
+}
+
 ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, const Timeline& timeline, const vector<int64_t>& rapTimes100ns, EditorHistoryState& history, bool pushUndoState){
     ReevaluateMarkersResult result{};
     const auto originalMarkers{project.frameIndex()};
@@ -201,14 +224,10 @@ ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, const Timeli
     if(!previousCutRanges.empty()){
         const auto totalDuration100ns{project.timelineDuration100ns()};
         const auto& tailCutRange{previousCutRanges.back()};
-        if(tailCutRange.second >= totalDuration100ns && !originalMarkers.empty()){
-            const auto lastMarkerTime100ns{originalMarkers.back().time100ns};
-            if(lastMarkerTime100ns == tailCutRange.first){
-                preservedTailCutStartTime100ns = lastMarkerTime100ns;
-            }
+        if(tailCutRange.second >= totalDuration100ns && any_of(originalMarkers.begin(), originalMarkers.end(), [&](const auto& marker){ return marker.time100ns == tailCutRange.first; })){
+            preservedTailCutStartTime100ns = tailCutRange.first;
         }
     }
-
     vector<pair<int64_t, int64_t>> alignedCutRanges;
     alignedCutRanges.reserve(previousCutRanges.size());
     const auto totalDuration100ns{project.timelineDuration100ns()};
@@ -312,8 +331,60 @@ ReevaluateMarkersResult reevaluateClearCutMarkers(Project& project, const Timeli
     return result;
 }
 
+EvaluatePlacedMarkerResult evaluatePlacedMarkerFrameAgainstRap(Project& project, const vector<FrameIndex>& rapFrames, FrameIndex markerFrame){
+    EvaluatePlacedMarkerResult result{};
+    auto& planner{project.cutPlanner()};
+    if(!planner.markers().contains(markerFrame)){
+        return result;
+    }
+    planner.rapFrames().replaceAll(rapFrames);
+
+    auto markers{vector<EditMarker>{planner.markers().markers().begin(), planner.markers().markers().end()}};
+    const auto markerIt{find_if(markers.begin(), markers.end(), [markerFrame](const auto& marker){ return marker.frameIndex == markerFrame; })};
+    if(markerIt == markers.end()){
+        return result;
+    }
+
+    const auto wasEvaluated{markerIt->isEvaluatedAgainstRap};
+    markerIt->isEvaluatedAgainstRap = planner.rapFrames().contains(markerFrame);
+    result.markerEvaluated = markerIt->isEvaluatedAgainstRap;
+    planner.markers().replaceAll(move(markers));
+
+    const auto markerCountBefore{planner.markers().size()};
+    if(!result.markerEvaluated){
+        if(const auto previous{planner.rapFrames().previousRapAtOrBefore(markerFrame)}; previous && *previous < markerFrame){
+            (void)planner.addMarker(*previous);
+        }
+        if(const auto next{planner.rapFrames().nextRapAtOrAfter(markerFrame)}; next && *next > markerFrame){
+            (void)planner.addMarker(*next);
+        }
+    }
+    result.addedRapMarkerCount = static_cast<uint32_t>(planner.markers().size() - markerCountBefore);
+    if(result.addedRapMarkerCount != 0){
+        auto normalizedMarkers{vector<EditMarker>{planner.markers().markers().begin(), planner.markers().markers().end()}};
+        for(auto& marker: normalizedMarkers){
+            if(marker.frameIndex != markerFrame && planner.rapFrames().contains(marker.frameIndex)){
+                marker.isEvaluatedAgainstRap = true;
+                marker.wasMovedForRapSafety = true;
+            }
+        }
+        planner.markers().replaceAll(move(normalizedMarkers));
+    }
+    result.changed = wasEvaluated != result.markerEvaluated || result.addedRapMarkerCount != 0;
+    if(result.changed){ project.markDirty(); }
+    return result;
+}
+
 EvaluatePlacedMarkerResult evaluatePlacedMarkerAgainstRap(Project& project, const vector<int64_t>& rapTimes100ns, int64_t markerTime100ns){
     EvaluatePlacedMarkerResult result{};
+    if(project.hasCanonicalFrameModel()){
+        vector<FrameIndex> rapFrames;
+        rapFrames.reserve(rapTimes100ns.size());
+        for(const auto rapTime100ns: rapTimes100ns){
+            rapFrames.push_back(project.frameIndexForTime100ns(rapTime100ns));
+        }
+        return evaluatePlacedMarkerFrameAgainstRap(project, rapFrames, project.frameIndexForTime100ns(markerTime100ns));
+    }
     auto markers{project.frameIndex()};
     if(markers.empty()){
         return result;

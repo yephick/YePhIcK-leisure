@@ -1,6 +1,7 @@
 export module llvc.Timeline;
 
 import std;
+import llvc.CutPlanner;
 import llvc.Project;
 
 export namespace llvc{
@@ -53,9 +54,331 @@ struct TimelineCutOverlay final{
     double width{};
 };
 
+struct FrameRate final{
+    uint32_t num{};
+    uint32_t den{1};
+    constexpr explicit operator double() const noexcept{ return den != 0 ? static_cast<double>(num) / den : 0.0; }
+};
+
+struct Rational final{
+    uint32_t width{1};
+    uint32_t height{1};
+};
+
+using ZoomLevel = uint32_t;
+using ThumbnailId = uint32_t;
+
+struct TimelineViewportRequest final{
+    ZoomLevel zoom{};
+    FrameIndex firstVisibleFrame{};
+    FrameIndex endVisibleFrameExclusive{};
+    double viewportWidthPixels{};
+    double viewportHeightPixels{};
+};
+
+struct TimelineMarkerRenderItem final{
+    FrameIndex frameIndex{};
+    double x{};
+    bool isEvaluatedAgainstRap{};
+    bool wasMovedForRapSafety{};
+};
+
+struct TimelineCutSceneRenderItem final{
+    FrameIndex firstFrame{};
+    FrameIndex endFrameExclusive{};
+    double left{};
+    double width{};
+    uint32_t sceneIndex{};
+};
+
+struct TimelineThumbnailRenderItem final{
+    FrameIndex frameIndex{};
+    double x{};
+    uint32_t width{};
+    uint32_t height{};
+    vector<uint8_t> bgraPixels{};
+};
+
+struct TimelineWaveformRenderItem final{
+    FrameIndex firstFrame{};
+    FrameIndex endFrameExclusive{};
+    float peak{};
+};
+
+struct TimelineRenderModel final{
+    double totalCanvasWidth{};
+    vector<TimelineMarkerRenderItem> markers{};
+    vector<TimelineCutSceneRenderItem> cutScenes{};
+    vector<TimelineThumbnailRenderItem> thumbnails{};
+    vector<TimelineWaveformRenderItem> waveform{};
+};
+
+enum class ThumbnailBuildState : uint8_t{
+    NotRequested,
+    Queued,
+    Ready,
+    Failed,
+};
+
+struct ThumbnailFrame final{
+    ThumbnailId id{};
+    FrameIndex frameIndex{};
+    uint32_t width{};
+    uint32_t height{};
+    vector<uint8_t> bgraPixels{};
+};
+
+struct ThumbnailFrameView final{
+    ThumbnailId id{};
+    FrameIndex frameIndex{};
+    uint32_t width{};
+    uint32_t height{};
+    span<const uint8_t> bgraPixels{};
+};
+
+struct ThumbnailSlot final{
+    FrameIndex frameIndex{};
+    optional<ThumbnailId> thumbnailId{};
+    ThumbnailBuildState state{ThumbnailBuildState::NotRequested};
+};
+
+struct ThumbnailZoomTrack final{
+    ZoomLevel zoom{};
+    FrameIndex framesBetweenThumbnails{1};
+    vector<ThumbnailSlot> slots{};
+};
+
+struct IThumbnailSourceReader{
+    virtual ~IThumbnailSourceReader() = default;
+};
+
+struct ThumbnailPreviewSetup final{
+    IThumbnailSourceReader* sourceReader{};
+    FrameIndex sourceFrameCount{};
+    FrameRate sourceFrameRate{};
+    vector<ZoomLevel> zoomLevels{};
+    uint32_t thumbnailHeight{};
+    Rational sourceAspectRatio{};
+};
+
+class ThumbnailPreviewStore final{
+public:
+    void setup(const ThumbnailPreviewSetup& setup);
+    void reset();
+
+    uint32_t thumbnailWidth() const{ return m_thumbnailWidth; }
+    uint32_t thumbnailHeight() const{ return m_thumbnailHeight; }
+    FrameIndex sourceFrameCount() const{ return m_sourceFrameCount; }
+    FrameRate sourceFrameRate() const{ return m_sourceFrameRate; }
+    size_t zoomTrackCount() const{ return m_zoomTracks.size(); }
+    size_t slotCount(ZoomLevel zoom) const;
+    FrameIndex framesBetweenThumbnails(ZoomLevel zoom) const;
+
+    void requestBuild(ZoomLevel zoom, FrameIndex firstFrame, FrameIndex endFrameExclusive);
+    optional<ThumbnailFrameView> tryGet(ZoomLevel zoom, FrameIndex frameIndex) const;
+    void putReadyFrame(FrameIndex frameIndex, uint32_t width, uint32_t height, vector<uint8_t> bgraPixels);
+    span<const ThumbnailFrame> readyFrames() const{ return m_masterFrames; }
+
+private:
+    ThumbnailZoomTrack* findTrack(ZoomLevel zoom);
+    const ThumbnailZoomTrack* findTrack(ZoomLevel zoom) const;
+    optional<size_t> slotOrdinalForFrame(const ThumbnailZoomTrack& track, FrameIndex frameIndex) const;
+
+private:
+    IThumbnailSourceReader* m_sourceReader{};
+    FrameIndex m_sourceFrameCount{};
+    FrameRate m_sourceFrameRate{};
+    uint32_t m_thumbnailWidth{};
+    uint32_t m_thumbnailHeight{};
+    vector<ThumbnailFrame> m_masterFrames{};
+    unordered_map<FrameIndex, ThumbnailId> m_thumbnailByFrame{};
+    vector<ThumbnailZoomTrack> m_zoomTracks{};
+};
+
+struct AudioWaveformSample final{
+    FrameIndex firstFrame{};
+    FrameIndex endFrameExclusive{};
+    float peak{};
+    bool ready{};
+};
+
+struct AudioWaveformSetup final{
+    FrameIndex sourceFrameCount{};
+    FrameRate sourceFrameRate{};
+    vector<ZoomLevel> zoomLevels{};
+};
+
+struct AudioWaveformAnalysisView final{
+    wstring sourcePath{};
+    vector<float> peaks{};
+    vector<bool> chunksBuilt{};
+    bool ready{};
+    bool failed{};
+    bool inProgress{};
+};
+
+class AudioWaveformStore final{
+public:
+    void setup(const AudioWaveformSetup& setup){
+        reset();
+        m_sourceFrameCount = setup.sourceFrameCount;
+        m_sourceFrameRate = setup.sourceFrameRate;
+        m_zoomLevels = setup.zoomLevels;
+        sort(m_zoomLevels.begin(), m_zoomLevels.end());
+        m_zoomLevels.erase(unique(m_zoomLevels.begin(), m_zoomLevels.end()), m_zoomLevels.end());
+    }
+
+    void reset(){
+        lock_guard lock{m_analysisMutex};
+        m_sourceFrameCount = 0;
+        m_sourceFrameRate = {};
+        m_zoomLevels.clear();
+        m_samples.clear();
+        m_analysisQueued = false;
+        m_sourcePath.clear();
+        m_peaks.clear();
+        m_chunksBuilt.clear();
+        m_ready = false;
+        m_failed = false;
+        m_inProgress = false;
+    }
+
+    FrameIndex sourceFrameCount() const{ return m_sourceFrameCount; }
+    FrameRate sourceFrameRate() const{ return m_sourceFrameRate; }
+    size_t zoomLevelCount() const{ return m_zoomLevels.size(); }
+    void replaceSamples(vector<AudioWaveformSample> samples){ m_samples = move(samples); }
+    span<const AudioWaveformSample> samples() const{ return m_samples; }
+    bool analysisQueued() const{ return m_analysisQueued; }
+    void analysisQueued(bool value){ m_analysisQueued = value; }
+
+    void setupAnalysis(wstring sourcePath, size_t bucketCount, size_t chunkCount){
+        lock_guard lock{m_analysisMutex};
+        if(m_sourcePath == sourcePath && m_peaks.size() == bucketCount && m_chunksBuilt.size() == chunkCount){
+            return;
+        }
+        m_sourcePath = move(sourcePath);
+        m_peaks.assign(bucketCount, 0.0f);
+        m_chunksBuilt.assign(chunkCount, false);
+        m_ready = false;
+        m_failed = false;
+        m_inProgress = false;
+    }
+    AudioWaveformAnalysisView analysisView() const{
+        lock_guard lock{m_analysisMutex};
+        return {.sourcePath = m_sourcePath, .peaks = m_peaks, .chunksBuilt = m_chunksBuilt, .ready = m_ready, .failed = m_failed, .inProgress = m_inProgress};
+    }
+    bool beginAnalysis(){
+        lock_guard lock{m_analysisMutex};
+        if(m_sourcePath.empty() || m_ready || m_failed || m_inProgress){ return false; }
+        m_inProgress = true;
+        return true;
+    }
+    void completeAnalysisChunk(size_t chunkIndex, span<const float> peaks){
+        lock_guard lock{m_analysisMutex};
+        if(chunkIndex >= m_chunksBuilt.size() || m_peaks.empty()){ return; }
+        const auto first{(chunkIndex * m_peaks.size()) / m_chunksBuilt.size()};
+        const auto count{min(peaks.size(), m_peaks.size() - first)};
+        copy_n(peaks.begin(), count, m_peaks.begin() + first);
+        m_chunksBuilt[chunkIndex] = true;
+        m_ready = all_of(m_chunksBuilt.begin(), m_chunksBuilt.end(), [](bool ready){ return ready; });
+    }
+    void failAnalysis(){ lock_guard lock{m_analysisMutex}; m_failed = true; m_inProgress = false; }
+    void endAnalysis(){ lock_guard lock{m_analysisMutex}; m_inProgress = false; m_ready = m_ready || (!m_chunksBuilt.empty() && all_of(m_chunksBuilt.begin(), m_chunksBuilt.end(), [](bool ready){ return ready; })); }
+
+private:
+    FrameIndex m_sourceFrameCount{};
+    FrameRate m_sourceFrameRate{};
+    vector<ZoomLevel> m_zoomLevels{};
+    vector<AudioWaveformSample> m_samples{};
+    bool m_analysisQueued{};
+    mutable mutex m_analysisMutex{};
+    wstring m_sourcePath{};
+    vector<float> m_peaks{};
+    vector<bool> m_chunksBuilt{};
+    bool m_ready{};
+    bool m_failed{};
+    bool m_inProgress{};
+};
+
+struct TimelineThumbnailRenderState final{
+    wstring sourcePath{};
+    vector<bool> built{};
+    double totalWidth{};
+    double thumbnailWidth{};
+    int thumbnailCount{};
+
+    void reset(){ *this = {}; }
+};
+
+struct TimelineRenderSchedulingState final{
+    uint64_t renderVersion{};
+    uint64_t viewportRequestVersion{};
+    bool renderCompleted{};
+
+    void reset(){ *this = {}; }
+};
+
 struct Timeline final{
     static constexpr int64_t HnsPerSecond{10'000'000LL};
 
+    class ActivityLease final{
+    public:
+        ActivityLease() = default;
+        ActivityLease(Timeline* owner, uint64_t generation): m_owner{owner}, m_generation{generation}{}
+        ActivityLease(const ActivityLease&) = delete;
+        ActivityLease& operator=(const ActivityLease&) = delete;
+        ActivityLease(ActivityLease&& other) noexcept: m_owner{exchange(other.m_owner, nullptr)}, m_generation{other.m_generation}{}
+        ActivityLease& operator=(ActivityLease&& other) noexcept{
+            if(this != &other){ release(); m_owner = exchange(other.m_owner, nullptr); m_generation = other.m_generation; }
+            return *this;
+        }
+        ~ActivityLease(){ release(); }
+        bool canceled() const;
+        void release();
+    private:
+        Timeline* m_owner{};
+        uint64_t m_generation{};
+    };
+
+    void reset();
+    void cancelOutstandingWork();
+    void waitForIdle();
+    ActivityLease beginActivity();
+    bool activityCanceled() const{ return m_activityCanceled.load(memory_order_acquire); }
+    ThumbnailPreviewStore& thumbnails(){ return m_thumbnails; }
+    const ThumbnailPreviewStore& thumbnails() const{ return m_thumbnails; }
+    AudioWaveformStore& waveforms(){ return m_waveforms; }
+    const AudioWaveformStore& waveforms() const{ return m_waveforms; }
+    TimelineThumbnailRenderState& thumbnailRenderState(){ return m_thumbnailRenderState; }
+    const TimelineThumbnailRenderState& thumbnailRenderState() const{ return m_thumbnailRenderState; }
+    TimelineRenderSchedulingState& renderScheduling(){ return m_renderScheduling; }
+    const TimelineRenderSchedulingState& renderScheduling() const{ return m_renderScheduling; }
+    uint64_t invalidateRender(){ m_renderScheduling.renderCompleted = false; return ++m_renderScheduling.renderVersion; }
+    uint64_t beginRender(bool completesTimelineRender){
+        if(completesTimelineRender){ m_renderScheduling.renderCompleted = false; }
+        return ++m_renderScheduling.renderVersion;
+    }
+    bool isCurrentRender(uint64_t version) const{ return version == m_renderScheduling.renderVersion; }
+    void completeRender(uint64_t version){ if(isCurrentRender(version)){ m_renderScheduling.renderCompleted = true; } }
+    uint64_t requestViewportRender(){ return ++m_renderScheduling.viewportRequestVersion; }
+    bool isCurrentViewportRequest(uint64_t version) const{ return version == m_renderScheduling.viewportRequestVersion; }
+    bool renderCompleted() const{ return m_renderScheduling.renderCompleted; }
+
+    FrameIndex pointToFrame(double x, double width, FrameIndex frameCount) const;
+    double frameToPoint(FrameIndex frameIndex, double width, FrameIndex frameCount) const;
+    TimelineRenderModel buildRenderModel(const CutPlanner& planner, FrameIndex sourceFrameCount, const TimelineViewportRequest& request) const;
+
+private:
+    void endActivity();
+
+private:
+    atomic_bool m_activityCanceled{};
+    atomic_uint64_t m_activityGeneration{1};
+    atomic_uint32_t m_activeActivities{};
+    mutable mutex m_activityMutex{};
+    mutable condition_variable m_activityIdle{};
+
+public:
     std::optional<int64_t> pointToTime100ns(double pointerX, double width, int64_t duration100ns) const;
     double timeToCanvasX(int64_t time100ns, int64_t duration100ns, double width) const;
     double dragTargetOffset(double dragStartOffset, double pointerDeltaX, double canvasWidth, double viewportWidth) const;
@@ -72,11 +395,269 @@ struct Timeline final{
     TimelineThumbnailIndexRange expandThumbnailRange(TimelineThumbnailIndexRange range, int padding, int thumbnailCount) const;
     int chooseNextThumbnailIndex(const vector<bool>& thumbnailBuilt, TimelineThumbnailIndexRange visibleRange, bool allowOffscreenExpansion) const;
     TimelineRenderPostActions buildRenderPostActions(const wstring& videoName, bool hasRequestedCuts, bool cachedRapLookupAttempted, bool isRapLookupInProgress) const;
+
+private:
+    ThumbnailPreviewStore m_thumbnails{};
+    AudioWaveformStore m_waveforms{};
+    TimelineThumbnailRenderState m_thumbnailRenderState{};
+    TimelineRenderSchedulingState m_renderScheduling{};
 };
 
 }
 
 namespace llvc{
+
+void ThumbnailPreviewStore::setup(const ThumbnailPreviewSetup& setup){
+    reset();
+    m_sourceReader = setup.sourceReader;
+    m_sourceFrameCount = setup.sourceFrameCount;
+    m_sourceFrameRate = setup.sourceFrameRate;
+    m_thumbnailHeight = setup.thumbnailHeight;
+
+    if(setup.thumbnailHeight > 0 && setup.sourceAspectRatio.height > 0){
+        const auto derivedWidth{
+            (static_cast<uint64_t>(setup.thumbnailHeight) * max(1u, setup.sourceAspectRatio.width))
+            / setup.sourceAspectRatio.height};
+        m_thumbnailWidth = static_cast<uint32_t>(max<uint64_t>(1, derivedWidth));
+    }
+
+    auto zoomLevels{setup.zoomLevels};
+    sort(zoomLevels.begin(), zoomLevels.end());
+    zoomLevels.erase(unique(zoomLevels.begin(), zoomLevels.end()), zoomLevels.end());
+
+    m_zoomTracks.reserve(zoomLevels.size());
+    for(const auto zoom: zoomLevels){
+        const auto safeZoom{max<ZoomLevel>(1, zoom)};
+        const auto spacing{max<FrameIndex>(1, safeZoom)};
+        ThumbnailZoomTrack track{.zoom = zoom, .framesBetweenThumbnails = spacing};
+        if(m_sourceFrameCount > 0){
+            const auto slotCount{static_cast<size_t>((m_sourceFrameCount + spacing - 1) / spacing)};
+            track.slots.reserve(slotCount);
+            for(size_t i{}; i < slotCount; ++i){
+                track.slots.push_back(ThumbnailSlot{.frameIndex = static_cast<FrameIndex>(i) * spacing});
+            }
+        }
+        m_zoomTracks.push_back(move(track));
+    }
+}
+
+void ThumbnailPreviewStore::reset(){
+    m_sourceReader = nullptr;
+    m_sourceFrameCount = 0;
+    m_sourceFrameRate = {};
+    m_thumbnailWidth = 0;
+    m_thumbnailHeight = 0;
+    m_masterFrames.clear();
+    m_thumbnailByFrame.clear();
+    m_zoomTracks.clear();
+}
+
+size_t ThumbnailPreviewStore::slotCount(ZoomLevel zoom) const{
+    const auto track{findTrack(zoom)};
+    return track ? track->slots.size() : 0;
+}
+
+FrameIndex ThumbnailPreviewStore::framesBetweenThumbnails(ZoomLevel zoom) const{
+    const auto track{findTrack(zoom)};
+    return track ? track->framesBetweenThumbnails : 0;
+}
+
+void ThumbnailPreviewStore::requestBuild(ZoomLevel zoom, FrameIndex firstFrame, FrameIndex endFrameExclusive){
+    auto track{findTrack(zoom)};
+    if(!track || endFrameExclusive <= firstFrame){
+        return;
+    }
+
+    for(auto& slot: track->slots){
+        if(slot.frameIndex < firstFrame || slot.frameIndex >= endFrameExclusive || slot.thumbnailId){
+            continue;
+        }
+        slot.state = ThumbnailBuildState::Queued;
+        if(const auto existing{m_thumbnailByFrame.find(slot.frameIndex)}; existing != m_thumbnailByFrame.end()){
+            slot.thumbnailId = existing->second;
+            slot.state = ThumbnailBuildState::Ready;
+        }
+    }
+}
+
+optional<ThumbnailFrameView> ThumbnailPreviewStore::tryGet(ZoomLevel zoom, FrameIndex frameIndex) const{
+    const auto track{findTrack(zoom)};
+    if(!track){
+        return nullopt;
+    }
+
+    const auto ordinal{slotOrdinalForFrame(*track, frameIndex)};
+    if(!ordinal || *ordinal >= track->slots.size()){
+        return nullopt;
+    }
+
+    const auto& slot{track->slots[*ordinal]};
+    if(!slot.thumbnailId){
+        return nullopt;
+    }
+
+    const auto frameIt{find_if(m_masterFrames.begin(), m_masterFrames.end(), [id = *slot.thumbnailId](const auto& frame){
+        return frame.id == id;
+    })};
+    if(frameIt == m_masterFrames.end()){
+        return nullopt;
+    }
+
+    return ThumbnailFrameView{
+        .id = frameIt->id,
+        .frameIndex = frameIt->frameIndex,
+        .width = frameIt->width,
+        .height = frameIt->height,
+        .bgraPixels = frameIt->bgraPixels,
+    };
+}
+
+void ThumbnailPreviewStore::putReadyFrame(FrameIndex frameIndex, uint32_t width, uint32_t height, vector<uint8_t> bgraPixels){
+    ThumbnailId id{};
+    if(const auto existing{m_thumbnailByFrame.find(frameIndex)}; existing != m_thumbnailByFrame.end()){
+        id = existing->second;
+        if(const auto frameIt{find_if(m_masterFrames.begin(), m_masterFrames.end(), [id](const auto& frame){ return frame.id == id; })}; frameIt != m_masterFrames.end()){
+            frameIt->width = width;
+            frameIt->height = height;
+            frameIt->bgraPixels = move(bgraPixels);
+        }
+    }else{
+        id = static_cast<ThumbnailId>(m_masterFrames.size() + 1);
+        m_thumbnailByFrame.emplace(frameIndex, id);
+        m_masterFrames.push_back(ThumbnailFrame{.id = id, .frameIndex = frameIndex, .width = width, .height = height, .bgraPixels = move(bgraPixels)});
+    }
+
+    for(auto& track: m_zoomTracks){
+        const auto ordinal{slotOrdinalForFrame(track, frameIndex)};
+        if(ordinal && *ordinal < track.slots.size() && track.slots[*ordinal].frameIndex == frameIndex){
+            track.slots[*ordinal].thumbnailId = id;
+            track.slots[*ordinal].state = ThumbnailBuildState::Ready;
+        }
+    }
+}
+
+ThumbnailZoomTrack* ThumbnailPreviewStore::findTrack(ZoomLevel zoom){
+    const auto it{find_if(m_zoomTracks.begin(), m_zoomTracks.end(), [zoom](const auto& track){ return track.zoom == zoom; })};
+    return it == m_zoomTracks.end() ? nullptr : &*it;
+}
+
+const ThumbnailZoomTrack* ThumbnailPreviewStore::findTrack(ZoomLevel zoom) const{
+    const auto it{find_if(m_zoomTracks.begin(), m_zoomTracks.end(), [zoom](const auto& track){ return track.zoom == zoom; })};
+    return it == m_zoomTracks.end() ? nullptr : &*it;
+}
+
+optional<size_t> ThumbnailPreviewStore::slotOrdinalForFrame(const ThumbnailZoomTrack& track, FrameIndex frameIndex) const{
+    if(track.framesBetweenThumbnails == 0){
+        return nullopt;
+    }
+    return static_cast<size_t>(frameIndex / track.framesBetweenThumbnails);
+}
+
+void Timeline::reset(){
+    cancelOutstandingWork();
+    waitForIdle();
+    m_thumbnails.reset();
+    m_waveforms.reset();
+    m_thumbnailRenderState.reset();
+    m_renderScheduling.reset();
+}
+
+void Timeline::cancelOutstandingWork(){
+    m_activityGeneration.fetch_add(1, memory_order_acq_rel);
+    m_activityCanceled.store(true, memory_order_release);
+}
+
+void Timeline::waitForIdle(){
+    unique_lock lock{m_activityMutex};
+    m_activityIdle.wait(lock, [this]{ return m_activeActivities.load(memory_order_acquire) == 0; });
+}
+
+Timeline::ActivityLease Timeline::beginActivity(){
+    m_activityCanceled.store(false, memory_order_release);
+    m_activeActivities.fetch_add(1, memory_order_acq_rel);
+    return ActivityLease{this, m_activityGeneration.load(memory_order_acquire)};
+}
+
+bool Timeline::ActivityLease::canceled() const{
+    return !m_owner
+        || m_owner->activityCanceled()
+        || m_owner->m_activityGeneration.load(memory_order_acquire) != m_generation;
+}
+
+void Timeline::ActivityLease::release(){
+    if(m_owner){
+        m_owner->endActivity();
+        m_owner = nullptr;
+    }
+}
+
+void Timeline::endActivity(){
+    if(m_activeActivities.fetch_sub(1, memory_order_acq_rel) == 1){
+        lock_guard lock{m_activityMutex};
+        m_activityIdle.notify_all();
+    }
+}
+
+FrameIndex Timeline::pointToFrame(double x, double width, FrameIndex frameCount) const{
+    if(width <= 0.0 || frameCount == 0 || !isfinite(x) || !isfinite(width)){
+        return 0;
+    }
+
+    const auto clampedX{clamp(x, 0.0, width)};
+    const auto frame{static_cast<FrameIndex>((clampedX / width) * static_cast<double>(frameCount))};
+    return min(frame, frameCount - 1);
+}
+
+double Timeline::frameToPoint(FrameIndex frameIndex, double width, FrameIndex frameCount) const{
+    if(width <= 0.0 || frameCount == 0 || !isfinite(width)){
+        return 0.0;
+    }
+
+    const auto ratio{static_cast<double>(min(frameIndex, frameCount)) / static_cast<double>(frameCount)};
+    return clamp(ratio * width, 0.0, width);
+}
+
+TimelineRenderModel Timeline::buildRenderModel(const CutPlanner& planner, FrameIndex sourceFrameCount, const TimelineViewportRequest& request) const{
+    TimelineRenderModel model{};
+    if(sourceFrameCount == 0 || request.viewportWidthPixels <= 0.0){
+        return model;
+    }
+    const auto visibleFrameCount{request.endVisibleFrameExclusive > request.firstVisibleFrame ? request.endVisibleFrameExclusive - request.firstVisibleFrame : sourceFrameCount};
+    model.totalCanvasWidth = request.viewportWidthPixels * (static_cast<double>(sourceFrameCount) / static_cast<double>(max<FrameIndex>(1, visibleFrameCount)));
+    for(const auto& marker: planner.markers().markers()){
+        model.markers.push_back({.frameIndex = marker.frameIndex, .x = frameToPoint(marker.frameIndex, model.totalCanvasWidth, sourceFrameCount), .isEvaluatedAgainstRap = marker.isEvaluatedAgainstRap, .wasMovedForRapSafety = marker.wasMovedForRapSafety});
+    }
+    auto cutRanges{planner.buildCutSceneRanges(sourceFrameCount)};
+    vector<SceneFrameRange> mergedCutRanges;
+    for(const auto& range: cutRanges){
+        if(!mergedCutRanges.empty() && mergedCutRanges.back().endFrameExclusive == range.firstFrame){
+            mergedCutRanges.back().endFrameExclusive = range.endFrameExclusive;
+        }else{
+            mergedCutRanges.push_back(range);
+        }
+    }
+    for(const auto& range: mergedCutRanges){
+        const auto left{frameToPoint(range.firstFrame, model.totalCanvasWidth, sourceFrameCount)};
+        const auto right{frameToPoint(range.endFrameExclusive, model.totalCanvasWidth, sourceFrameCount)};
+        model.cutScenes.push_back({.firstFrame = range.firstFrame, .endFrameExclusive = range.endFrameExclusive, .left = left, .width = max(0.0, right - left), .sceneIndex = range.sceneIndex});
+    }
+    for(const auto& thumbnail: m_thumbnails.readyFrames()){
+        if(thumbnail.frameIndex < request.firstVisibleFrame || thumbnail.frameIndex >= request.endVisibleFrameExclusive){
+            continue;
+        }
+        model.thumbnails.push_back({
+            .frameIndex = thumbnail.frameIndex,
+            .x = frameToPoint(thumbnail.frameIndex, model.totalCanvasWidth, sourceFrameCount),
+            .width = thumbnail.width,
+            .height = thumbnail.height,
+            .bgraPixels = thumbnail.bgraPixels,
+        });
+    }
+    for(const auto& sample: m_waveforms.samples()){
+        model.waveform.push_back({.firstFrame = sample.firstFrame, .endFrameExclusive = sample.endFrameExclusive, .peak = sample.peak});
+    }
+    return model;
+}
 
 vector<pair<uint32_t, uint32_t>> normalizeAndMergeIndexIntervals(vector<pair<uint32_t, uint32_t>> intervals, size_t keyframeCount){
     constexpr auto timelineEdgeSentinel{numeric_limits<uint32_t>::max()};

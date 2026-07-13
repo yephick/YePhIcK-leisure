@@ -82,6 +82,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="llvc-tests.cpp" />
+    <ClCompile Include="..\llvc\CutPlanner.ixx" />
     <ClCompile Include="..\llvc\AudioWaveform.ixx" />
     <ClCompile Include="..\llvc\Utils.ixx" />
     <ClCompile Include="..\llvc\Project.ixx" />
@@ -93,6 +94,7 @@
     <ClCompile Include="..\llvc\Export.ixx" />
     <ClCompile Include="..\llvc\Media.ixx" />
     <ClCompile Include="..\llvc\ExportCoordinator.ixx" />
+    <ClCompile Include="..\llvc\Session.ixx" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

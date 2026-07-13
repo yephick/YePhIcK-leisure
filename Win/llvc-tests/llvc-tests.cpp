@@ -15,6 +15,7 @@
 import std;
 import llvc.AudioWaveform;
 import llvc.Utils;
+import llvc.CutPlanner;
 import llvc.Project;
 import llvc.Timeline;
 import llvc.EditorController;
@@ -24,6 +25,7 @@ import llvc.VideoStream;
 import llvc.VideoContainer;
 import llvc.Media;
 import llvc.ExportCoordinator;
+import llvc.Session;
 
 using namespace std;
 namespace{
@@ -196,6 +198,22 @@ struct FakeExportMediaSource final: llvc::VideoSource{
             request.onVideoProgress(100.0);
         }
     }
+};
+
+struct FakeRapMediaSource final: llvc::VideoSource{
+    using llvc::VideoSource::VideoSource;
+
+    InspectionResult inspect() const override{ return {}; }
+
+    vector<int64_t> collectRapTimes100ns(const vector<int64_t>&, const function<void(double)>& progress, const function<bool()>& canceled) const override{
+        if(canceled && canceled()){
+            return {};
+        }
+        if(progress){ progress(100.0); }
+        return {300, 100, 300};
+    }
+
+    void exportLossless(const ExportRequest&) const override{}
 };
 
 void testUtilsParsing(){
@@ -454,6 +472,116 @@ void testTimelinePlanningEdgeCases(){
     expect(!quietPostActions.shouldQueueRapLookup, "buildRenderPostActions should stay quiet after RAP lookup was already attempted");
 }
 
+void testTimelineOwnsNeutralPreviewStores(){
+    llvc::Timeline timeline{};
+    timeline.thumbnails().setup(llvc::ThumbnailPreviewSetup{
+        .sourceFrameCount = 100,
+        .sourceFrameRate = llvc::FrameRate{.num = 30, .den = 1},
+        .zoomLevels = {10, 5, 10},
+        .thumbnailHeight = 90,
+        .sourceAspectRatio = llvc::Rational{.width = 16, .height = 9},
+    });
+
+    expectEqual(timeline.thumbnails().thumbnailWidth(), uint32_t{160}, "ThumbnailPreviewStore should derive thumbnail width from source aspect ratio");
+    expectEqual(timeline.thumbnails().thumbnailHeight(), uint32_t{90}, "ThumbnailPreviewStore should keep configured thumbnail height");
+    expectEqual(timeline.thumbnails().zoomTrackCount(), size_t{2}, "ThumbnailPreviewStore should normalize duplicate zoom levels");
+    expectEqual(timeline.thumbnails().framesBetweenThumbnails(5), llvc::FrameIndex{5}, "ThumbnailPreviewStore should expose per-zoom frame spacing");
+    expectEqual(timeline.thumbnails().slotCount(10), size_t{10}, "ThumbnailPreviewStore should create slots from source frame count and spacing");
+
+    timeline.thumbnails().requestBuild(10, 20, 50);
+    expect(!timeline.thumbnails().tryGet(10, 20), "ThumbnailPreviewStore should not return queued thumbnails before pixels are ready");
+
+    timeline.thumbnails().putReadyFrame(20, 160, 90, vector<uint8_t>{1, 2, 3, 4});
+    const auto ready{timeline.thumbnails().tryGet(10, 20)};
+    expect(ready.has_value(), "ThumbnailPreviewStore should return ready neutral thumbnail pixels");
+    expectEqual(ready->frameIndex, llvc::FrameIndex{20}, "ThumbnailPreviewStore should retrieve by source frame index");
+    expectEqual(ready->bgraPixels.size(), size_t{4}, "ThumbnailPreviewStore should expose neutral BGRA pixel data");
+
+    timeline.waveforms().setup(llvc::AudioWaveformSetup{
+        .sourceFrameCount = 100,
+        .sourceFrameRate = llvc::FrameRate{.num = 30, .den = 1},
+        .zoomLevels = {1, 2, 2},
+    });
+    timeline.waveforms().replaceSamples({llvc::AudioWaveformSample{.firstFrame = 0, .endFrameExclusive = 10, .peak = 0.5f, .ready = true}});
+    timeline.waveforms().analysisQueued(true);
+    expectEqual(timeline.waveforms().zoomLevelCount(), size_t{2}, "AudioWaveformStore should normalize duplicate zoom levels");
+    expectEqual(timeline.waveforms().samples().size(), size_t{1}, "AudioWaveformStore should own neutral waveform samples");
+    timeline.waveforms().setupAnalysis(L"sample.mp4", 8, 2);
+    expect(timeline.waveforms().beginAnalysis(), "AudioWaveformStore should own waveform activity state");
+    timeline.waveforms().completeAnalysisChunk(0, vector<float>{0.1f, 0.2f, 0.3f, 0.4f});
+    timeline.waveforms().completeAnalysisChunk(1, vector<float>{0.5f, 0.6f, 0.7f, 0.8f});
+    timeline.waveforms().endAnalysis();
+    const auto waveformView{timeline.waveforms().analysisView()};
+    expect(waveformView.ready && !waveformView.inProgress, "AudioWaveformStore should retain completed neutral analysis data");
+    expectEqual(waveformView.peaks.size(), size_t{8}, "AudioWaveformStore should retain bucket peaks");
+
+    timeline.thumbnailRenderState().sourcePath = L"sample.mp4";
+    timeline.thumbnailRenderState().built = {true, false};
+    timeline.renderScheduling().renderVersion = 4;
+    timeline.renderScheduling().renderCompleted = true;
+
+    timeline.reset();
+    expectEqual(timeline.thumbnails().sourceFrameCount(), llvc::FrameIndex{0}, "Timeline reset should clear thumbnail store setup");
+    expectEqual(timeline.waveforms().sourceFrameCount(), llvc::FrameIndex{0}, "Timeline reset should clear waveform store setup");
+    expectEqual(timeline.waveforms().samples().size(), size_t{0}, "Timeline reset should clear waveform samples");
+    expect(!timeline.waveforms().analysisQueued(), "Timeline reset should clear waveform scheduling state");
+    expect(timeline.thumbnailRenderState().sourcePath.empty() && timeline.thumbnailRenderState().built.empty(), "Timeline reset should clear thumbnail render scheduling state");
+    expectEqual(timeline.renderScheduling().renderVersion, uint64_t{0}, "Timeline reset should clear render version state");
+    expect(!timeline.renderScheduling().renderCompleted, "Timeline reset should clear render completion state");
+}
+
+void testTimelineFrameConversion(){
+    llvc::Timeline timeline{};
+    expectEqual(timeline.pointToFrame(0.0, 200.0, 100), llvc::FrameIndex{0}, "pointToFrame should map the left edge to frame zero");
+    expectEqual(timeline.pointToFrame(100.0, 200.0, 100), llvc::FrameIndex{50}, "pointToFrame should map proportional canvas positions to frame indexes");
+    expectEqual(timeline.pointToFrame(250.0, 200.0, 100), llvc::FrameIndex{99}, "pointToFrame should clamp beyond the right edge to the last frame");
+    expectEqual(timeline.frameToPoint(50, 200.0, 100), 100.0, "frameToPoint should map frame indexes proportionally");
+    expectEqual(timeline.frameToPoint(150, 200.0, 100), 200.0, "frameToPoint should clamp frame indexes beyond the source frame count");
+}
+
+void testSessionBuildsNeutralTimelineRenderModel(){
+    llvc::Session session{};
+    session.media().sourceFrameCount(100);
+    session.project().frameIndex({
+        marker(10'000'000, false, false, 10),
+        marker(40'000'000, true, true, 40),
+        marker(70'000'000, false, false, 70),
+    });
+    session.project().cutScenes({1});
+    session.timeline().thumbnails().setup({
+        .sourceFrameCount = 100,
+        .sourceFrameRate = {.num = 30, .den = 1},
+        .zoomLevels = {1},
+        .thumbnailHeight = 10,
+        .sourceAspectRatio = {.width = 1, .height = 1},
+    });
+    session.timeline().thumbnails().putReadyFrame(40, 10, 10, {1, 2, 3, 4});
+    session.timeline().waveforms().replaceSamples({{.firstFrame = 10, .endFrameExclusive = 20, .peak = 0.5f, .ready = true}});
+
+    const auto model{session.buildTimelineRenderModel(llvc::TimelineViewportRequest{
+        .zoom = 1,
+        .firstVisibleFrame = 0,
+        .endVisibleFrameExclusive = 50,
+        .viewportWidthPixels = 500.0,
+        .viewportHeightPixels = 120.0,
+    })};
+
+    expectEqual(model.totalCanvasWidth, 1'000.0, "Session timeline render model should scale canvas width from visible frame span");
+    expectEqual(model.markers.size(), size_t{3}, "Session timeline render model should expose planner markers");
+    expectEqual(model.markers[1].frameIndex, llvc::FrameIndex{40}, "Session timeline render model should preserve marker frame indexes");
+    expectEqual(model.markers[1].x, 400.0, "Session timeline render model should use Timeline math for marker positions");
+    expect(model.markers[1].isEvaluatedAgainstRap, "Session timeline render model should carry marker RAP evaluation state");
+    expectEqual(model.cutScenes.size(), size_t{1}, "Session timeline render model should expose planner cut scenes");
+    expectEqual(model.cutScenes[0].firstFrame, llvc::FrameIndex{10}, "Session timeline render model should expose cut scene frame starts");
+    expectEqual(model.cutScenes[0].endFrameExclusive, llvc::FrameIndex{40}, "Session timeline render model should expose exclusive cut scene frame ends");
+    expectEqual(model.cutScenes[0].left, 100.0, "Session timeline render model should position cut scene left edges with Timeline math");
+    expectEqual(model.cutScenes[0].width, 300.0, "Session timeline render model should position cut scene widths with Timeline math");
+    expectEqual(model.thumbnails.size(), size_t{1}, "Session timeline render model should expose Timeline-owned neutral thumbnails");
+    expectEqual(model.thumbnails[0].frameIndex, llvc::FrameIndex{40}, "Timeline render thumbnails should retain source frame identity");
+    expectEqual(model.thumbnails[0].bgraPixels.size(), size_t{4}, "Timeline render thumbnails should contain neutral pixel data");
+    expectEqual(model.waveform.size(), size_t{1}, "Session timeline render model should expose Timeline-owned waveform data");
+}
+
 void testProjectCutRangesAndBoundaries(){
     llvc::Project project{};
     project.timelineDuration100ns(1'000);
@@ -653,6 +781,128 @@ void testProjectEffectiveExportPreservesAlreadySafeTailCut(){
     expectEqual(plan.effectiveOutputDuration100ns, int64_t{600}, "tail cut should remove the trailing duration only once");
 }
 
+void testCutPlannerFrameModelAndSceneRemap(){
+    llvc::CutPlanner planner{};
+    expect(planner.addMarker(70), "CutPlanner should add a frame-index marker");
+    expect(planner.addMarker(30), "CutPlanner should keep markers sorted after insertion");
+    expect(!planner.addMarker(30), "CutPlanner should reject duplicate marker frame indexes");
+    expectEqual(planner.markers().size(), size_t{2}, "CutPlanner marker set should be deduplicated");
+    expectEqual(planner.markers().markers()[0].frameIndex, llvc::FrameIndex{30}, "CutPlanner should sort markers by frame index");
+    expectEqual(planner.markers().markers()[1].frameIndex, llvc::FrameIndex{70}, "CutPlanner should preserve later sorted markers");
+
+    expect(planner.setCutSceneContainingFrame(40, true, 100), "CutPlanner should cut the scene containing a frame");
+    expectEqual(planner.cutScenes().cutSceneIndexes()[0], uint32_t{1}, "CutPlanner should map frame 40 to the middle scene");
+
+    expect(planner.addMarker(50), "CutPlanner should insert a marker inside the cut scene");
+    expectEqual(vector<uint32_t>{planner.cutScenes().cutSceneIndexes().begin(), planner.cutScenes().cutSceneIndexes().end()}, vector<uint32_t>{1, 2}, "CutPlanner should split a cut scene when a marker is inserted inside it");
+
+    expect(planner.removeMarker(50), "CutPlanner should remove an existing marker");
+    expectEqual(vector<uint32_t>{planner.cutScenes().cutSceneIndexes().begin(), planner.cutScenes().cutSceneIndexes().end()}, vector<uint32_t>{1}, "CutPlanner should merge scene indexes when a marker is removed");
+
+    const auto ranges{planner.buildSceneRanges(100)};
+    expectEqual(ranges.size(), size_t{3}, "CutPlanner should build one scene per marker-delimited range");
+    expectEqual(ranges[1].firstFrame, llvc::FrameIndex{30}, "CutPlanner should use frame indexes as scene range starts");
+    expectEqual(ranges[1].endFrameExclusive, llvc::FrameIndex{70}, "CutPlanner should use exclusive frame-index scene ends");
+    expect(ranges[1].cut, "CutPlanner should flag cut scenes in the render-independent range model");
+
+    const auto directPlan{planner.buildDirectExportPlan(100)};
+    expect(directPlan.hasRequestedCuts, "CutPlanner direct export plan should report requested cuts");
+    expectEqual(directPlan.requestedCutRanges.size(), size_t{1}, "CutPlanner direct export plan should expose cut frame ranges");
+    expectEqual(directPlan.requestedCutRanges[0].firstFrame, llvc::FrameIndex{30}, "CutPlanner export ranges should start on frame indexes");
+    expectEqual(directPlan.requestedCutRanges[0].endFrameExclusive, llvc::FrameIndex{70}, "CutPlanner export ranges should end on exclusive frame indexes");
+    expectEqual(directPlan.requestedOutputFrameCount, llvc::FrameIndex{60}, "CutPlanner should calculate output frame count after cuts");
+}
+
+void testProjectSynchronizesOwnedCutPlanner(){
+    llvc::Project project{};
+    project.cutPlanner().rapFrames().replaceAll({25});
+    project.timelineDuration100ns(100'000'000);
+    project.frameIndex({
+        marker(10'000'000, false, false, 10),
+        marker(40'000'000, true, true, 40),
+    });
+    project.cutScenes({1});
+
+    const auto& planner{project.cutPlanner()};
+    expectEqual(planner.markers().size(), size_t{2}, "Project should mirror legacy markers into its owned CutPlanner");
+    expectEqual(planner.markers().markers()[0].frameIndex, llvc::FrameIndex{10}, "Project should use marker sampleIndex as the planner frame identity");
+    expectEqual(planner.markers().markers()[1].frameIndex, llvc::FrameIndex{40}, "Project should keep planner markers sorted by frame index");
+    expect(planner.rapFrames().contains(40), "Project should mirror evaluated legacy markers into planner RAP frames");
+    expect(planner.rapFrames().contains(25), "Project legacy synchronization should preserve scanned planner RAP frames");
+    expectEqual(planner.cutScenes().cutSceneIndexes()[0], uint32_t{1}, "Project should mirror legacy cut scenes into its owned CutPlanner");
+}
+
+void testProjectMapsLegacyMarkerTimesToPlannerFrames(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(100), marker(900)});
+    project.cutScenes({0, 2});
+    project.synchronizeCutPlannerFrames(1'000);
+
+    const auto ranges{project.cutPlanner().buildSceneRanges(1'000)};
+    expectEqual(ranges.size(), size_t{3}, "legacy marker times should create three planner scenes");
+    expect(ranges[0].cut && !ranges[1].cut && ranges[2].cut, "legacy edge cut scenes should preserve the middle scene");
+    expectEqual(ranges[0].endFrameExclusive, llvc::FrameIndex{100}, "first legacy marker should map to its source frame");
+    expectEqual(ranges[2].firstFrame, llvc::FrameIndex{900}, "second legacy marker should map to its source frame");
+    expectEqual(project.cutPlanner().buildCutSceneRanges(1'000).size(), size_t{2}, "planner conversion should retain both legacy cut regions");
+    expect(project.frameIndex().empty() && project.cutScenes().empty(), "legacy edit data must be discarded after one-way conversion to CutPlanner");
+}
+
+void testProjectSynchronizesPlannerMarkersForLegacyReevaluation(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.cutPlanner().addMarker(100);
+    project.cutPlanner().addMarker(300);
+    project.cutPlanner().cutScenes().replaceCutSceneIndexes({1});
+
+    project.synchronizeLegacyEditModelFromCutPlanner(1'000);
+    expectEqual(project.frameIndex().size(), size_t{2}, "planner markers should be available to legacy re-evaluation");
+    expectEqual(project.frameIndex()[1].time100ns, int64_t{300}, "planner marker frame should map to legacy marker time");
+    expectEqual(project.cutScenes(), vector<uint32_t>{1}, "planner cut scenes should be available to legacy re-evaluation");
+}
+
+void testProjectPreservesExactRapTimesAcrossLegacySynchronization(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(255, true, true, 0)});
+    project.synchronizeCutPlannerFrames(1'000);
+    project.synchronizeLegacyEditModelFromCutPlanner(1'000);
+
+    expectEqual(project.frameIndex()[0].time100ns, int64_t{255}, "legacy synchronization should retain exact evaluated RAP time values");
+}
+
+void testSessionResetClearsOwnedState(){
+    llvc::Session session{};
+    session.media().inspection().frameRate = {.num = 30, .den = 1};
+    session.media().sourceFrameCount(90);
+    expectEqual(session.media().frameIndexForTime100ns(500'0000), llvc::FrameIndex{15}, "MediaSession should convert playback time to source frame indexes");
+    session.project().timelineDuration100ns(100'000'000);
+    session.project().frameIndex({marker(10'000'000, false, false, 10)});
+    session.project().cutScenes({1});
+    session.preview().play();
+    session.preview().seekToFrame(50);
+    session.exporter().beginExport();
+    jthread exportWorker{[&]{
+        while(!session.exporter().cancelRequested()){
+            this_thread::yield();
+        }
+        session.exporter().endExport();
+    }};
+    session.editorHistory().undoStack.push_back(llvc::captureEditorSnapshot(session.project()));
+
+    session.reset();
+
+    expect(!session.project().hasVideoFile(), "Session reset should reset Project state");
+    expectEqual(session.media().sourceFrameCount(), llvc::FrameIndex{0}, "Session reset should clear media frame metadata");
+    expect(session.project().frameIndex().empty(), "Session reset should clear project markers");
+    expect(session.project().cutPlanner().markers().empty(), "Session reset should clear planner markers through Project");
+    expect(!session.preview().isPlaying(), "Session reset should stop preview playback state");
+    expectEqual(session.preview().currentFrame(), llvc::FrameIndex{0}, "Session reset should reset preview frame position");
+    expect(!session.exporter().isExportInProgress(), "Session reset should clear export operation state");
+    expect(!session.exporter().cancelRequested(), "Session reset should clear export cancellation state");
+    expect(session.editorHistory().undoStack.empty(), "Session reset should clear editor undo history");
+}
+
 void testProjectEstimateCoordinatorHelpers(){
     llvc::Project project{};
     project.timelineDuration100ns(1'000);
@@ -748,10 +998,12 @@ void testExportCoordinatorDoesNotRequireFullRapReevaluationForExport(){
     mediaInfo.audioExportSupport = llvc::CapabilityState::NotApplicable;
 
     bool ensureRapCalled{};
-    bool reevaluateCalled{};
     bool buildPlanCalled{};
+    bool exportWasActiveDuringPreflight{};
+    vector<int64_t> requestedRapTargets{};
     llvc::ExportCoordinatorResult result{};
-    llvc::runExportAsync(llvc::ExportCoordinatorRequest{
+    llvc::ExportController exporter{};
+    exporter.run(llvc::ExportCoordinatorRequest{
         .project = &project,
         .media = &media,
         .mediaInfo = &mediaInfo,
@@ -761,16 +1013,14 @@ void testExportCoordinatorDoesNotRequireFullRapReevaluationForExport(){
         .sourceDuration100ns = 1'000,
         .sourceHasAudio = false,
         .needsRapReevaluation = true,
-        .ensureRapMarkersAvailableAsync = [&ensureRapCalled](const wstring&, const function<void(double)>& progressCallback) -> winrt::Windows::Foundation::IAsyncOperation<bool>{
+        .ensureRapMarkersAvailableAsync = [&ensureRapCalled, &requestedRapTargets, &exportWasActiveDuringPreflight, &exporter](const wstring&, const vector<int64_t>& targets, const function<void(double)>& progressCallback) -> winrt::Windows::Foundation::IAsyncOperation<bool>{
             ensureRapCalled = true;
+            requestedRapTargets = targets;
+            exportWasActiveDuringPreflight = exporter.isExportInProgress();
             if(progressCallback){
                 progressCallback(100.0);
             }
             co_return true;
-        },
-        .reevaluateCutMarkers = [&reevaluateCalled](bool){
-            reevaluateCalled = true;
-            return false;
         },
         .buildEffectiveExportPlan = [&buildPlanCalled](const function<void(double)>&) -> optional<llvc::EffectiveExportPlan>{
             buildPlanCalled = true;
@@ -788,7 +1038,9 @@ void testExportCoordinatorDoesNotRequireFullRapReevaluationForExport(){
     }, result).get();
 
     expect(ensureRapCalled, "runExportAsync should request RAP data when reevaluation is needed");
-    expect(!reevaluateCalled, "runExportAsync should not require full marker reevaluation after boundary-only export RAP lookup");
+    expect(exportWasActiveDuringPreflight, "ExportController should own the export activity during RAP preflight");
+    expect(!exporter.isExportInProgress(), "ExportController should end its activity after the export completes");
+    expect(requestedRapTargets == vector<int64_t>{200, 600}, "runExportAsync should request RAP data for the export cut boundaries");
     expect(buildPlanCalled, "runExportAsync should build the non-mutating effective export plan");
     expect(result.succeeded, "runExportAsync should continue when the effective export plan is ready");
     expect(filesystem::exists(outputPath), "runExportAsync should move the temporary output into place");
@@ -1189,6 +1441,54 @@ void testEditorCommands(){
     expect(rapNudge.refreshTimelineTicks && rapNudge.refreshKeyframeTicks && rapNudge.refreshCutOverlays, "RAP nudge command should refresh all timeline layers");
 }
 
+void testEditorFrameCommandsUseCutPlanner(){
+    llvc::Project project{};
+    llvc::EditorHistoryState history{};
+
+    const auto addMarker{llvc::executeToggleMarkerFrameCommand(project, history, 30)};
+    expect(addMarker.changed && addMarker.markerCountIncreased, "frame marker command should add a planner marker");
+    expect(project.cutPlanner().markers().contains(30), "frame marker command should target Project-owned CutPlanner markers");
+    expect(addMarker.refreshTimelineTicks && addMarker.refreshCutOverlays && addMarker.refreshWindowTitle, "frame marker command should request normal timeline refreshes");
+    expect(project.isDirty(), "frame marker command should mark the project dirty");
+
+    const auto toggleCut{llvc::executeToggleCutSceneFrameCommand(project, history, 40, 100)};
+    expect(toggleCut.changed, "frame cut-scene command should toggle a planner scene");
+    expect(project.cutPlanner().cutScenes().containsSceneIndex(1), "frame cut-scene command should target Project-owned CutPlanner cut scenes");
+
+    const auto clearCut{llvc::executeSetCutSceneFrameCommand(project, history, 40, false, 100)};
+    expect(clearCut.changed, "frame set-cut-scene command should change planner scene state");
+    expect(!project.cutPlanner().cutScenes().containsSceneIndex(1), "frame set-cut-scene command should clear planner cut scenes");
+
+    const auto removeMarker{llvc::executeToggleMarkerFrameCommand(project, history, 30)};
+    expect(removeMarker.changed && !removeMarker.markerCountIncreased, "frame marker command should remove an existing planner marker");
+    expect(!project.cutPlanner().markers().contains(30), "frame marker command should remove from Project-owned CutPlanner markers");
+}
+
+void testEditorHistoryUndoRedoPlannerFrameCommands(){
+    llvc::Project project{};
+    llvc::EditorHistoryState history{};
+    project.cutPlanner().rapFrames().replaceAll({0, 30, 60, 90});
+
+    expect(llvc::executeToggleMarkerFrameCommand(project, history, 30).changed, "frame marker command should create undo history");
+    expect(llvc::executeToggleCutSceneFrameCommand(project, history, 40, 100).changed, "frame cut-scene command should create undo history");
+
+    const auto undoCut{llvc::undo(project, history)};
+    expect(undoCut.changed, "undo should restore the prior planner cut-scene state");
+    expect(!project.cutPlanner().cutScenes().containsSceneIndex(1), "undo should clear the planner cut scene");
+    expect(project.cutPlanner().markers().contains(30), "undoing a cut scene should retain the planner marker");
+    expect(project.cutPlanner().rapFrames().contains(60), "undo should retain planner RAP data");
+
+    const auto undoMarker{llvc::undo(project, history)};
+    expect(undoMarker.changed, "undo should restore the prior planner marker state");
+    expect(!project.cutPlanner().markers().contains(30), "undo should remove the planner marker");
+
+    const auto redoMarker{llvc::redo(project, history)};
+    expect(redoMarker.changed && project.cutPlanner().markers().contains(30), "redo should restore the planner marker");
+
+    const auto redoCut{llvc::redo(project, history)};
+    expect(redoCut.changed && project.cutPlanner().cutScenes().containsSceneIndex(1), "redo should restore the planner cut scene");
+}
+
 void testEditorCommandsNoOpCases(){
     llvc::Project project{};
     project.timelineDuration100ns(100'000'000);
@@ -1231,6 +1531,226 @@ void testEditorReevaluationAddsBracketMarkersAndAdjustsScenes(){
     expectEqual(history.undoStack.size(), size_t{1}, "reevaluateClearCutMarkers should push one undo snapshot");
 }
 
+void testSessionResetDrainsTimelineActivity(){
+    llvc::Session session{};
+    atomic_bool started{};
+    jthread worker{[&]{
+        auto activity{session.timeline().beginActivity()};
+        started.store(true, memory_order_release);
+        while(!activity.canceled()){
+            this_thread::yield();
+        }
+    }};
+    while(!started.load(memory_order_acquire)){
+        this_thread::yield();
+    }
+
+    session.reset();
+    expect(session.timeline().activityCanceled(), "Session reset should cancel active timeline work before it clears the timeline");
+}
+
+void testTimelineActivityLifecycleAndRenderModelPayload(){
+    llvc::Timeline timeline{};
+    {
+        auto activity{timeline.beginActivity()};
+        expect(!activity.canceled(), "Timeline activity should begin active");
+        timeline.cancelOutstandingWork();
+        expect(activity.canceled(), "Timeline activity should observe cancellation before reset");
+    }
+    timeline.waitForIdle();
+
+    timeline.waveforms().replaceSamples({{.firstFrame = 10, .endFrameExclusive = 20, .peak = 0.75f, .ready = true}});
+    llvc::CutPlanner planner{};
+    planner.addMarker(30);
+    planner.cutScenes().replaceCutSceneIndexes({1});
+    const auto model{timeline.buildRenderModel(planner, 100, {.zoom = 1, .firstVisibleFrame = 0, .endVisibleFrameExclusive = 100, .viewportWidthPixels = 500, .viewportHeightPixels = 80})};
+    expectEqual(model.waveform.size(), size_t{1}, "Timeline render model should carry neutral waveform data");
+    expectEqual(model.cutScenes.size(), size_t{1}, "Timeline render model should carry planner cut scenes");
+}
+
+void testPreviewControllerOwnsNavigationTargets(){
+    llvc::PreviewController preview{};
+    expectEqual(preview.seekTarget(150, 100), llvc::FrameIndex{99}, "Preview seek target should clamp to source bounds");
+    expectEqual(preview.stepTarget(-200, 100), llvc::FrameIndex{0}, "Preview step target should clamp at the source start");
+    expectEqual(preview.percentTarget(50, 101), llvc::FrameIndex{50}, "Preview percentage target should be frame based");
+}
+
+void testMediaSessionOwnsRapLookupTargets(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(200), marker(600)});
+    project.cutScenes({1});
+    llvc::MediaSession media{};
+    expectEqual(media.rapLookupTargets(project, 1'000), vector<int64_t>{200, 600}, "MediaSession should provide the RAP lookup targets for the current project");
+}
+
+void testMediaSessionOwnsCanonicalRapScanCommit(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.cutPlanner().addMarker(100);
+    project.cutPlanner().addMarker(500);
+    project.synchronizeCutPlannerFrames(1'000);
+    llvc::MediaSession media{};
+    media.inspection().frameRate = {.num = 10'000'000, .den = 1};
+    media.sourceFrameCount(1'000);
+
+    expectEqual(media.markerTimesForRapScan(project), vector<int64_t>{100, 500}, "MediaSession should derive RAP scan targets from canonical planner markers");
+    media.commitRapLookup(project, true, true, {100, 500}, {100, 500});
+    expectEqual(vector<llvc::FrameIndex>{project.cutPlanner().rapFrames().frames().begin(), project.cutPlanner().rapFrames().frames().end()}, vector<llvc::FrameIndex>{100, 500}, "MediaSession should commit scanned RAPs to the planner frame set");
+}
+
+void testCanonicalFrameExportPlanAndMediaRapActivity(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(100), marker(300), marker(600)});
+    project.cutScenes({1});
+    project.synchronizeCutPlannerFrames(1'000);
+    project.cutPlanner().rapFrames().replaceAll({120, 250, 600});
+
+    const auto directPlan{project.buildFrameExportPlan(false)};
+    expectEqual(directPlan.requestedCutRanges, vector<llvc::ExportFrameRange>{{.firstFrame = 100, .endFrameExclusive = 300}}, "Project should expose the canonical frame-range export plan");
+    const auto effectivePlan{project.buildEffectiveExportPlanWithRapPreroll(1'000, {})};
+    expectEqual(effectivePlan.effectiveCutRanges, vector<llvc::ExportFrameRange>{{.firstFrame = 120, .endFrameExclusive = 250}}, "canonical export should shrink an unevaluated cut scene inward to its surrounding RAP frames");
+    expectEqual(llvc::buildRapLookupTimesForExportAlignment(project, 1'000), vector<int64_t>{100, 300, 600}, "export RAP targets must come from unevaluated canonical planner frames after undo or redo");
+
+    llvc::MediaSession media{};
+    media.load(L"sample.mp4", make_unique<FakeRapMediaSource>(L"sample.mp4"), {});
+    expect(media.scanAndCommitRapMarkersAsync(project, {200}, {}, {}).get(), "MediaSession should own the RAP scan transaction");
+    expect(media.rapLookup().succeeded && media.rapLookup().partial, "MediaSession should commit RAP scan results and activity state");
+    media.reset();
+    expect(!media.hasSource() && !media.rapLookup().inProgress, "MediaSession reset should drain and clear RAP activity state");
+}
+
+void testCanonicalExportMergesCutFragmentsBeforeRapAlignment(){
+    llvc::CutPlanner planner{};
+    planner.addMarker(100);
+    planner.addMarker(200);
+    planner.addMarker(300);
+    planner.cutScenes().replaceCutSceneIndexes({1, 2});
+    planner.rapFrames().replaceAll({120, 180, 220, 280});
+
+    const auto plan{planner.buildRapAlignedExportPlan(1'000)};
+    expectEqual(plan.effectiveCutRanges, vector<llvc::ExportFrameRange>{{.firstFrame = 120, .endFrameExclusive = 280}}, "RAP alignment must preserve a cut scene split by a newly inserted marker");
+}
+
+void testCanonicalExportPlanDoesNotRealignReevaluatedTailCut(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(200), marker(600)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({2});
+    project.synchronizeCutPlannerFrames(1'000);
+    project.cutPlanner().rapFrames().replaceAll({200, 700});
+
+    const auto plan{project.buildEffectiveExportPlanWithRapPreroll(1'000, {})};
+    expectEqual(plan.effectiveCutRanges, vector<llvc::ExportFrameRange>{{.firstFrame = 600, .endFrameExclusive = 1'000}}, "canonical export must preserve the reevaluated tail-cut boundary instead of snapping it again");
+    expectEqual(plan.effectiveCutRanges100ns, vector<pair<int64_t, int64_t>>{{600, 1'000}}, "canonical export must preserve the tail cut when converting its frame plan to source times");
+}
+
+void testCanonicalProjectPlannerSurvivesMediaMetadataArrival(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.cutPlanner().markers().replaceAll({
+        {.frameIndex = 200, .isEvaluatedAgainstRap = true},
+        {.frameIndex = 600, .isEvaluatedAgainstRap = false},
+    });
+    project.cutPlanner().rapFrames().replaceAll({200});
+    project.cutPlanner().cutScenes().replaceCutSceneIndexes({1});
+
+    project.synchronizeCutPlannerFrames(1'000);
+
+    expectEqual(project.cutPlanner().markers().markers().size(), size_t{2}, "media metadata must not replace canonical persisted planner markers with an empty legacy list");
+    expectEqual(project.cutPlanner().markers().markers()[1].frameIndex, llvc::FrameIndex{600}, "canonical marker frame identity must survive metadata arrival");
+    expectEqual(vector<uint32_t>{project.cutPlanner().cutScenes().cutSceneIndexes().begin(), project.cutPlanner().cutScenes().cutSceneIndexes().end()}, vector<uint32_t>{1}, "canonical cut scenes must survive metadata arrival");
+}
+
+void testExportControllerUsesCachedPlanBeforeRapLookup(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(200), marker(600)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({1});
+
+    llvc::ExportController exporter{};
+    const auto snapshot{llvc::captureEditorSnapshot(project)};
+    const wstring sourcePath{L"sample.mp4"};
+    const llvc::EffectiveExportPlan expectedPlan{.effectiveCutRanges100ns = {{200, 600}}};
+    exporter.cachePlan(expectedPlan, snapshot, sourcePath);
+
+    const auto cachedPlan{exporter.tryGetCachedPlan(snapshot, sourcePath)};
+    expect(cachedPlan.has_value(), "ExportController should return a plan cached by RAP reevaluation before requesting another RAP lookup");
+    expectEqual(cachedPlan->effectiveCutRanges100ns, expectedPlan.effectiveCutRanges100ns, "cached reevaluated plan should remain the export authority while red helper markers are present");
+}
+
+void testSessionInvalidatesActivityGeneration(){
+    llvc::Session session{};
+    const auto initialGeneration{session.activityGeneration()};
+    session.invalidateActivities();
+    expect(session.activityGeneration() > initialGeneration, "Session activity invalidation should advance the stale-work generation");
+    const auto invalidatedGeneration{session.activityGeneration()};
+    session.reset();
+    expect(session.activityGeneration() > invalidatedGeneration, "Session reset should invalidate outstanding activity work before clearing state");
+}
+
+void testPreviewSkipsPlannerCutAtPlaybackStart(){
+    llvc::CutPlanner planner{};
+    planner.addMarker(100);
+    planner.addMarker(300);
+    planner.cutScenes().replaceCutSceneIndexes({1});
+    llvc::PreviewController preview{};
+    preview.seekToFrame(150, 1'000);
+
+    expect(preview.skipCurrentCutSceneDuringPlayback(planner, 1'000), "PreviewController should skip a cut scene when playback starts inside it");
+    expectEqual(preview.currentFrame(), llvc::FrameIndex{300}, "PreviewController should seek to the cut scene's exclusive end frame");
+}
+
+void testPreviewSkipsContiguousPlannerCutScenesInOneSeek(){
+    llvc::CutPlanner planner{};
+    planner.addMarker(100);
+    planner.addMarker(200);
+    planner.addMarker(300);
+    planner.addMarker(400);
+    planner.cutScenes().replaceCutSceneIndexes({1, 2, 3});
+    llvc::PreviewController preview{};
+    preview.seekToFrame(150, 1'000);
+
+    expect(preview.skipCurrentCutSceneDuringPlayback(planner, 1'000), "PreviewController should skip a contiguous deleted run");
+    expectEqual(preview.currentFrame(), llvc::FrameIndex{400}, "PreviewController should skip all contiguous cut scenes in one seek");
+}
+
+void testPlannerNativeReevaluationPreservesCutIntent(){
+    llvc::Project project{};
+    project.cutPlanner().addMarker(300);
+    project.cutPlanner().addMarker(700);
+    project.cutPlanner().cutScenes().replaceCutSceneIndexes({1});
+    project.cutPlanner().rapFrames().replaceAll({250, 400, 650, 750});
+    llvc::EditorHistoryState history{};
+
+    const auto result{llvc::reevaluateClearCutMarkers(project, llvc::FrameIndex{1'000}, history, true)};
+    expect(result.changed, "planner-native reevaluation should update RAP-unsafe cut boundaries");
+    expectEqual(project.cutPlanner().buildCutSceneRanges(1'000), vector<llvc::SceneFrameRange>{{.firstFrame = 400, .endFrameExclusive = 650, .sceneIndex = 3, .cut = true}}, "planner-native reevaluation should shrink the requested cut range to safe RAP boundaries");
+    expectEqual(history.undoStack.size(), size_t{1}, "planner-native reevaluation should create one undo snapshot");
+
+    (void)llvc::reevaluateClearCutMarkers(project, llvc::FrameIndex{1'000}, history, false);
+    expectEqual(project.cutPlanner().buildCutSceneRanges(1'000), vector<llvc::SceneFrameRange>{{.firstFrame = 400, .endFrameExclusive = 650, .sceneIndex = 3, .cut = true}}, "repeated planner-native reevaluation should be stable");
+}
+
+void testPlannerNativeReevaluationPreservesTailCutBoundary(){
+    llvc::Project project{};
+    project.cutPlanner().addMarker(600);
+    project.cutPlanner().cutScenes().replaceCutSceneIndexes({1});
+    project.cutPlanner().rapFrames().replaceAll({550, 700, 900});
+    llvc::EditorHistoryState history{};
+
+    (void)llvc::reevaluateClearCutMarkers(project, llvc::FrameIndex{1'000}, history, false);
+    (void)llvc::reevaluateClearCutMarkers(project, llvc::FrameIndex{1'000}, history, false);
+
+    const auto cuts{project.cutPlanner().buildCutSceneRanges(1'000)};
+    expect(!cuts.empty(), "planner-native reevaluation should retain the tail cut");
+    expectEqual(cuts.front().firstFrame, llvc::FrameIndex{600}, "repeated planner-native reevaluation should preserve the original tail-cut boundary");
+    expectEqual(cuts.back().endFrameExclusive, llvc::FrameIndex{1'000}, "planner-native reevaluation should preserve the tail cut through the source end");
+}
+
 void testEditorReevaluationPreservesTailCutBoundary(){
     llvc::Project project{};
     project.timelineDuration100ns(1'000);
@@ -1248,6 +1768,24 @@ void testEditorReevaluationPreservesTailCutBoundary(){
     expectEqual(markers.size(), size_t{3}, "tail-cut reevaluation should preserve the original marker and add RAP brackets");
     expectEqual(markers[1].time100ns, int64_t{600}, "tail-cut reevaluation should keep the last user marker in place");
     expectEqual(project.cutScenes(), vector<uint32_t>{2, 3}, "tail-cut reevaluation should preserve the tail cut while remapping across the inserted RAP brackets");
+
+    (void)llvc::reevaluateClearCutMarkers(project, timeline, {550, 700, 900}, history, false);
+    expectEqual(project.buildCutRanges100ns(), vector<pair<int64_t, int64_t>>{{600, 1'000}}, "repeated reevaluation should preserve the tail-cut boundary");
+}
+
+void testEditorReevaluationPreservesPlannerKeptGapBetweenEdgeCuts(){
+    llvc::Project project{};
+    project.timelineDuration100ns(1'000);
+    project.frameIndex({marker(100, false, false), marker(300, false, false)});
+    project.refreshSelectedMarkers();
+    project.cutScenes({0, 2});
+    llvc::EditorHistoryState history{};
+    llvc::Timeline timeline{};
+
+    (void)llvc::reevaluateClearCutMarkers(project, timeline, {50, 150, 250, 350}, history, false);
+    project.synchronizeCutPlannerFrames(1'000);
+
+    expectEqual(project.cutPlanner().buildCutSceneRanges(1'000), vector<llvc::SceneFrameRange>{{.firstFrame = 0, .endFrameExclusive = 50, .sceneIndex = 0, .cut = true}, {.firstFrame = 300, .endFrameExclusive = 350, .sceneIndex = 5, .cut = true}, {.firstFrame = 350, .endFrameExclusive = 1'000, .sceneIndex = 6, .cut = true}}, "planner synchronization should preserve the RAP-aligned kept gap between edge cuts");
 }
 
 void testEvaluatePlacedMarkerAffectsOnlyNewMarker(){
@@ -1272,6 +1810,16 @@ void testEvaluatePlacedMarkerAffectsOnlyNewMarker(){
     expect(!markers[2].evaluated && !markers[2].cleanPoint, "targeted off-RAP marker should stay red");
     expectEqual(markers[3].time100ns, int64_t{650}, "evaluatePlacedMarkerAgainstRap should add the right RAP marker for the targeted marker");
     expectEqual(project.buildCutRanges100ns(), beforeCutRanges, "evaluatePlacedMarkerAgainstRap should preserve the original cut time ranges while adding helper markers");
+}
+
+void testEvaluatePlacedMarkerUsesCanonicalFrames(){
+    llvc::Project project{};
+    project.cutPlanner().addMarker(300);
+    project.cutPlanner().cutScenes().replaceCutSceneIndexes({1});
+
+    const auto result{llvc::evaluatePlacedMarkerFrameAgainstRap(project, {250, 350}, 300)};
+    expect(result.changed, "frame-native marker evaluation should update the requested planner marker");
+    expectEqual(project.cutPlanner().buildRapAlignedExportPlan(1'000).effectiveCutRanges, vector<llvc::ExportFrameRange>{{.firstFrame = 300, .endFrameExclusive = 1'000}}, "frame-native marker evaluation should preserve the split cut scene state");
 }
 
 void testEvaluatePlacedMarkerPreservesExistingCutRangesWhenInsertedIntoKeptScene(){
@@ -1309,6 +1857,10 @@ void testEditorReevaluationOnlyShrinksExistingCutScenes(){
     expect(result.changed, "reevaluateClearCutMarkers should adjust cut scene boundaries when RAP markers are available");
     expectEqual(project.buildCutRanges100ns(), vector<pair<int64_t, int64_t>>{{400, 650}}, "reevaluateClearCutMarkers should only shrink the existing cut range inward to RAP-safe bounds");
     expectEqual(project.cutScenes().size(), size_t{1}, "reevaluateClearCutMarkers should keep exactly one cut scene after inserting helper markers around both boundaries");
+    project.synchronizeCutPlannerFrames(1'000);
+    expectEqual(project.cutPlanner().buildCutSceneRanges(1'000).size(), size_t{1}, "planner synchronization should preserve the re-evaluated kept gap");
+    expectEqual(project.cutPlanner().buildCutSceneRanges(1'000)[0].firstFrame, llvc::FrameIndex{400}, "planner synchronization should retain the RAP-aligned cut start");
+    expectEqual(project.cutPlanner().buildCutSceneRanges(1'000)[0].endFrameExclusive, llvc::FrameIndex{650}, "planner synchronization should retain the RAP-aligned cut end");
 }
 
 void testEditorReevaluationNoOpWithoutMarkers(){
@@ -1364,6 +1916,9 @@ int wmain(int argc, wchar_t* argv[]){
         {"AudioWaveformScalingAndThresholdColor", &testAudioWaveformScalingAndThresholdColor},
         {"AudioWaveformChunkPlanning", &testAudioWaveformChunkPlanning},
         {"TimelinePlanningEdgeCases", &testTimelinePlanningEdgeCases},
+        {"TimelineOwnsNeutralPreviewStores", &testTimelineOwnsNeutralPreviewStores},
+        {"TimelineFrameConversion", &testTimelineFrameConversion},
+        {"SessionBuildsNeutralTimelineRenderModel", &testSessionBuildsNeutralTimelineRenderModel},
         {"ProjectCutRangesAndBoundaries", &testProjectCutRangesAndBoundaries},
         {"ProjectSceneBoundariesClampAndIgnoreInvalidCuts", &testProjectSceneBoundariesClampAndIgnoreInvalidCuts},
         {"ProjectNoCutPlanAndEmptyAlignment", &testProjectNoCutPlanAndEmptyAlignment},
@@ -1379,7 +1934,26 @@ int wmain(int argc, wchar_t* argv[]){
         {"ProjectEffectiveExportMergesAlignedBlocks", &testProjectEffectiveExportMergesAlignedBlocks},
         {"ProjectOutputDurationTracksMergedRanges", &testProjectOutputDurationTracksMergedRanges},
         {"ProjectEffectiveExportPreservesAlreadySafeTailCut", &testProjectEffectiveExportPreservesAlreadySafeTailCut},
+        {"CutPlannerFrameModelAndSceneRemap", &testCutPlannerFrameModelAndSceneRemap},
+        {"ProjectSynchronizesOwnedCutPlanner", &testProjectSynchronizesOwnedCutPlanner},
+        {"ProjectMapsLegacyMarkerTimesToPlannerFrames", &testProjectMapsLegacyMarkerTimesToPlannerFrames},
+        {"ProjectSynchronizesPlannerMarkersForLegacyReevaluation", &testProjectSynchronizesPlannerMarkersForLegacyReevaluation},
+        {"ProjectPreservesExactRapTimesAcrossLegacySynchronization", &testProjectPreservesExactRapTimesAcrossLegacySynchronization},
+        {"SessionResetClearsOwnedState", &testSessionResetClearsOwnedState},
+        {"SessionResetDrainsTimelineActivity", &testSessionResetDrainsTimelineActivity},
+        {"TimelineActivityLifecycleAndRenderModelPayload", &testTimelineActivityLifecycleAndRenderModelPayload},
+        {"PreviewControllerOwnsNavigationTargets", &testPreviewControllerOwnsNavigationTargets},
+        {"MediaSessionOwnsRapLookupTargets", &testMediaSessionOwnsRapLookupTargets},
+        {"MediaSessionOwnsCanonicalRapScanCommit", &testMediaSessionOwnsCanonicalRapScanCommit},
+        {"SessionInvalidatesActivityGeneration", &testSessionInvalidatesActivityGeneration},
+        {"PreviewSkipsPlannerCutAtPlaybackStart", &testPreviewSkipsPlannerCutAtPlaybackStart},
+        {"PreviewSkipsContiguousPlannerCutScenesInOneSeek", &testPreviewSkipsContiguousPlannerCutScenesInOneSeek},
         {"ProjectEstimateCoordinatorHelpers", &testProjectEstimateCoordinatorHelpers},
+        {"CanonicalFrameExportPlanAndMediaRapActivity", &testCanonicalFrameExportPlanAndMediaRapActivity},
+        {"CanonicalExportMergesCutFragmentsBeforeRapAlignment", &testCanonicalExportMergesCutFragmentsBeforeRapAlignment},
+        {"CanonicalExportPlanDoesNotRealignReevaluatedTailCut", &testCanonicalExportPlanDoesNotRealignReevaluatedTailCut},
+        {"CanonicalProjectPlannerSurvivesMediaMetadataArrival", &testCanonicalProjectPlannerSurvivesMediaMetadataArrival},
+        {"ExportControllerUsesCachedPlanBeforeRapLookup", &testExportControllerUsesCachedPlanBeforeRapLookup},
         {"ExportPreflightAndPlanSummary", &testExportPreflightAndPlanSummary},
         {"ExportCoordinatorDoesNotRequireFullRapReevaluationForExport", &testExportCoordinatorDoesNotRequireFullRapReevaluationForExport},
         {"ExportCutTimelineMapping", &testExportCutTimelineMapping},
@@ -1403,10 +1977,16 @@ int wmain(int argc, wchar_t* argv[]){
         {"EditorHistoryClearsRedoAfterNewEdit", &testEditorHistoryClearsRedoAfterNewEdit},
         {"EditorHistorySnapshotGuards", &testEditorHistorySnapshotGuards},
         {"EditorCommands", &testEditorCommands},
+        {"EditorFrameCommandsUseCutPlanner", &testEditorFrameCommandsUseCutPlanner},
+        {"EditorHistoryUndoRedoPlannerFrameCommands", &testEditorHistoryUndoRedoPlannerFrameCommands},
         {"EditorCommandsNoOpCases", &testEditorCommandsNoOpCases},
         {"EditorReevaluationAddsBracketMarkersAndAdjustsScenes", &testEditorReevaluationAddsBracketMarkersAndAdjustsScenes},
+        {"PlannerNativeReevaluationPreservesCutIntent", &testPlannerNativeReevaluationPreservesCutIntent},
+        {"PlannerNativeReevaluationPreservesTailCutBoundary", &testPlannerNativeReevaluationPreservesTailCutBoundary},
         {"EditorReevaluationPreservesTailCutBoundary", &testEditorReevaluationPreservesTailCutBoundary},
+        {"EditorReevaluationPreservesPlannerKeptGapBetweenEdgeCuts", &testEditorReevaluationPreservesPlannerKeptGapBetweenEdgeCuts},
         {"EvaluatePlacedMarkerAffectsOnlyNewMarker", &testEvaluatePlacedMarkerAffectsOnlyNewMarker},
+        {"EvaluatePlacedMarkerUsesCanonicalFrames", &testEvaluatePlacedMarkerUsesCanonicalFrames},
         {"EvaluatePlacedMarkerPreservesExistingCutRangesWhenInsertedIntoKeptScene", &testEvaluatePlacedMarkerPreservesExistingCutRangesWhenInsertedIntoKeptScene},
         {"EditorReevaluationOnlyShrinksExistingCutScenes", &testEditorReevaluationOnlyShrinksExistingCutScenes},
         {"EditorReevaluationNoOpWithoutMarkers", &testEditorReevaluationNoOpWithoutMarkers},

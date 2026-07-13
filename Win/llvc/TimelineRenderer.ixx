@@ -10,6 +10,7 @@ export module llvc.TimelineRenderer;
 
 import std;
 import llvc.Project;
+import llvc.Session;
 import llvc.Timeline;
 
 export namespace llvc{
@@ -34,6 +35,9 @@ void renderTimelineCutOverlays(
     const vector<pair<int64_t, int64_t>>& cutRanges100ns,
     double width,
     double durationSeconds);
+
+void renderTimelineMarkers(const winrt::Microsoft::UI::Xaml::Controls::Canvas& tickCanvas, span<const TimelineMarkerRenderItem> markers);
+void renderTimelineCutScenes(const winrt::Microsoft::UI::Xaml::Controls::Canvas& overlayCanvas, double width, span<const TimelineCutSceneRenderItem> cutScenes);
 
 }
 
@@ -142,6 +146,38 @@ void renderTimelineCutOverlays(const Timeline& timeline, const Controls::Canvas&
         diagonalTwo.StrokeThickness(2.0);
         diagonalTwo.IsHitTestVisible(false);
         overlayCanvas.Children().Append(diagonalTwo);
+    }
+}
+
+void renderTimelineMarkers(const Controls::Canvas& tickCanvas, span<const TimelineMarkerRenderItem> markers){
+    for(const auto& marker: markers){
+        Shapes::Line tick{};
+        tick.X1(marker.x); tick.X2(marker.x); tick.Y1(0); tick.Y2(8.0);
+        tick.Stroke(Media::SolidColorBrush(marker.isEvaluatedAgainstRap ? Windows::UI::ColorHelper::FromArgb(255, 72, 214, 104) : Windows::UI::ColorHelper::FromArgb(255, 255, 80, 80)));
+        tick.StrokeThickness(2.0);
+        tickCanvas.Children().Append(tick);
+    }
+}
+
+void renderTimelineCutScenes(const Controls::Canvas& overlayCanvas, double width, span<const TimelineCutSceneRenderItem> cutScenes){
+    overlayCanvas.Children().Clear(); overlayCanvas.Width(width);
+    const auto overlayColor{Windows::UI::ColorHelper::FromArgb(180, 0, 0, 0)};
+    const auto crossColor{Windows::UI::ColorHelper::FromArgb(220, 255, 48, 48)};
+    for(const auto& scene: cutScenes){
+        Controls::Canvas sceneCanvas{};
+        sceneCanvas.Width(scene.width); sceneCanvas.Height(86.0); sceneCanvas.IsHitTestVisible(false);
+        Controls::Canvas::SetLeft(sceneCanvas, scene.left);
+
+        Shapes::Rectangle block{}; block.Width(scene.width); block.Height(86.0); block.Fill(Media::SolidColorBrush(overlayColor)); block.IsHitTestVisible(false);
+        sceneCanvas.Children().Append(block);
+
+        for(const auto [x1, x2]: {pair{0.0, scene.width}, pair{scene.width, 0.0}}){
+            Shapes::Line diagonal{};
+            diagonal.X1(x1); diagonal.Y1(0.0); diagonal.X2(x2); diagonal.Y2(86.0);
+            diagonal.Stroke(Media::SolidColorBrush(crossColor)); diagonal.StrokeThickness(2.0); diagonal.IsHitTestVisible(false);
+            sceneCanvas.Children().Append(diagonal);
+        }
+        overlayCanvas.Children().Append(sceneCanvas);
     }
 }
 

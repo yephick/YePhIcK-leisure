@@ -1,6 +1,7 @@
 export module llvc.EditorCommands;
 
 import std;
+import llvc.CutPlanner;
 import llvc.Project;
 import llvc.Timeline;
 import llvc.EditorController;
@@ -22,6 +23,9 @@ struct EditorCommandResult final{
 EditorCommandResult executeToggleMarkerCommand(Project& project, double fps, EditorHistoryState& history, int64_t time100ns);
 EditorCommandResult executeToggleCutBlockCommand(Project& project, EditorHistoryState& history, int64_t time100ns);
 EditorCommandResult executeSetCutBlockCommand(Project& project, EditorHistoryState& history, int64_t time100ns, bool cutScene);
+EditorCommandResult executeToggleMarkerFrameCommand(Project& project, EditorHistoryState& history, FrameIndex frameIndex);
+EditorCommandResult executeToggleCutSceneFrameCommand(Project& project, EditorHistoryState& history, FrameIndex frameIndex, FrameIndex sourceFrameCount);
+EditorCommandResult executeSetCutSceneFrameCommand(Project& project, EditorHistoryState& history, FrameIndex frameIndex, bool cutScene, FrameIndex sourceFrameCount);
 EditorCommandResult executeRapNudgeCommand(Project& project, const Timeline& timeline, const vector<int64_t>& rapTimes100ns, EditorHistoryState& history, int64_t cursorTime100ns, bool expandScene);
 
 }
@@ -56,6 +60,37 @@ EditorCommandResult executeToggleCutBlockCommand(Project& project, EditorHistory
 
 EditorCommandResult executeSetCutBlockCommand(Project& project, EditorHistoryState& history, int64_t time100ns, bool cutScene){
     return makeTimelineRefreshResult(setCutBlock(project, history, time100ns, cutScene));
+}
+
+EditorCommandResult executeToggleMarkerFrameCommand(Project& project, EditorHistoryState& history, FrameIndex frameIndex){
+    const auto markerCountBefore{project.cutPlanner().markers().size()};
+    (void)pushUndoSnapshotIfChanged(project, history);
+    const auto changed{project.cutPlanner().toggleMarker(frameIndex)};
+    if(changed){
+        project.markDirty();
+    }
+
+    auto result{makeTimelineRefreshResult(changed)};
+    result.markerCountIncreased = project.cutPlanner().markers().size() > markerCountBefore;
+    return result;
+}
+
+EditorCommandResult executeToggleCutSceneFrameCommand(Project& project, EditorHistoryState& history, FrameIndex frameIndex, FrameIndex sourceFrameCount){
+    (void)pushUndoSnapshotIfChanged(project, history);
+    const auto changed{project.cutPlanner().toggleCutSceneContainingFrame(frameIndex, sourceFrameCount)};
+    if(changed){
+        project.markDirty();
+    }
+    return makeTimelineRefreshResult(changed);
+}
+
+EditorCommandResult executeSetCutSceneFrameCommand(Project& project, EditorHistoryState& history, FrameIndex frameIndex, bool cutScene, FrameIndex sourceFrameCount){
+    (void)pushUndoSnapshotIfChanged(project, history);
+    const auto changed{project.cutPlanner().setCutSceneContainingFrame(frameIndex, cutScene, sourceFrameCount)};
+    if(changed){
+        project.markDirty();
+    }
+    return makeTimelineRefreshResult(changed);
 }
 
 EditorCommandResult executeRapNudgeCommand(Project& project, const Timeline& timeline, const vector<int64_t>& rapTimes100ns, EditorHistoryState& history, int64_t cursorTime100ns, bool expandScene){

@@ -21,6 +21,7 @@ import llvc.Utils;
 import llvc.EditorController;
 import llvc.EditorCommands;
 import llvc.ExportCoordinator;
+import llvc.Session;
 
 namespace winrt::llvc::implementation{
 
@@ -152,35 +153,12 @@ private:
     DTS m_positionTimer{nullptr};
     winrt::event_token m_positionTimerTickToken{};
     double m_timelineDurationSeconds{0};
-    uint64_t m_timelineRenderVersion{0};
-    uint64_t m_timelineViewportRenderRequestVersion{0};
-    hstring m_thumbnailPlanSourcePath{};
-    vector<bool> m_thumbnailBuilt{};
-    double m_thumbnailPlanTotalWidth{};
-    double m_thumbnailPlanWidth{};
-    int m_thumbnailPlanCount{};
-    MediaInspectionResult m_mediaInfo{};
-    std::unique_ptr<::llvc::VideoSource> m_media{};
-    hstring m_cachedRapSourcePath{};
-    vector<int64_t> m_cachedRapTimes100ns{};
-    vector<int64_t> m_cachedRapLookupTargetTimes100ns{};
-    bool m_cachedRapLookupAttempted{false};
-    bool m_cachedRapLookupSucceeded{false};
-    bool m_cachedRapTimesPartial{false};
-    bool m_isRapLookupInProgress{false};
-    bool m_hasTimelineRenderCompleted{false};
-    bool m_audioWaveformAnalysisQueued{false};
     bool m_isUiReadyForEvents{false};
     bool m_isSyncingTimelineScrollBar{false};
     bool m_pendingSeparatePreviewRestoreOnStartup{false};
-    bool m_pendingReevaluateAfterRapLookup{false};
-    bool m_pendingReevaluateWithoutUndoAfterRapLookup{false};
-    std::vector<int64_t> m_pendingAutoEvaluateMarkerTimes100ns{};
-    int m_pendingNudgeDirectionAfterRapLookup{0};
     ::llvc::AppSettingsState m_appSettings{};
     hstring m_projectPath{};
     bool m_isClosing{false};
-    bool m_isExportInProgress{false};
     uint64_t m_currentExportSourceSizeBytes{0};
     int64_t m_currentExportSourceDuration100ns{0};
     int64_t m_currentExportOutputDuration100ns{0};
@@ -191,7 +169,6 @@ private:
     hstring m_currentExportSourcePath{};
     hstring m_currentExportProjectPath{};
     hstring m_currentExportOutputPath{};
-    std::atomic_bool m_cancelExportRequested{false};
     std::chrono::steady_clock::time_point m_currentExportStartedAt{};
     std::chrono::steady_clock::time_point m_lastExportEtaRefreshAt{};
     std::optional<double> m_lastExportEtaProgress{};
@@ -200,15 +177,9 @@ private:
     TimelineInteractionState m_timelineInteraction{};
     winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
     SeparatePreviewState m_separatePreview{};
-    ::llvc::Project m_prj{};
-    ::llvc::Timeline m_tl{};
-
-    ::llvc::EditorHistoryState m_editorHistory{};
-    std::optional<::llvc::EditorSnapshot> m_lastReevaluatedEditorSnapshot{};
-    hstring m_lastReevaluatedRapSourcePath{};
-    mutable std::optional<::llvc::EditorSnapshot> m_cachedEffectiveExportPlanSnapshot{};
-    mutable hstring m_cachedEffectiveExportPlanSourcePath{};
-    mutable std::optional<::llvc::EffectiveExportPlan> m_cachedEffectiveExportPlan{};
+    ::llvc::Session m_session{};
+    AAction m_rapLookupAction{nullptr};
+    bool m_rapLookupQueued{};
     winrt::Microsoft::UI::Xaml::Window::Closed_revoker m_mainWindowClosedRevoker{};
 
 private:
@@ -286,8 +257,9 @@ private:
     bool reevaluateClearCutMarkers(bool pushUndoState);
     bool reevaluateAll(bool pushUndoState);
     void queueRapLookup(bool queueReevaluate, int nudgeDirection);
-    IOpBool ensureRapMarkersAvailableAsync(const wstring& statusMessage, const std::function<void(double)>& progressCallback = {});
-    fire_and_forget runRapLookupAsync();
+    IOpBool ensureRapMarkersAvailableAsync(wstring statusMessage, const vector<int64_t>& requiredTargets100ns = {}, std::function<void(double)> progressCallback = {});
+    AAction runRapLookupAsync();
+    void completeQueuedRapLookup(bool lookupSucceeded, const wstring& failureMessage = {});
     void clearUndoRedoHistory();
     bool undoLastEdit();
     bool redoLastEdit();

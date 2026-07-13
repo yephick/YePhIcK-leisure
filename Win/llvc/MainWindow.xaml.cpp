@@ -90,17 +90,6 @@ constexpr size_t kAudioWaveformBucketCount{4096};
 constexpr size_t kAudioWaveformChunkCount{64};
 constexpr size_t kAudioWaveformBucketsPerChunk{kAudioWaveformBucketCount / kAudioWaveformChunkCount};
 
-struct AudioWaveformCacheEntry final{
-    vector<float> peaks = vector<float>(kAudioWaveformBucketCount, 0.0f);
-    vector<bool> chunksBuilt = vector<bool>(kAudioWaveformChunkCount, false);
-    bool ready{false};
-    bool failed{false};
-    bool inProgress{false};
-};
-
-std::mutex g_audioWaveformCacheMutex;
-std::unordered_map<std::wstring, std::shared_ptr<AudioWaveformCacheEntry>> g_audioWaveformCache;
-
 double pageJumpSecondsFromSettings(const ::llvc::AppSettingsState& settings){
     return kPageJumpSecondsOptions[min<size_t>(settings.pageJumpDurationIndex, kPageJumpSecondsOptions.size() - 1)];
 }
@@ -1230,7 +1219,7 @@ wstring audioVolumeGlyph(bool keepAudio, int32_t volumePct){
 }
 
 void MainWindow::clearUndoRedoHistory(){
-    ::llvc::clearEditorHistory(m_editorHistory);
+    ::llvc::clearEditorHistory(m_session.editorHistory());
 }
 
 void MainWindow::refreshEditorUiState(){
@@ -1248,6 +1237,15 @@ void MainWindow::applyEditorCommandResult(const ::llvc::EditorCommandResult& res
     if(!result.changed){
         return;
     }
+
+    // Failed RAP scans are not valid after the edit model changes. Keep a
+    // successful cache, but allow the new marker/cut configuration to retry.
+    if(m_session.media().rapLookup().attempted && !m_session.media().rapLookup().succeeded){
+        m_session.media().rapLookup().reset();
+    }
+    m_session.media().rapLookup().lastReevaluatedSnapshot.reset();
+    m_session.media().rapLookup().lastReevaluatedSourcePath.clear();
+    m_session.exporter().clearCachedPlan();
 
     if(result.refreshTimelineTicks){
         renderTimelineTicks();
@@ -1267,12 +1265,12 @@ void MainWindow::applyEditorCommandResult(const ::llvc::EditorCommandResult& res
 }
 
 bool MainWindow::undoLastEdit(){
-    if(m_editorHistory.undoStack.empty()){
+    if(m_session.editorHistory().undoStack.empty()){
         setStatusMessage(L"Nothing to undo");
         return false;
     }
 
-    const auto result{::llvc::undo(m_prj, m_editorHistory)};
+    const auto result{::llvc::undo(m_session.project(), m_session.editorHistory())};
     if(!result.changed){
         return false;
     }
@@ -1283,12 +1281,12 @@ bool MainWindow::undoLastEdit(){
 }
 
 bool MainWindow::redoLastEdit(){
-    if(m_editorHistory.redoStack.empty()){
+    if(m_session.editorHistory().redoStack.empty()){
         setStatusMessage(L"Nothing to redo");
         return false;
     }
 
-    const auto result{::llvc::redo(m_prj, m_editorHistory)};
+    const auto result{::llvc::redo(m_session.project(), m_session.editorHistory())};
     if(!result.changed){
         return false;
     }
@@ -1324,7 +1322,7 @@ MainWindow::MainWindow(const hstring& launchArguments){
     applyThemePreference();
     const auto initialZoomIndex{clampTimelineZoomIndex(TimelineZoomSlider(), m_appSettings.timelineZoom)};
     m_appSettings.timelineZoom = initialZoomIndex;
-    m_prj.setZoomWithoutDirty(initialZoomIndex);
+    m_session.project().setZoomWithoutDirty(initialZoomIndex);
     TimelineZoomSlider().Value(initialZoomIndex);
     m_mainWindowClosedRevoker = Closed(auto_revoke, {this, &MainWindow::onClosed});
     m_mainWindowActivatedRevoker = Activated(auto_revoke, {this, &MainWindow::onWindowActivated});
@@ -1381,7 +1379,7 @@ AAction MainWindow::openFromLaunchArgumentsAsync(const hstring& arguments){
         co_return;
     }
 
-    m_prj.clearTimeline();
+    m_session.project().clearTimeline();
     clearUndoRedoHistory();
     co_await loadVideoFileAsync(file);
 }
@@ -1401,15 +1399,6 @@ void MainWindow::restoreWindowPlacement(){
 
 void MainWindow::loadAppSettings(){
     m_appSettings = ::llvc::loadAppSettings();
-}
-
-std::shared_ptr<AudioWaveformCacheEntry> getOrCreateAudioWaveformEntry(const std::wstring& sourcePath){
-    std::scoped_lock lock{g_audioWaveformCacheMutex};
-    auto& entry{g_audioWaveformCache[sourcePath]};
-    if(!entry){
-        entry = std::make_shared<AudioWaveformCacheEntry>();
-    }
-    return entry;
 }
 
 void MainWindow::saveAppSettings() const{
@@ -1496,11 +1485,11 @@ void MainWindow::onClosed(const Control&, const WEArgs&){
 }
 
 bool MainWindow::isExportInProgressForClosePrompt() const{
-    return m_isExportInProgress;
+    return m_session.exporter().isExportInProgress();
 }
 
 void MainWindow::requestExportCancel(){
-    m_cancelExportRequested = true;
+    m_session.exporter().requestCancel();
     setStatusMessage(L"Canceling export...");
     setOperationInProgress(false);
 }
@@ -1531,6 +1520,7 @@ void MainWindow::startButton_Click(const Control&, const REArgs&){
 void MainWindow::pauseButton_Click(const Control&, const REArgs&){
     if(m_player){
         m_player.Pause();
+        m_session.preview().pause();
     }
 }
 
@@ -1538,58 +1528,64 @@ void MainWindow::stopButton_Click(const Control&, const REArgs&){
     if(m_player){
         m_player.Pause();
         m_player.PlaybackSession().Position(chrono::seconds(0));
+        m_session.preview().stop();
         updateTimelineCursorFromPlayback();
     }
 }
 
 
 bool MainWindow::reevaluateAll(bool pushUndoState){
-    if(!m_prj.hasVideoFile() || m_timelineDurationSeconds <= 0){
+    if(!m_session.project().hasVideoFile() || m_timelineDurationSeconds <= 0){
         setStatusMessage(L"Load a video before reevaluating clear cut markers");
         return false;
     }
 
-    const auto originalMarkers{m_prj.frameIndex()};
+    const auto originalMarkers{m_session.project().cutPlanner().markers().markers()};
     if(originalMarkers.empty()){
         setStatusMessage(L"No clear cut markers to reevaluate");
         return false;
     }
 
     vector<int64_t> rapTimes100ns;
-    auto markerTimes100ns{::llvc::buildRapLookupTimesForExportAlignment(m_prj, m_prj.timelineDuration100ns())};
-    if(markerTimes100ns.empty()){
-        markerTimes100ns.reserve(originalMarkers.size());
-        for(const auto& marker: originalMarkers){
-            if(marker.time100ns > 0 && marker.time100ns < m_prj.timelineDuration100ns()){
-                markerTimes100ns.push_back(marker.time100ns);
-            }
+    vector<int64_t> markerTimes100ns;
+    markerTimes100ns.reserve(originalMarkers.size());
+    for(const auto& marker: originalMarkers){
+        const auto markerTime100ns{m_session.media().time100nsForFrame(marker.frameIndex)};
+        if(markerTime100ns > 0 && markerTime100ns < m_session.project().timelineDuration100ns()){
+            markerTimes100ns.push_back(markerTime100ns);
         }
-        sort(markerTimes100ns.begin(), markerTimes100ns.end());
-        markerTimes100ns.erase(unique(markerTimes100ns.begin(), markerTimes100ns.end()), markerTimes100ns.end());
     }
+    sort(markerTimes100ns.begin(), markerTimes100ns.end());
+    markerTimes100ns.erase(unique(markerTimes100ns.begin(), markerTimes100ns.end()), markerTimes100ns.end());
 
     if(!tryGetRapTimes100ns(rapTimes100ns, !markerTimes100ns.empty(), &markerTimes100ns)){
-        m_pendingReevaluateWithoutUndoAfterRapLookup = !pushUndoState;
-        queueRapLookup(true, 0);
-        return false;
+        // A completed full RAP scan is sufficient for planner-native reevaluation.
+        // Do not queue it again here: runRapLookupAsync calls back into this method.
+        if(m_session.media().rapLookup().succeeded
+            && !m_session.media().rapLookup().partial
+            && !m_session.media().rapLookup().times100ns.empty()){
+            rapTimes100ns = m_session.media().rapLookup().times100ns;
+        }else{
+            m_session.media().rapLookup().pendingReevaluateWithoutUndo = !pushUndoState;
+            queueRapLookup(true, 0);
+            return false;
+        }
     }
 
-    const auto sourcePath{m_prj.videoFilePath()};
-    const auto beforeSnapshot{::llvc::captureEditorSnapshot(m_prj)};
-    if(m_lastReevaluatedEditorSnapshot
-        && sourcePath == m_lastReevaluatedRapSourcePath
-        && ::llvc::isSameEditorSnapshot(beforeSnapshot, *m_lastReevaluatedEditorSnapshot)){
-        m_pendingReevaluateWithoutUndoAfterRapLookup = false;
+    const auto sourcePath{m_session.project().videoFilePath()};
+    const auto beforeSnapshot{::llvc::captureEditorSnapshot(m_session.project())};
+    if(m_session.media().rapLookup().lastReevaluatedSnapshot
+        && std::wstring{sourcePath.c_str()} == m_session.media().rapLookup().lastReevaluatedSourcePath
+        && ::llvc::isSameEditorSnapshot(beforeSnapshot, *m_session.media().rapLookup().lastReevaluatedSnapshot)){
+        m_session.media().rapLookup().pendingReevaluateWithoutUndo = false;
         setStatusMessage(L"Cut markers are already reevaluated for the current RAP scan");
         return true;
     }
 
-    const auto result{::llvc::reevaluateClearCutMarkers(m_prj, m_tl, rapTimes100ns, m_editorHistory, pushUndoState)};
-    m_lastReevaluatedEditorSnapshot = ::llvc::captureEditorSnapshot(m_prj);
-    m_lastReevaluatedRapSourcePath = sourcePath;
-    m_cachedEffectiveExportPlanSnapshot = m_lastReevaluatedEditorSnapshot;
-    m_cachedEffectiveExportPlanSourcePath = sourcePath;
-    m_cachedEffectiveExportPlan = m_prj.buildEffectiveExportPlanWithRapPreroll(m_prj.timelineDuration100ns(), rapTimes100ns);
+    const auto result{::llvc::reevaluateClearCutMarkers(m_session.project(), m_session.media().sourceFrameCount(), m_session.editorHistory(), pushUndoState)};
+    m_session.media().rapLookup().lastReevaluatedSnapshot = ::llvc::captureEditorSnapshot(m_session.project());
+    m_session.media().rapLookup().lastReevaluatedSourcePath = sourcePath.c_str();
+    m_session.exporter().cachePlan(m_session.project().buildEffectiveExportPlanWithRapPreroll(m_session.project().timelineDuration100ns(), rapTimes100ns), *m_session.media().rapLookup().lastReevaluatedSnapshot, sourcePath.c_str());
 
     renderTimelineTicks();
     renderKeyframeTicks();
@@ -1598,7 +1594,7 @@ bool MainWindow::reevaluateAll(bool pushUndoState){
     updateWindowTitle();
 
     wstring status{L"Reevaluated cut markers against RAP frames"};
-    m_pendingReevaluateWithoutUndoAfterRapLookup = false;
+    m_session.media().rapLookup().pendingReevaluateWithoutUndo = false;
     if(result.replacedCount == 0){
         status += L" (no changes needed)";
     }else{
@@ -1617,7 +1613,7 @@ void MainWindow::reevaluateClearCutMarkersButton_Click(const Control&, const REA
 }
 
 void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&){
-    m_prj.setZoom(TimelineZoomSlider().Value());
+    m_session.project().setZoom(TimelineZoomSlider().Value());
     if(!m_isUiReadyForEvents){
         return;
     }
@@ -1629,7 +1625,7 @@ void MainWindow::timelineZoomSlider_ValueChanged(const Control&, const RBVArgs&)
         }
     }
 
-    if(m_prj.hasVideoFile() && m_timelineDurationSeconds > 0){
+    if(m_session.project().hasVideoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }
     updateWindowTitle();
@@ -1657,18 +1653,18 @@ void MainWindow::audioWaveformThresholdSlider_ValueChanged(const Control&, const
 }
 
 void MainWindow::keepAudioCheckBox_Changed(const Control&, const REArgs&){
-    if(m_editorHistory.isApplying){
+    if(m_session.editorHistory().isApplying){
         return;
     }
-    (void)::llvc::pushUndoSnapshotIfChanged(m_prj, m_editorHistory);
-    m_prj.keepAudio(KeepAudioCheckBox().IsChecked().GetBoolean());
+    (void)::llvc::pushUndoSnapshotIfChanged(m_session.project(), m_session.editorHistory());
+    m_session.project().keepAudio(KeepAudioCheckBox().IsChecked().GetBoolean());
     updateAudioUiAndPlaybackState();
     updateWindowTitle();
     refreshStatusInfoSection();
 }
 
 void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const Control&){
-    if(m_editorHistory.isApplying){
+    if(m_session.editorHistory().isApplying){
         return;
     }
 
@@ -1678,12 +1674,12 @@ void MainWindow::audioCrossfadeComboBox_SelectionChanged(const Control&, const C
     }
 
     try{
-        (void)::llvc::pushUndoSnapshotIfChanged(m_prj, m_editorHistory);
+        (void)::llvc::pushUndoSnapshotIfChanged(m_session.project(), m_session.editorHistory());
         const auto val{stoi(wstring(unbox_value<hstring>(selected.Tag())).c_str())};
-        m_prj.audioXfadeMs(val);
+        m_session.project().audioXfadeMs(val);
     } catch(...){
-        (void)::llvc::pushUndoSnapshotIfChanged(m_prj, m_editorHistory);
-        m_prj.audioXfadeMs(0);
+        (void)::llvc::pushUndoSnapshotIfChanged(m_session.project(), m_session.editorHistory());
+        m_session.project().audioXfadeMs(0);
     }
 
     syncAudioCrossfadeComboSelection();
@@ -1696,14 +1692,14 @@ void MainWindow::audioVolumeSlider_ValueChanged(const Control&, const RBVArgs& a
         return;
     }
 
-    if(m_editorHistory.isApplying){
+    if(m_session.editorHistory().isApplying){
         return;
     }
 
-    (void)::llvc::pushUndoSnapshotIfChanged(m_prj, m_editorHistory);
-    m_prj.audioVolumePct(static_cast<int32_t>(lround(args.NewValue())));
+    (void)::llvc::pushUndoSnapshotIfChanged(m_session.project(), m_session.editorHistory());
+    m_session.project().audioVolumePct(static_cast<int32_t>(lround(args.NewValue())));
     updateAudioUiAndPlaybackState();
-    if(m_prj.keepAudio() && m_prj.audioVolumePct() > 100){
+    if(m_session.project().keepAudio() && m_session.project().audioVolumePct() > 100){
         setStatusMessage(L"Preview audio is capped at 100%; export still uses the full configured boost");
     }
     updateWindowTitle();
@@ -1727,12 +1723,12 @@ void MainWindow::timelineHorizontalScrollBar_ValueChanged(const Control&, const 
 
 void MainWindow::timelineScrollViewer_ViewChanged(const Control&, const SVVCArgs&){
     syncTimelineHorizontalScrollBar();
-    if(sourceHasAudio() && !m_audioWaveformAnalysisQueued){
-        m_audioWaveformAnalysisQueued = true;
+    if(sourceHasAudio() && !m_session.timeline().waveforms().analysisQueued()){
+        m_session.timeline().waveforms().analysisQueued(true);
         ensureAudioWaveformAsync();
     }
 
-    if(m_isExportInProgress && m_prj.hasVideoFile() && m_timelineDurationSeconds > 0){
+    if(m_session.exporter().isExportInProgress() && m_session.project().hasVideoFile() && m_timelineDurationSeconds > 0){
         renderTimelineAsync();
     }else{
         queueTimelineViewportRender();
@@ -1755,7 +1751,7 @@ void MainWindow::timelineScrollViewer_PointerWheelChanged(const Control&, const 
         return;
     }
 
-    if(m_prj.timelineDuration100ns() > 0 && TimelineCanvas().Width() > 0){
+    if(m_session.project().timelineDuration100ns() > 0 && TimelineCanvas().Width() > 0){
         const auto pointerXOnCanvas{point.Position().X + TimelineScrollViewer().HorizontalOffset()};
         if(const auto time100ns{timelinePointToTime100ns(pointerXOnCanvas, TimelineCanvas().Width())}){
             m_timelineInteraction.pendingWheelZoomAnchor = ::llvc::TimelinePointerZoomAnchor{
@@ -1804,18 +1800,18 @@ void MainWindow::timelineCanvas_PointerMoved(const Control&, const PREArgs& e){
 
     const auto scrollViewer{TimelineScrollViewer()};
     const auto viewportWidth{scrollViewer.ViewportWidth()};
-    const auto target{m_tl.dragTargetOffset(m_timelineInteraction.dragStartOffset, deltaX, TimelineCanvas().Width(), viewportWidth)};
+    const auto target{m_session.timeline().dragTargetOffset(m_timelineInteraction.dragStartOffset, deltaX, TimelineCanvas().Width(), viewportWidth)};
     const auto targetOffset{box_value(target).as<IReference<double>>()};
     scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     e.Handled(true);
 }
 
 std::optional<int64_t> MainWindow::timelinePointToTime100ns(double pointerX, double width) const{
-    return m_tl.pointToTime100ns(pointerX, width, m_prj.timelineDuration100ns());
+    return m_session.timeline().pointToTime100ns(pointerX, width, m_session.project().timelineDuration100ns());
 }
 
 bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
-    const auto result{::llvc::executeToggleMarkerCommand(m_prj, m_mediaInfo.frameRate, m_editorHistory, time100ns)};
+    const auto result{::llvc::executeToggleMarkerFrameCommand(m_session.project(), m_session.editorHistory(), m_session.media().frameIndexForTime100ns(time100ns))};
     if(!result.changed){
         return false;
     }
@@ -1829,30 +1825,36 @@ bool MainWindow::toggleSelectedKeyframeAtTime100ns(int64_t time100ns){
 }
 
 bool MainWindow::evaluatePlacedMarkerAtTime100ns(int64_t time100ns){
-    if(!m_prj.hasVideoFile() || m_timelineDurationSeconds <= 0){
+    if(!m_session.project().hasVideoFile() || m_timelineDurationSeconds <= 0){
         return false;
     }
 
+    const auto rapLookupTime100ns{m_session.media().sourceFrameCount() > 0
+        ? m_session.media().time100nsForFrame(m_session.media().frameIndexForTime100ns(time100ns))
+        : time100ns};
     vector<int64_t> rapTimes100ns;
-    vector<int64_t> markerTimes100ns{time100ns};
+    vector<int64_t> markerTimes100ns{rapLookupTime100ns};
     if(!tryGetRapTimes100ns(rapTimes100ns, true, &markerTimes100ns)){
-        if(find(m_pendingAutoEvaluateMarkerTimes100ns.begin(), m_pendingAutoEvaluateMarkerTimes100ns.end(), time100ns) == m_pendingAutoEvaluateMarkerTimes100ns.end()){
-            m_pendingAutoEvaluateMarkerTimes100ns.push_back(time100ns);
+        if(find(m_session.media().rapLookup().pendingAutoEvaluateMarkerTimes100ns.begin(), m_session.media().rapLookup().pendingAutoEvaluateMarkerTimes100ns.end(), time100ns) == m_session.media().rapLookup().pendingAutoEvaluateMarkerTimes100ns.end()){
+            m_session.media().rapLookup().pendingAutoEvaluateMarkerTimes100ns.push_back(time100ns);
         }
         queueRapLookup(false, 0);
         return false;
     }
 
-    const auto result{::llvc::evaluatePlacedMarkerAgainstRap(m_prj, rapTimes100ns, time100ns)};
+    vector<::llvc::FrameIndex> rapFrames;
+    rapFrames.reserve(rapTimes100ns.size());
+    for(const auto rapTime100ns: rapTimes100ns){
+        rapFrames.push_back(m_session.media().frameIndexForTime100ns(rapTime100ns));
+    }
+    const auto result{::llvc::evaluatePlacedMarkerFrameAgainstRap(m_session.project(), rapFrames, m_session.media().frameIndexForTime100ns(time100ns))};
     if(!result.changed){
         return false;
     }
 
-    m_lastReevaluatedEditorSnapshot.reset();
-    m_lastReevaluatedRapSourcePath.clear();
-    m_cachedEffectiveExportPlanSnapshot.reset();
-    m_cachedEffectiveExportPlanSourcePath.clear();
-    m_cachedEffectiveExportPlan.reset();
+    m_session.media().rapLookup().lastReevaluatedSnapshot.reset();
+    m_session.media().rapLookup().lastReevaluatedSourcePath.clear();
+    m_session.exporter().clearCachedPlan();
     renderTimelineTicks();
     renderKeyframeTicks();
     renderCutOverlays();
@@ -1943,9 +1945,14 @@ void MainWindow::timelineTickCanvas_PointerReleased(const Control&, const PREArg
 void MainWindow::onNaturalDurationChanged(const MPSession& sender, const Control&){
     const auto duration{sender.NaturalDuration()};
     m_timelineDurationSeconds = max(0.0, duration.count() / 10'000'000.0);
-    m_prj.timelineDuration100ns(max<int64_t>(0, duration.count()));
+    m_session.project().timelineDuration100ns(max<int64_t>(0, duration.count()));
+    const auto& frameRate{m_session.media().inspection().frameRate};
+    if(frameRate.num != 0 && frameRate.den != 0){
+        m_session.media().sourceFrameCount(static_cast<::llvc::FrameIndex>(ceil(m_timelineDurationSeconds * static_cast<double>(frameRate.num) / frameRate.den)));
+        m_session.project().synchronizeCutPlannerFrames(m_session.media().sourceFrameCount());
+    }
 
-    if(m_prj.hasVideoFile() && m_timelineDurationSeconds > 0){
+    if(m_session.project().hasVideoFile() && m_timelineDurationSeconds > 0){
         const auto weak{get_weak()};
         if(DispatcherQueue().HasThreadAccess()){
             renderTimelineAsync();
@@ -1987,6 +1994,7 @@ void MainWindow::updateTimelineCursorFromPosition(int64_t position100ns){
         return;
     }
 
+    m_session.preview().seekToFrame(m_session.media().frameIndexForTime100ns(position100ns));
     const auto seconds{max(0.0, position100ns / 10'000'000.0)};
     const auto ratio{clamp(seconds / m_timelineDurationSeconds, 0.0, 1.0)};
     const auto left{ratio * TimelineCanvas().Width()};
@@ -2074,8 +2082,8 @@ void MainWindow::seekTimelineToCanvasX(double pointerX){
         return;
     }
 
-    const auto duration100ns{m_prj.timelineDuration100ns()};
-    const auto target100nsOpt{m_tl.pointToTime100ns(pointerX, TimelineCanvas().Width(), duration100ns)};
+    const auto duration100ns{m_session.project().timelineDuration100ns()};
+    const auto target100nsOpt{m_session.timeline().pointToTime100ns(pointerX, TimelineCanvas().Width(), duration100ns)};
     if(!target100nsOpt){
         return;
     }
@@ -2086,7 +2094,7 @@ void MainWindow::seekTimelineToCanvasX(double pointerX){
     session.Position(TimeSpan{target100ns});
     if(!wasPlaying){
         try{
-            const auto frameStep100ns{m_tl.frameStep100ns(m_mediaInfo.frameRate.num, m_mediaInfo.frameRate.den)};
+            const auto frameStep100ns{m_session.timeline().frameStep100ns(m_session.media().inspection().frameRate.num, m_session.media().inspection().frameRate.den)};
             if(target100ns + frameStep100ns < duration100ns){
                 m_player.StepForwardOneFrame();
                 m_player.StepBackwardOneFrame();
@@ -2113,7 +2121,7 @@ void MainWindow::ensureTimelineCursorVisible(double cursorLeft){
         return;
     }
 
-    if(const auto targetOffsetValue{m_tl.cursorOffsetToEnsureVisible(cursorLeft, currentOffset, viewportWidth, TimelineCanvas().Width())}){
+    if(const auto targetOffsetValue{m_session.timeline().cursorOffsetToEnsureVisible(cursorLeft, currentOffset, viewportWidth, TimelineCanvas().Width())}){
         const auto targetOffset{box_value(*targetOffsetValue).as<IReference<double>>()};
         scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
     }
@@ -2139,15 +2147,16 @@ void MainWindow::renderTimelineTicks(){
     }
 
     const auto visibleWidth{max(1.0, TimelineScrollViewer().ViewportWidth())};
-    ::llvc::renderTimelineMajorTicks(m_tl, TimelineTickCanvas(), width, m_timelineDurationSeconds, visibleWidth);
+    ::llvc::renderTimelineMajorTicks(m_session.timeline(), TimelineTickCanvas(), width, m_timelineDurationSeconds, visibleWidth);
 }
 
 void MainWindow::renderKeyframeTicks(){
-    if(m_prj.frameIndex().empty() || m_timelineDurationSeconds <= 0 || TimelineTickCanvas().Width() <= 0){
+    const auto frameCount{m_session.media().sourceFrameCount()};
+    if(frameCount == 0 || TimelineTickCanvas().Width() <= 0){
         return;
     }
-
-    ::llvc::renderTimelineKeyframeTicks(TimelineTickCanvas(), m_prj.frameIndex(), m_prj.timelineDuration100ns());
+    const auto model{m_session.buildTimelineRenderModel({.firstVisibleFrame = 0, .endVisibleFrameExclusive = frameCount, .viewportWidthPixels = TimelineTickCanvas().Width()})};
+    ::llvc::renderTimelineMarkers(TimelineTickCanvas(), model.markers);
 }
 
 void MainWindow::renderCutOverlays(){
@@ -2159,14 +2168,20 @@ void MainWindow::renderCutOverlays(){
         return;
     }
 
-    ::llvc::renderTimelineCutOverlays(m_tl, CutOverlayLayer(), m_prj.buildCutRanges100ns(), width, m_timelineDurationSeconds);
+    const auto frameCount{m_session.media().sourceFrameCount()};
+    const auto model{m_session.buildTimelineRenderModel({.firstVisibleFrame = 0, .endVisibleFrameExclusive = frameCount, .viewportWidthPixels = width})};
+    ::llvc::renderTimelineCutScenes(CutOverlayLayer(), width, model.cutScenes);
 
     refreshStatusInfoSection();
 }
 
 
 bool MainWindow::toggleCutBlockAtTime100ns(int64_t time100ns){
-    const auto result{::llvc::executeToggleCutBlockCommand(m_prj, m_editorHistory, time100ns)};
+    const auto sourceFrameCount{m_session.media().sourceFrameCount()};
+    if(sourceFrameCount == 0){
+        return false;
+    }
+    const auto result{::llvc::executeToggleCutSceneFrameCommand(m_session.project(), m_session.editorHistory(), m_session.media().frameIndexForTime100ns(time100ns), sourceFrameCount)};
     if(!result.changed){
         return false;
     }
@@ -2176,7 +2191,11 @@ bool MainWindow::toggleCutBlockAtTime100ns(int64_t time100ns){
 }
 
 bool MainWindow::setCutBlockAtTime100ns(int64_t time100ns, bool cutScene){
-    const auto result{::llvc::executeSetCutBlockCommand(m_prj, m_editorHistory, time100ns, cutScene)};
+    const auto sourceFrameCount{m_session.media().sourceFrameCount()};
+    if(sourceFrameCount == 0){
+        return false;
+    }
+    const auto result{::llvc::executeSetCutSceneFrameCommand(m_session.project(), m_session.editorHistory(), m_session.media().frameIndexForTime100ns(time100ns), cutScene, sourceFrameCount)};
     if(!result.changed){
         return false;
     }
@@ -2201,7 +2220,7 @@ bool MainWindow::markSceneAtCursor(bool cutScene){
 }
 
 bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
-    if(!m_prj.hasVideoFile() || m_timelineDurationSeconds <= 0){
+    if(!m_session.project().hasVideoFile() || m_timelineDurationSeconds <= 0){
         return false;
     }
 
@@ -2215,7 +2234,7 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
     if(!cursorTime100ns){
         return false;
     }
-    const auto result{::llvc::executeRapNudgeCommand(m_prj, m_tl, rapTimes100ns, m_editorHistory, *cursorTime100ns, expandScene)};
+    const auto result{::llvc::executeRapNudgeCommand(m_session.project(), m_session.timeline(), rapTimes100ns, m_session.editorHistory(), *cursorTime100ns, expandScene)};
     if(!result.changed){
         return false;
     }
@@ -2227,7 +2246,7 @@ bool MainWindow::nudgeCurrentSceneBoundaryToNearestRap(bool expandScene){
 
 
 bool MainWindow::trySkipCurrentCutDuringPlayback(){
-    if(!m_player || m_prj.cutScenes().empty() || m_timelineDurationSeconds <= 0){
+    if(!m_player || m_timelineDurationSeconds <= 0){
         return false;
     }
 
@@ -2236,15 +2255,18 @@ bool MainWindow::trySkipCurrentCutDuringPlayback(){
         return false;
     }
 
-    const auto cutRanges100ns{m_prj.buildCutRanges100ns()};
-    const auto now100ns{max<int64_t>(0, m_player.PlaybackSession().Position().count())};
-    for(const auto& [start100ns, end100ns]: cutRanges100ns){
-        if(now100ns >= start100ns && now100ns < end100ns){
-            m_player.PlaybackSession().Position(TimeSpan{end100ns});
+    const auto position100ns{max<int64_t>(0, m_player.PlaybackSession().Position().count())};
+    const auto sourceFrameCount{m_session.media().sourceFrameCount()};
+    if(sourceFrameCount > 0){
+        const auto targetFrame{m_session.preview().playbackTargetForFrame(
+            m_session.media().frameIndexForTime100ns(position100ns),
+            m_session.project().cutPlanner(),
+            sourceFrameCount)};
+        if(targetFrame){
+            m_player.PlaybackSession().Position(TimeSpan{m_session.media().time100nsForFrame(*targetFrame)});
             return true;
         }
     }
-
     return false;
 }
 
@@ -2254,7 +2276,7 @@ void MainWindow::stepByFrame(int delta){
         return;
     }
 
-    const auto durationFromProject100ns{m_prj.timelineDuration100ns()};
+    const auto durationFromProject100ns{m_session.project().timelineDuration100ns()};
     const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
     const auto duration100ns{max(durationFromProject100ns, durationFromTimeline100ns)};
     if(duration100ns <= 0){
@@ -2262,9 +2284,17 @@ void MainWindow::stepByFrame(int delta){
     }
 
     const auto current{currentNavigationTime100ns()};
-
-    const auto frameStep100ns{m_tl.frameStep100ns(m_mediaInfo.frameRate.num, m_mediaInfo.frameRate.den)};
-    const auto target{m_tl.applyFrameStep(current, delta, duration100ns, frameStep100ns)};
+    const auto sourceFrameCount{m_session.media().sourceFrameCount()};
+    const auto target{sourceFrameCount > 0
+        ? [&]{
+            m_session.preview().seekTarget(m_session.media().frameIndexForTime100ns(current), sourceFrameCount);
+            return m_session.media().time100nsForFrame(m_session.preview().stepTarget(delta, sourceFrameCount));
+        }()
+        : m_session.timeline().applyFrameStep(
+            current,
+            delta,
+            duration100ns,
+            m_session.timeline().frameStep100ns(m_session.media().inspection().frameRate.num, m_session.media().inspection().frameRate.den))};
 
     if(m_player){
         m_player.PlaybackSession().Position(TimeSpan{target});
@@ -2278,7 +2308,7 @@ void MainWindow::stepByFrame(int delta){
         return;
     }
 
-    const auto left{m_tl.timeToCanvasX(target, duration100ns, width)};
+    const auto left{m_session.timeline().timeToCanvasX(target, duration100ns, width)};
     Controls::Canvas::SetLeft(TimelineCursor(), left);
     ensureTimelineCursorVisible(left);
     syncTimelineHorizontalScrollBar();
@@ -2289,7 +2319,7 @@ bool MainWindow::seekBySeconds(int deltaSeconds){
         return false;
     }
 
-    const auto durationFromProject100ns{m_prj.timelineDuration100ns()};
+    const auto durationFromProject100ns{m_session.project().timelineDuration100ns()};
     const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
     const auto duration100ns{max(durationFromProject100ns, durationFromTimeline100ns)};
     if(duration100ns <= 0){
@@ -2313,7 +2343,7 @@ bool MainWindow::seekBySeconds(int deltaSeconds){
         return false;
     }
 
-    const auto left{m_tl.timeToCanvasX(target100ns, duration100ns, width)};
+    const auto left{m_session.timeline().timeToCanvasX(target100ns, duration100ns, width)};
     Controls::Canvas::SetLeft(TimelineCursor(), left);
     ensureTimelineCursorVisible(left);
     syncTimelineHorizontalScrollBar();
@@ -2325,7 +2355,7 @@ bool MainWindow::seekBySeconds(double deltaSeconds){
         return false;
     }
 
-    const auto durationFromProject100ns{m_prj.timelineDuration100ns()};
+    const auto durationFromProject100ns{m_session.project().timelineDuration100ns()};
     const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
     const auto duration100ns{max(durationFromProject100ns, durationFromTimeline100ns)};
     if(duration100ns <= 0){
@@ -2349,7 +2379,7 @@ bool MainWindow::seekBySeconds(double deltaSeconds){
         return false;
     }
 
-    const auto left{m_tl.timeToCanvasX(target100ns, duration100ns, width)};
+    const auto left{m_session.timeline().timeToCanvasX(target100ns, duration100ns, width)};
     Controls::Canvas::SetLeft(TimelineCursor(), left);
     ensureTimelineCursorVisible(left);
     syncTimelineHorizontalScrollBar();
@@ -2361,7 +2391,7 @@ bool MainWindow::jumpToTimelinePercent(uint32_t percent){
         return false;
     }
 
-    const auto durationFromProject100ns{m_prj.timelineDuration100ns()};
+    const auto durationFromProject100ns{m_session.project().timelineDuration100ns()};
     const auto durationFromTimeline100ns{static_cast<int64_t>(max(0.0, m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
     const auto duration100ns{max(durationFromProject100ns, durationFromTimeline100ns)};
     if(duration100ns <= 0){
@@ -2382,7 +2412,7 @@ bool MainWindow::jumpToTimelinePercent(uint32_t percent){
         return false;
     }
 
-    const auto left{m_tl.timeToCanvasX(target100ns, duration100ns, width)};
+    const auto left{m_session.timeline().timeToCanvasX(target100ns, duration100ns, width)};
     Controls::Canvas::SetLeft(TimelineCursor(), left);
     ensureTimelineCursorVisible(left);
     syncTimelineHorizontalScrollBar();
@@ -2395,33 +2425,28 @@ bool MainWindow::moveCursorToMarker(int direction){
         return false;
     }
 
-    const auto duration100ns{m_prj.timelineDuration100ns()};
+    const auto duration100ns{m_session.project().timelineDuration100ns()};
     if(duration100ns <= 0){
         return false;
     }
 
-    const auto& markers{m_prj.frameIndex()};
-    if(markers.empty()){
+    m_session.preview().seekToFrame(m_session.media().frameIndexForTime100ns(currentNavigationTime100ns()), m_session.media().sourceFrameCount());
+    const auto targetFrame{m_session.preview().moveToMarker(m_session.project().cutPlanner(), direction)};
+    if(!targetFrame){
         return false;
     }
-
-    const auto current100ns{currentNavigationTime100ns()};
-
-    const auto target100ns{m_tl.markerNavigationTarget100ns(markers, current100ns, direction)};
-    if(!target100ns){
-        return false;
-    }
+    const auto target100ns{m_session.media().time100nsForFrame(*targetFrame)};
 
     if(m_player){
-        m_player.PlaybackSession().Position(TimeSpan{*target100ns});
-        updateTimelineCursorFromPosition(*target100ns);
+        m_player.PlaybackSession().Position(TimeSpan{target100ns});
+        updateTimelineCursorFromPosition(target100ns);
         ensureCurrentTimelineCursorVisible();
         return true;
     }
 
     const auto width{TimelineCanvas().Width()};
     if(width > 0){
-        const auto left{m_tl.timeToCanvasX(*target100ns, duration100ns, width)};
+        const auto left{m_session.timeline().timeToCanvasX(target100ns, duration100ns, width)};
         Controls::Canvas::SetLeft(TimelineCursor(), left);
         ensureTimelineCursorVisible(left);
         syncTimelineHorizontalScrollBar();
@@ -2440,127 +2465,71 @@ void MainWindow::tryFocusTimelineCanvas(FState focusState){
 
 bool MainWindow::tryGetRapTimes100ns(vector<int64_t>& rapTimes100ns, bool allowPartial, const vector<int64_t>* requiredPartialTargets100ns) const{
     rapTimes100ns.clear();
-
-    if(!m_prj.hasVideoFile()){
+    const span<const int64_t> required{requiredPartialTargets100ns ? span<const int64_t>{*requiredPartialTargets100ns} : span<const int64_t>{}};
+    const auto available{m_session.media().availableRapTimes(allowPartial, required)};
+    if(!available){
         return false;
     }
-
-    const hstring sourcePath{m_prj.videoFilePath()};
-    if(sourcePath != m_cachedRapSourcePath || !m_cachedRapLookupAttempted || !m_cachedRapLookupSucceeded){
-        return false;
-    }
-    if(m_cachedRapTimesPartial){
-        if(!allowPartial){
-            return false;
-        }
-        if(requiredPartialTargets100ns){
-            auto requestedTargets{*requiredPartialTargets100ns};
-            sort(requestedTargets.begin(), requestedTargets.end());
-            requestedTargets.erase(unique(requestedTargets.begin(), requestedTargets.end()), requestedTargets.end());
-            if(!includes(m_cachedRapLookupTargetTimes100ns.begin(), m_cachedRapLookupTargetTimes100ns.end(), requestedTargets.begin(), requestedTargets.end())){
-                return false;
-            }
-        }
-    }
-
-    rapTimes100ns = m_cachedRapTimes100ns;
-    return !rapTimes100ns.empty();
+    rapTimes100ns = *available;
+    return true;
 }
 
 std::optional<::llvc::EffectiveExportPlan> MainWindow::tryBuildEffectiveExportPlan(const std::function<void(double)>& progressCallback) const{
-    const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
-    if(sourceDuration100ns <= 0){
-        return std::nullopt;
-    }
-
-    const auto sourcePath{m_prj.hasVideoFile() ? m_prj.videoFilePath() : hstring{}};
-    const auto currentSnapshot{::llvc::captureEditorSnapshot(m_prj)};
-    if(m_cachedEffectiveExportPlan
-        && sourcePath == m_cachedEffectiveExportPlanSourcePath
-        && m_cachedEffectiveExportPlanSnapshot
-        && ::llvc::isSameEditorSnapshot(currentSnapshot, *m_cachedEffectiveExportPlanSnapshot)){
-        if(progressCallback){
-            progressCallback(100.0);
-        }
-        return m_cachedEffectiveExportPlan;
-    }
-
-    if(!::llvc::effectiveExportPlanNeedsRapAlignment(m_prj)){
-        auto plan{::llvc::buildDirectEffectiveExportPlan(m_prj, sourceDuration100ns)};
-        if(progressCallback){
-            progressCallback(100.0);
-        }
-        m_cachedEffectiveExportPlanSnapshot = currentSnapshot;
-        m_cachedEffectiveExportPlanSourcePath = sourcePath;
-        m_cachedEffectiveExportPlan = plan;
-        return plan;
-    }
-
-    vector<int64_t> rapTimes100ns;
-    const auto rapLookupTargets100ns{::llvc::buildRapLookupTimesForExportAlignment(m_prj, sourceDuration100ns)};
-
-    if(!tryGetRapTimes100ns(rapTimes100ns, true, &rapLookupTargets100ns)){
-        return std::nullopt;
-    }
-
-    auto plan{m_prj.buildEffectiveExportPlanWithRapPreroll(sourceDuration100ns, rapTimes100ns, progressCallback)};
-    m_cachedEffectiveExportPlanSnapshot = currentSnapshot;
-    m_cachedEffectiveExportPlanSourcePath = sourcePath;
-    m_cachedEffectiveExportPlan = plan;
-    return plan;
+    return m_session.exporter().availablePlan(m_session.project(), m_session.media(), progressCallback);
 }
 
 void MainWindow::queueRapLookup(bool queueReevaluate, int nudgeDirection){
-    if(!m_prj.hasVideoFile() || m_prj.videoFilePath().empty()){
+    if(!m_session.project().hasVideoFile() || m_session.project().videoFilePath().empty()){
         return;
     }
 
-    const hstring sourcePath{m_prj.videoFilePath()};
-    if(m_cachedRapLookupAttempted && sourcePath == m_cachedRapSourcePath && !m_cachedRapLookupSucceeded){
-        setStatusMessage(L"Could not read RAP markers from the current source");
-        return;
+    if(m_session.media().rapLookup().attempted && !m_session.media().rapLookup().succeeded){
+        m_session.media().rapLookup().reset();
     }
 
     if(queueReevaluate){
-        m_pendingReevaluateAfterRapLookup = true;
+        m_session.media().rapLookup().pendingReevaluate = true;
     }
     if(nudgeDirection != 0){
-        m_pendingNudgeDirectionAfterRapLookup = nudgeDirection;
+        m_session.media().rapLookup().pendingNudgeDirection = nudgeDirection;
     }
 
-    if(m_isRapLookupInProgress){
+    if(m_session.media().rapLookup().inProgress || m_rapLookupQueued){
         setStatusMessage(L"Scanning source for RAP markers...");
         return;
     }
 
-    runRapLookupAsync();
+    m_rapLookupQueued = true;
+    const auto weakSelf{get_weak()};
+    if(!DispatcherQueue().TryEnqueue([weakSelf]{
+        if(const auto self{weakSelf.get()}){
+            self->m_rapLookupQueued = false;
+            if(self->m_isClosing || self->m_session.media().rapLookup().inProgress || !self->m_session.project().hasVideoFile()){
+                return;
+            }
+            self->m_rapLookupAction = self->runRapLookupAsync();
+        }
+    })){
+        m_rapLookupQueued = false;
+    }
 }
 
-IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage, const std::function<void(double)>& progressCallback){
-    if(!m_prj.hasVideoFile() || m_prj.videoFilePath().empty()){
+IOpBool MainWindow::ensureRapMarkersAvailableAsync(wstring statusMessage, const vector<int64_t>& requiredTargets100ns, std::function<void(double)> progressCallback){
+    if(!m_session.project().hasVideoFile() || m_session.project().videoFilePath().empty()){
         co_return false;
     }
 
-    if(m_isExportInProgress && m_cancelExportRequested.load()){
+    if(m_session.exporter().isExportInProgress() && m_session.exporter().cancelRequested()){
         co_return false;
     }
 
-    MFLifetime mf{};
-    const hstring sourcePath{m_prj.videoFilePath()};
+    const auto activityGeneration{m_session.activityGeneration()};
+    const hstring sourcePath{m_session.project().videoFilePath()};
     vector<int64_t> rapTimes100ns;
-    auto markerTimes100ns{::llvc::buildRapLookupTimesForExportAlignment(m_prj, m_prj.timelineDuration100ns())};
-    if(markerTimes100ns.empty()){
-        const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
-        const auto& markers{m_prj.frameIndex()};
-        markerTimes100ns.reserve(markers.size());
-        for(const auto& marker: markers){
-            if(marker.time100ns > 0 && marker.time100ns < sourceDuration100ns){
-                markerTimes100ns.push_back(marker.time100ns);
-            }
-        }
-        sort(markerTimes100ns.begin(), markerTimes100ns.end());
-        markerTimes100ns.erase(unique(markerTimes100ns.begin(), markerTimes100ns.end()), markerTimes100ns.end());
-    }
+    vector<int64_t> markerTimes100ns{m_session.media().markerTimesForRapScan(m_session.project())};
+    markerTimes100ns.insert(markerTimes100ns.end(), requiredTargets100ns.begin(), requiredTargets100ns.end());
+    sort(markerTimes100ns.begin(), markerTimes100ns.end());
+    markerTimes100ns.erase(unique(markerTimes100ns.begin(), markerTimes100ns.end()), markerTimes100ns.end());
     const auto allowPartialRapTimes{!markerTimes100ns.empty()};
     if(tryGetRapTimes100ns(rapTimes100ns, allowPartialRapTimes, &markerTimes100ns)){
         if(progressCallback && !markerTimes100ns.empty()){
@@ -2569,19 +2538,19 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage,
         co_return true;
     }
 
-    while(m_isRapLookupInProgress){
-        if(m_isExportInProgress && m_cancelExportRequested.load()){
+    while(m_session.media().rapLookup().inProgress){
+        if(m_session.exporter().isExportInProgress() && m_session.exporter().cancelRequested()){
             co_return false;
         }
         if(tryGetRapTimes100ns(rapTimes100ns, allowPartialRapTimes, &markerTimes100ns)){
             co_return true;
         }
-        if(!m_prj.hasVideoFile() || m_prj.videoFilePath() != sourcePath){
+        if(!m_session.project().hasVideoFile() || m_session.project().videoFilePath() != sourcePath){
             co_return false;
         }
 
-        setOperationInProgress(true, m_isExportInProgress ? false : true);
-        if(m_isExportInProgress && ExportOverlayProgressBar().Value() <= 0.0){
+        setOperationInProgress(true, m_session.exporter().isExportInProgress() ? false : true);
+        if(m_session.exporter().isExportInProgress() && ExportOverlayProgressBar().Value() <= 0.0){
             setOperationProgress(0);
             setExportOverlayStageState(ExportOverlayStage::Rap, L"In progress", 0.0, true);
         }
@@ -2592,61 +2561,31 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage,
     if(tryGetRapTimes100ns(rapTimes100ns, allowPartialRapTimes, &markerTimes100ns)){
         co_return true;
     }
-    if(m_cachedRapLookupAttempted && sourcePath == m_cachedRapSourcePath && !m_cachedRapLookupSucceeded){
-        co_return false;
-    }
-
-    winrt::apartment_context uiThread;
-    m_isRapLookupInProgress = true;
-    setOperationInProgress(true, m_isExportInProgress ? false : true);
-    if(m_isExportInProgress && ExportOverlayProgressBar().Value() <= 0.0){
+    setOperationInProgress(true, m_session.exporter().isExportInProgress() ? false : true);
+    if(m_session.exporter().isExportInProgress() && ExportOverlayProgressBar().Value() <= 0.0){
         setOperationProgress(0);
         setExportOverlayStageState(ExportOverlayStage::Rap, L"In progress", 0.0, true);
     }
     setStatusMessage(statusMessage);
 
-    auto lookupSucceeded{false};
-    auto lookupCanceled{false};
-    co_await resume_background();
-    try{
-        if(m_cancelExportRequested.load()){
-            lookupSucceeded = false;
-        }else{
-            rapTimes100ns = m_media ? m_media->collectRapTimes100ns(markerTimes100ns, progressCallback, [weak = get_weak()](){
-                if(const auto strong = weak.get()){
-                    return strong->m_cancelExportRequested.load();
-                }
-                return false;
-            }) : vector<int64_t>{};
-            sort(rapTimes100ns.begin(), rapTimes100ns.end());
-            rapTimes100ns.erase(unique(rapTimes100ns.begin(), rapTimes100ns.end()), rapTimes100ns.end());
-            lookupSucceeded = !rapTimes100ns.empty();
-        }
-    }catch(const hresult_error& ex){
-        if(ex.code() == HRESULT_FROM_WIN32(ERROR_CANCELLED)){
-            lookupCanceled = true;
-        }
-        rapTimes100ns.clear();
-        lookupSucceeded = false;
-    }catch(...){
-        rapTimes100ns.clear();
-        lookupSucceeded = false;
+    const auto lookupSucceeded{co_await m_session.media().scanAndCommitRapMarkersAsync(
+        m_session.project(),
+        markerTimes100ns,
+        progressCallback,
+        [weak = get_weak()](){
+            if(const auto strong = weak.get()){
+                return strong->m_session.exporter().cancelRequested();
+            }
+            return true;
+        })};
+
+    const auto sameSourceLoaded{activityGeneration == m_session.activityGeneration()
+        && m_session.project().hasVideoFile()
+        && m_session.project().videoFilePath() == sourcePath};
+    if(!sameSourceLoaded || !lookupSucceeded){
+        m_session.media().abandonRapLookup();
     }
-
-    co_await uiThread;
-
-    const auto sameSourceLoaded{m_prj.hasVideoFile() && m_prj.videoFilePath() == sourcePath};
-    if(sameSourceLoaded && !lookupCanceled){
-        m_cachedRapSourcePath = sourcePath;
-        m_cachedRapTimes100ns = lookupSucceeded ? rapTimes100ns : vector<int64_t>{};
-        m_cachedRapLookupTargetTimes100ns = lookupSucceeded ? markerTimes100ns : vector<int64_t>{};
-        m_cachedRapLookupAttempted = true;
-        m_cachedRapLookupSucceeded = lookupSucceeded;
-        m_cachedRapTimesPartial = lookupSucceeded && !markerTimes100ns.empty();
-    }
-
-    m_isRapLookupInProgress = false;
-    if(!m_isExportInProgress){
+    if(!m_session.exporter().isExportInProgress()){
         setOperationInProgress(false);
     }
     if(sameSourceLoaded){
@@ -2657,42 +2596,72 @@ IOpBool MainWindow::ensureRapMarkersAvailableAsync(const wstring& statusMessage,
     co_return sameSourceLoaded && lookupSucceeded;
 }
 
-fire_and_forget MainWindow::runRapLookupAsync(){
-    const auto weakSelf{get_weak()};
-    const auto lookupSucceeded{co_await ensureRapMarkersAvailableAsync(L"Scanning source for RAP markers and aligning cut plan...")};
+AAction MainWindow::runRapLookupAsync(){
+    const auto lifetime{get_strong()};
+    bool lookupSucceeded{};
+    wstring failureMessage;
+    try{
+        lookupSucceeded = co_await ensureRapMarkersAvailableAsync(L"Scanning source for RAP markers and aligning cut plan...");
+    }catch(const hresult_error& ex){
+        failureMessage = ex.message().c_str();
+    }catch(const exception& ex){
+        failureMessage = to_hstring(ex.what()).c_str();
+    }catch(...){
+        failureMessage = L"Unexpected failure while scanning RAP markers.";
+    }
+    completeQueuedRapLookup(lookupSucceeded, failureMessage);
+}
 
-    if(const auto self{weakSelf.get()}){
-        const auto runReevaluate{self->m_pendingReevaluateAfterRapLookup};
-        const auto runReevaluateWithoutUndo{self->m_pendingReevaluateWithoutUndoAfterRapLookup};
-        const auto nudgeDirection{self->m_pendingNudgeDirectionAfterRapLookup};
-        self->m_pendingReevaluateAfterRapLookup = false;
-        self->m_pendingReevaluateWithoutUndoAfterRapLookup = false;
-        self->m_pendingNudgeDirectionAfterRapLookup = 0;
+void MainWindow::completeQueuedRapLookup(const bool lookupSucceeded, const wstring& failureMessage){
+    try{
+        const auto runReevaluate{m_session.media().rapLookup().pendingReevaluate};
+        const auto runReevaluateWithoutUndo{m_session.media().rapLookup().pendingReevaluateWithoutUndo};
+        const auto nudgeDirection{m_session.media().rapLookup().pendingNudgeDirection};
+        auto pendingMarkerTimes{std::move(m_session.media().rapLookup().pendingAutoEvaluateMarkerTimes100ns)};
+        m_session.media().rapLookup().pendingReevaluate = false;
+        m_session.media().rapLookup().pendingReevaluateWithoutUndo = false;
+        m_session.media().rapLookup().pendingNudgeDirection = 0;
+        m_session.media().rapLookup().pendingAutoEvaluateMarkerTimes100ns.clear();
 
-        if(!self->m_prj.hasVideoFile() || self->m_prj.videoFilePath().empty()){
-            co_return;
+        if(!m_session.project().hasVideoFile() || m_session.project().videoFilePath().empty()){
+            return;
         }
 
         if(!lookupSucceeded){
-            self->setStatusMessage(L"Could not read RAP markers from the current source");
-            co_return;
+            m_session.media().abandonRapLookup();
+            setStatusMessage(failureMessage.empty() ? L"Could not read RAP markers from the current source" : failureMessage);
+            setErrorMessage(failureMessage.empty() ? L"Could not read RAP markers from the current source" : failureMessage);
+            refreshStatusInfoSection();
+            return;
         }
 
-        self->setStatusMessage(L"RAP markers ready");
-        self->refreshStatusInfoSection();
-        self->refreshVideoDetailsPanel();
-        for(const auto markerTime100ns: self->m_pendingAutoEvaluateMarkerTimes100ns){
-            (void)self->evaluatePlacedMarkerAtTime100ns(markerTime100ns);
+        setStatusMessage(L"RAP markers ready");
+        refreshStatusInfoSection();
+        refreshVideoDetailsPanel();
+        for(const auto markerTime100ns: pendingMarkerTimes){
+            (void)evaluatePlacedMarkerAtTime100ns(markerTime100ns);
         }
-        self->m_pendingAutoEvaluateMarkerTimes100ns.clear();
         if(runReevaluate){
-            (void)self->reevaluateClearCutMarkers(!runReevaluateWithoutUndo);
+            (void)reevaluateClearCutMarkers(!runReevaluateWithoutUndo);
         }
         if(nudgeDirection < 0){
-            (void)self->nudgeCurrentSceneBoundaryToNearestRap(false);
+            (void)nudgeCurrentSceneBoundaryToNearestRap(false);
         }else if(nudgeDirection > 0){
-            (void)self->nudgeCurrentSceneBoundaryToNearestRap(true);
+            (void)nudgeCurrentSceneBoundaryToNearestRap(true);
         }
+    }catch(const hresult_error& ex){
+        setStatusMessage(ex.message().c_str());
+        setErrorMessage(ex.message().c_str());
+        refreshStatusInfoSection();
+    }catch(const exception& ex){
+        const auto message{to_hstring(ex.what())};
+        setStatusMessage(message.c_str());
+        setErrorMessage(message.c_str());
+        refreshStatusInfoSection();
+    }catch(...){
+        setStatusMessage(L"Unexpected failure while applying RAP marker results.");
+        setErrorMessage(L"Unexpected failure while applying RAP marker results.");
+        refreshStatusInfoSection();
     }
 }
 
@@ -2799,6 +2768,7 @@ bool MainWindow::handleStorylineKeyDownImpl(const KRArgs& args){
             const auto state {m_player.PlaybackSession().PlaybackState()};
             if(state == MediaPlaybackState::Playing){
                 m_player.Pause();
+                m_session.preview().pause();
             }else{
                 playPreviewFromCurrentPosition();
             }
@@ -3297,7 +3267,7 @@ AAction MainWindow::recentVideoMenuItem_Click(const Control& sender, const REArg
     const auto path{unbox_value<hstring>(item.Tag())};
     try{
         const auto file{co_await StorageFile::GetFileFromPathAsync(path)};
-        m_prj.clearTimeline();
+        m_session.project().clearTimeline();
 
         co_await loadVideoFileAsync(file);
     }catch(const winrt::hresult_error&){
@@ -3397,7 +3367,7 @@ AAction MainWindow::pickAndLoadVideoAsync(){
     check_hresult(initWithWindow->Initialize(hwnd));
 
     if(const auto file{co_await picker.PickSingleFileAsync()}){
-        m_prj.clearTimeline();
+        m_session.project().clearTimeline();
 
         co_await loadVideoFileAsync(file);
     }
@@ -3474,35 +3444,23 @@ void MainWindow::resetProjectStateImpl(){
     m_player.Source(nullptr);
     updatePreviewPlaceholderVisibility();
 
-    ++m_timelineRenderVersion;
+    m_session.timeline().invalidateRender();
     m_projectPath.clear();
-    m_prj.reset();
-    m_media.reset();
-    clearUndoRedoHistory();
-    m_mediaInfo = {};
-    m_cachedRapSourcePath.clear();
-    m_cachedRapTimes100ns.clear();
-    m_cachedRapLookupTargetTimes100ns.clear();
-    m_cachedRapLookupAttempted = false;
-    m_cachedRapLookupSucceeded = false;
-    m_cachedRapTimesPartial = false;
-    m_lastReevaluatedEditorSnapshot.reset();
-    m_lastReevaluatedRapSourcePath.clear();
-    m_cachedEffectiveExportPlanSnapshot.reset();
-    m_cachedEffectiveExportPlanSourcePath.clear();
-    m_cachedEffectiveExportPlan.reset();
-    m_isRapLookupInProgress = false;
-    m_hasTimelineRenderCompleted = false;
-    m_pendingReevaluateAfterRapLookup = false;
-    m_pendingReevaluateWithoutUndoAfterRapLookup = false;
-    m_pendingAutoEvaluateMarkerTimes100ns.clear();
-    m_pendingNudgeDirectionAfterRapLookup = 0;
+    m_session.reset();
+    m_session.media().rapLookup().lastReevaluatedSnapshot.reset();
+    m_session.media().rapLookup().lastReevaluatedSourcePath.clear();
+    m_session.exporter().clearCachedPlan();
+    m_session.timeline().invalidateRender();
+    m_session.media().rapLookup().pendingReevaluate = false;
+    m_session.media().rapLookup().pendingReevaluateWithoutUndo = false;
+    m_session.media().rapLookup().pendingAutoEvaluateMarkerTimes100ns.clear();
+    m_session.media().rapLookup().pendingNudgeDirection = 0;
     m_exportEtaText.clear();
     m_lastExportEtaProgress.reset();
     m_timelineInteraction.pendingScrollbarAnchor.reset();
     m_timelineInteraction.pendingWheelZoomAnchor.reset();
     m_timelineDurationSeconds = 0;
-    m_prj.setZoomWithoutDirty(preservedZoomIndex);
+    m_session.project().setZoomWithoutDirty(preservedZoomIndex);
     TimelineZoomSlider().Value(preservedZoomIndex);
     refreshVideoDetailsPanel();
     setVideoDetailsPanelExpanded(false);
@@ -3537,8 +3495,8 @@ std::wstring MainWindow::currentProjectDisplayName() const{
         }
     }
 
-    if(m_prj.hasVideoFile() && !m_prj.videoFileName().empty()){
-        const auto videoPath{filesystem::path(m_prj.videoFileName().c_str())};
+    if(m_session.project().hasVideoFile() && !m_session.project().videoFileName().empty()){
+        const auto videoPath{filesystem::path(m_session.project().videoFileName().c_str())};
         const auto stem{videoPath.stem().wstring()};
         const auto fromVideoPath{stem.empty() ? videoPath.filename().wstring() : stem};
         if(!fromVideoPath.empty()){
@@ -3552,23 +3510,23 @@ std::wstring MainWindow::currentProjectDisplayName() const{
 void MainWindow::updateWindowTitle(){
     auto projectName{currentProjectDisplayName()};
 
-    if(m_prj.isDirty()){
+    if(m_session.project().isDirty()){
         projectName += L"*";
     }
 
-    const wstring loadedFile{m_prj.hasVideoFile() ? m_prj.videoFilePath().c_str() : L"No file"};
+    const wstring loadedFile{m_session.project().hasVideoFile() ? m_session.project().videoFilePath().c_str() : L"No file"};
     Title(hstring(std::format(L"ClipRazor: Lossless Video Cutter - {} - {}", projectName, loadedFile)));
 }
 
 IOpBool MainWindow::ensureProjectSavedBeforeContinuingAsync(){
-    if(!m_prj.isDirty()){
+    if(!m_session.project().isDirty()){
         co_return true;
     }
 
     const auto choice{co_await ::llvc::showUnsavedProjectPromptAsync(Content().XamlRoot())};
     if(choice == Controls::ContentDialogResult::Primary){
         co_await saveProjectMenuItem_Click(nullptr, RoutedEventArgs{});
-        co_return !m_prj.isDirty();
+        co_return !m_session.project().isDirty();
     }
     if(choice == Controls::ContentDialogResult::Secondary){
         co_return true;
@@ -3581,15 +3539,15 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     resetProjectState();
     bool referencedVideoCouldNotBeLoaded{};
 
-    co_await m_prj.open(file);
+    co_await m_session.project().open(file);
 
-    const auto projectZoomIndex{clampTimelineZoomIndex(TimelineZoomSlider(), m_prj.zoom())};
-    m_prj.setZoomWithoutDirty(projectZoomIndex);
+    const auto projectZoomIndex{clampTimelineZoomIndex(TimelineZoomSlider(), m_session.project().zoom())};
+    m_session.project().setZoomWithoutDirty(projectZoomIndex);
     TimelineZoomSlider().Value(projectZoomIndex);
 
-    if(!m_prj.videoFilePath().empty()){
+    if(!m_session.project().videoFilePath().empty()){
         try{
-            const auto videoFile{co_await StorageFile::GetFileFromPathAsync(m_prj.videoFilePath())};
+            const auto videoFile{co_await StorageFile::GetFileFromPathAsync(m_session.project().videoFilePath())};
             co_await loadVideoFileAsync(videoFile);
         }catch(...){
             referencedVideoCouldNotBeLoaded = true;
@@ -3603,7 +3561,7 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
     m_projectPath = file.Path();
     addRecentProject(m_projectPath);
 
-    if(const auto projectStatus{::llvc::buildProjectLoadedStatus(referencedVideoCouldNotBeLoaded, !m_prj.videoFilePath().empty())};
+    if(const auto projectStatus{::llvc::buildProjectLoadedStatus(referencedVideoCouldNotBeLoaded, !m_session.project().videoFilePath().empty())};
         !projectStatus.empty()){
         setStatusMessage(projectStatus);
         clearErrorMessage();
@@ -3613,7 +3571,7 @@ AAction MainWindow::openProjectFileAsync(const SFile& file){
 }
 
 AAction MainWindow::saveProjectFileAsync(const SFile& file){
-    co_await m_prj.save(file);
+    co_await m_session.project().save(file);
     m_projectPath = file.Path();
     addRecentProject(file.Path());
     setStatusMessage(L"Project saved");
@@ -3648,40 +3606,40 @@ IOpBool MainWindow::confirmAdjustedExportPlanAsync(const ::llvc::EffectiveExport
 
 
 wstring MainWindow::buildSourcePropertiesTextImpl() const{
-    if(!m_prj.hasVideoFile() || !m_mediaInfo.isValid){
+    if(!m_session.project().hasVideoFile() || !m_session.media().inspection().isValid){
         return L"No video is currently loaded.";
     }
 
-    const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
-    const auto requestedOutputDuration100ns{m_prj.outputDuration100ns()};
+    const auto sourceDuration100ns{m_session.project().timelineDuration100ns()};
+    const auto requestedOutputDuration100ns{m_session.project().outputDuration100ns()};
     const auto effectivePlan{tryBuildEffectiveExportPlan()};
 
     wstring content;
-    content += L"File: "; content += m_prj.videoFilePath().c_str(); content += L"\n";
-    content += L"Container: "; content += m_mediaInfo.container; content += L"\n";
-    content += L"Duration: "; content += m_mediaInfo.duration; content += L"\n";
-    content += L"Size: "; content += m_mediaInfo.fileSize; content += L"\n";
-    content += L"Created: "; content += m_mediaInfo.sourceCreated; content += L"\n";
-    content += L"Modified: "; content += m_mediaInfo.sourceModified; content += L"\n";
-    content += L"Encoded by: "; content += (m_mediaInfo.sourceEncodedBy.empty() ? L"-" : m_mediaInfo.sourceEncodedBy); content += L"\n";
-    content += L"Comment: "; content += (m_mediaInfo.sourceComment.empty() ? L"-" : m_mediaInfo.sourceComment); content += L"\n";
-    content += L"Video codec: "; content += m_mediaInfo.videoCodec; content += L"\n";
-    content += L"Resolution: "; content += m_mediaInfo.resolution; content += L"\n";
-    content += L"FPS: "; content += formatRatio(m_mediaInfo.frameRate.num, m_mediaInfo.frameRate.den, L" fps"); content += L"\n";
-    content += L"Video bitrate: "; content += m_mediaInfo.videoBitrate; content += L"\n";
-    content += L"Random access points: "; content += m_mediaInfo.keyFrameSummary; content += L"\n";
-    content += L"Random access interval: "; content += m_mediaInfo.keyFrameInterval; content += L"\n";
-    content += L"All samples independent: "; content += m_mediaInfo.allSamplesIndependent; content += L"\n";
-    content += L"Max random access spacing: "; content += m_mediaInfo.maxKeyFrameSpacing; content += L"\n";
-    content += L"Openable: "; content += capabilityStateToText(m_mediaInfo.openSupport); content += L"\n";
-    content += L"Previewable: "; content += capabilityStateToText(m_mediaInfo.previewSupport); content += L"\n";
-    content += L"Lossless export here: "; content += capabilityStateToText(m_mediaInfo.losslessExportSupport); content += L"\n";
-    content += L"Audio on export: "; content += capabilityStateToText(m_mediaInfo.audioExportSupport); content += L"\n";
-    content += L"Export containers here: "; content += joinExtensions(m_mediaInfo.supportedExportExtensions); content += L"\n";
-    content += L"Audio codec: "; content += m_mediaInfo.audioCodec; content += L"\n";
-    content += L"Audio bitrate: "; content += m_mediaInfo.audioBitrate;
-    if(m_mediaInfo.audioDisabledForThisSource && !m_mediaInfo.audioDisabledReason.empty()){
-        content += L"\nAudio note: "; content += m_mediaInfo.audioDisabledReason;
+    content += L"File: "; content += m_session.project().videoFilePath().c_str(); content += L"\n";
+    content += L"Container: "; content += m_session.media().inspection().container; content += L"\n";
+    content += L"Duration: "; content += m_session.media().inspection().duration; content += L"\n";
+    content += L"Size: "; content += m_session.media().inspection().fileSize; content += L"\n";
+    content += L"Created: "; content += m_session.media().inspection().sourceCreated; content += L"\n";
+    content += L"Modified: "; content += m_session.media().inspection().sourceModified; content += L"\n";
+    content += L"Encoded by: "; content += (m_session.media().inspection().sourceEncodedBy.empty() ? L"-" : m_session.media().inspection().sourceEncodedBy); content += L"\n";
+    content += L"Comment: "; content += (m_session.media().inspection().sourceComment.empty() ? L"-" : m_session.media().inspection().sourceComment); content += L"\n";
+    content += L"Video codec: "; content += m_session.media().inspection().videoCodec; content += L"\n";
+    content += L"Resolution: "; content += m_session.media().inspection().resolution; content += L"\n";
+    content += L"FPS: "; content += formatRatio(m_session.media().inspection().frameRate.num, m_session.media().inspection().frameRate.den, L" fps"); content += L"\n";
+    content += L"Video bitrate: "; content += m_session.media().inspection().videoBitrate; content += L"\n";
+    content += L"Random access points: "; content += m_session.media().inspection().keyFrameSummary; content += L"\n";
+    content += L"Random access interval: "; content += m_session.media().inspection().keyFrameInterval; content += L"\n";
+    content += L"All samples independent: "; content += m_session.media().inspection().allSamplesIndependent; content += L"\n";
+    content += L"Max random access spacing: "; content += m_session.media().inspection().maxKeyFrameSpacing; content += L"\n";
+    content += L"Openable: "; content += capabilityStateToText(m_session.media().inspection().openSupport); content += L"\n";
+    content += L"Previewable: "; content += capabilityStateToText(m_session.media().inspection().previewSupport); content += L"\n";
+    content += L"Lossless export here: "; content += capabilityStateToText(m_session.media().inspection().losslessExportSupport); content += L"\n";
+    content += L"Audio on export: "; content += capabilityStateToText(m_session.media().inspection().audioExportSupport); content += L"\n";
+    content += L"Export containers here: "; content += joinExtensions(m_session.media().inspection().supportedExportExtensions); content += L"\n";
+    content += L"Audio codec: "; content += m_session.media().inspection().audioCodec; content += L"\n";
+    content += L"Audio bitrate: "; content += m_session.media().inspection().audioBitrate;
+    if(m_session.media().inspection().audioDisabledForThisSource && !m_session.media().inspection().audioDisabledReason.empty()){
+        content += L"\nAudio note: "; content += m_session.media().inspection().audioDisabledReason;
     }
     content += L"\nRequested output: ";
     if(sourceDuration100ns > 0){
@@ -3701,10 +3659,10 @@ wstring MainWindow::buildSourcePropertiesTextImpl() const{
                 content += L" (adjusted)";
             }
         }
-    }else if(::llvc::projectHasRequestedCuts(m_prj)){
-        if(m_isRapLookupInProgress){
+    }else if(::llvc::projectHasRequestedCuts(m_session.project())){
+        if(m_session.media().rapLookup().inProgress){
             content += L"analyzing...";
-        }else if(m_cachedRapLookupAttempted && !m_cachedRapLookupSucceeded){
+        }else if(m_session.media().rapLookup().attempted && !m_session.media().rapLookup().succeeded){
             content += L"unavailable";
         }else{
             content += L"pending analysis";
@@ -3749,7 +3707,7 @@ wstring MainWindow::formatDateTimeText(const winrt::Windows::Foundation::DateTim
 }
 
 void MainWindow::updatePreviewPlaceholderVisibility(){
-    const auto hasLoadedVideo{m_prj.hasVideoFile() && !m_prj.videoFilePath().empty()};
+    const auto hasLoadedVideo{m_session.project().hasVideoFile() && !m_session.project().videoFilePath().empty()};
 
     if(m_separatePreview.player && m_separatePreview.splashImage){
         m_separatePreview.player.Visibility(hasLoadedVideo ? Visibility::Visible : Visibility::Collapsed);
@@ -3830,19 +3788,19 @@ void MainWindow::refreshStatusInfoSection(){
 
     const auto effectivePlan{tryBuildEffectiveExportPlan()};
     InfoText().Text(buildEstimatedOutputText(
-        m_prj,
-        m_mediaInfo,
-        m_hasTimelineRenderCompleted,
-        m_isRapLookupInProgress,
-        m_cachedRapLookupAttempted,
-        m_cachedRapLookupSucceeded,
+        m_session.project(),
+        m_session.media().inspection(),
+        m_session.timeline().renderCompleted(),
+        m_session.media().rapLookup().inProgress,
+        m_session.media().rapLookup().attempted,
+        m_session.media().rapLookup().succeeded,
         effectivePlan));
 
-    if(!effectivePlan && ::llvc::effectiveExportPlanNeedsRapAlignment(m_prj)){
-        if(m_hasTimelineRenderCompleted && !m_isRapLookupInProgress && !m_cachedRapLookupAttempted){
+    if(!effectivePlan && ::llvc::effectiveExportPlanNeedsRapAlignment(m_session.project())){
+        if(m_session.timeline().renderCompleted() && !m_session.media().rapLookup().inProgress && !m_session.media().rapLookup().attempted){
             const auto weakSelf{get_weak()};
             DispatcherQueue().TryEnqueue([weakSelf]{
-                if(const auto self{weakSelf.get()}; self && ::llvc::effectiveExportPlanNeedsRapAlignment(self->m_prj)){
+                if(const auto self{weakSelf.get()}; self && ::llvc::effectiveExportPlanNeedsRapAlignment(self->m_session.project())){
                     self->queueRapLookup(false, 0);
                 }
             });
@@ -3864,7 +3822,7 @@ void MainWindow::configureExportOverlay(const wstring& outputPath, int64_t sourc
         return std::format(L"{} bytes", bytes);
     }};
     const auto parseAudioBitrateBytesPerSecond{[this]() -> uint64_t{
-        const auto bitrateText{m_mediaInfo.audioBitrate};
+        const auto bitrateText{m_session.media().inspection().audioBitrate};
         if(bitrateText.empty() || bitrateText == L"none" || bitrateText == L"-"){
             return 0;
         }
@@ -3895,7 +3853,7 @@ void MainWindow::configureExportOverlay(const wstring& outputPath, int64_t sourc
     m_currentExportCutBlockCount = cutBlockCount;
     m_exportOverlayHasFinalState = false;
     m_lastExportSucceeded = false;
-    m_currentExportSourcePath = m_prj.hasVideoFile() ? m_prj.videoFilePath() : hstring{};
+    m_currentExportSourcePath = m_session.project().hasVideoFile() ? m_session.project().videoFilePath() : hstring{};
     m_currentExportProjectPath = m_projectPath;
     m_currentExportOutputPath = outputPath;
 
@@ -3919,7 +3877,7 @@ void MainWindow::configureExportOverlay(const wstring& outputPath, int64_t sourc
         sourceSizeBytes,
         sourceDuration100ns,
         outputDuration100ns,
-        m_prj.keepAudio(),
+        m_session.project().keepAudio(),
         sourceHasAudio(),
         parseAudioBitrateBytesPerSecond())};
     if(overlayEstimates.estimatedTargetBytes > 0){
@@ -3946,19 +3904,19 @@ void MainWindow::configureExportOverlay(const wstring& outputPath, int64_t sourc
             adjustedPlan ? L"RAP-adjusted lossless" : L"Lossless",
             cutBlockCount,
             cutBlockCount == 1 ? L"" : L"s",
-            m_prj.keepAudio() ? L"kept" : L"removed")};
+            m_session.project().keepAudio() ? L"kept" : L"removed")};
     if(effectivePlan){
         const auto [repositionedMarkers, shrinkSummary]{formatOverlayShrinkSummary(*effectivePlan)};
         planDetails += std::format(L", {} markers repositioned, {}", repositionedMarkers, shrinkSummary);
     }
-    if(m_prj.keepAudio() && sourceHasAudio()){
-        planDetails += std::format(L", cross-fade {} ms, volume {}%", m_prj.audioXfadeMs(), m_prj.audioVolumePct());
+    if(m_session.project().keepAudio() && sourceHasAudio()){
+        planDetails += std::format(L", cross-fade {} ms, volume {}%", m_session.project().audioXfadeMs(), m_session.project().audioVolumePct());
     }
     ExportOverlayPlanDetailsText().Text(planDetails);
 
     setExportOverlayStagePending(ExportOverlayStage::Video);
     setExportOverlayStagePending(ExportOverlayStage::Rap);
-    if(m_prj.keepAudio() && sourceHasAudio()){
+    if(m_session.project().keepAudio() && sourceHasAudio()){
         setExportOverlayStagePending(ExportOverlayStage::Audio);
     }else{
         setExportOverlayStageSkipped(ExportOverlayStage::Audio, L"Not needed");
@@ -4020,7 +3978,7 @@ void MainWindow::setExportOverlayStageState(ExportOverlayStage stage, const wstr
         }
     }
 
-    if(m_isExportInProgress){
+    if(m_session.exporter().isExportInProgress()){
         updateExportStageEta();
         updateExportOverlayStatus();
     }
@@ -4119,7 +4077,7 @@ void MainWindow::stopExportEtaTimer(){
 }
 
 void MainWindow::exportEtaTimer_Tick(const Control&, const Control&){
-    if(!m_isExportInProgress){
+    if(!m_session.exporter().isExportInProgress()){
         stopExportEtaTimer();
         return;
     }
@@ -4142,8 +4100,8 @@ std::chrono::seconds MainWindow::estimateStageDuration(ExportOverlayStage stage)
     const auto sourceSeconds{std::max(0.0, static_cast<double>(m_currentExportSourceDuration100ns) / 10'000'000.0)};
     const auto outputSeconds{std::max(0.0, static_cast<double>(m_currentExportOutputDuration100ns) / 10'000'000.0)};
     const auto sourceSizeMb{std::max(1.0, static_cast<double>(m_currentExportSourceSizeBytes) / (1024.0 * 1024.0))};
-    const auto hasAudioExport{m_prj.keepAudio() && sourceHasAudio()};
-    const auto isWmv{m_mediaInfo.container == L"WMV"};
+    const auto hasAudioExport{m_session.project().keepAudio() && sourceHasAudio()};
+    const auto isWmv{m_session.media().inspection().container == L"WMV"};
 
     double estimateSeconds{};
     switch(stage){
@@ -4173,10 +4131,10 @@ std::chrono::seconds MainWindow::estimateStageDuration(ExportOverlayStage stage)
             estimateSeconds = 0.0;
         }else{
             estimateSeconds = std::max(1.0, outputSeconds * 0.042);
-            if(m_prj.audioXfadeMs() > 0){
+            if(m_session.project().audioXfadeMs() > 0){
                 estimateSeconds *= 1.03;
             }
-            if(m_prj.audioVolumePct() > 100){
+            if(m_session.project().audioVolumePct() > 100){
                 estimateSeconds *= 1.05;
             }
         }
@@ -4196,7 +4154,7 @@ std::chrono::seconds MainWindow::estimateStageDuration(ExportOverlayStage stage)
 }
 
 void MainWindow::updateExportStageEta(){
-    if(!m_isExportInProgress){
+    if(!m_session.exporter().isExportInProgress()){
         m_exportEtaText.clear();
         return;
     }
@@ -4303,7 +4261,7 @@ AAction MainWindow::deleteExportArtifactsAsync(bool deleteSource, bool deletePro
 }
 
 void MainWindow::setOperationInProgress(bool active, bool indeterminate){
-    const auto exportOverlayActive{active && m_isExportInProgress};
+    const auto exportOverlayActive{active && m_session.exporter().isExportInProgress()};
     if(active){
         if(exportOverlayActive){
             ensureExportEtaTimer();
@@ -4330,11 +4288,11 @@ void MainWindow::setOperationInProgress(bool active, bool indeterminate){
         m_exportEtaText.clear();
         m_lastExportEtaProgress.reset();
     }
-    OperationProgressBar().Visibility((active && !m_isExportInProgress) ? Visibility::Visible : Visibility::Collapsed);
+    OperationProgressBar().Visibility((active && !m_session.exporter().isExportInProgress()) ? Visibility::Visible : Visibility::Collapsed);
     CancelExportButton().Visibility(Visibility::Collapsed);
     CancelExportButton().IsEnabled(false);
     ExportOverlay().Visibility((exportOverlayActive || m_exportOverlayHasFinalState) ? Visibility::Visible : Visibility::Collapsed);
-    ExportOverlayCancelButton().IsEnabled(active && m_isExportInProgress && !m_cancelExportRequested);
+    ExportOverlayCancelButton().IsEnabled(active && m_session.exporter().isExportInProgress() && !m_session.exporter().cancelRequested());
     updateExportOverlayActionButtons();
 }
 
@@ -4342,7 +4300,7 @@ void MainWindow::setOperationProgress(double percent){
     const auto clampedPercent{clamp(percent, 0.0, 100.0)};
     OperationProgressBar().IsIndeterminate(false);
     OperationProgressBar().Value(clampedPercent);
-    if(m_isExportInProgress){
+    if(m_session.exporter().isExportInProgress()){
         updateExportStageEta();
         ExportOverlayProgressBar().IsIndeterminate(false);
         ExportOverlayProgressBar().Value(clampedPercent);
@@ -4366,11 +4324,11 @@ std::wstring MainWindow::formatRemainingDurationText(std::chrono::seconds remain
 }
 
 void MainWindow::cancelExportButton_Click(const Control&, const REArgs&){
-    if(!m_isExportInProgress){
+    if(!m_session.exporter().isExportInProgress()){
         return;
     }
 
-    m_cancelExportRequested = true;
+    m_session.exporter().requestCancel();
     setStatusMessage(L"Canceling export...");
     ExportOverlayCancelButton().IsEnabled(false);
 }
@@ -4553,13 +4511,14 @@ AAction MainWindow::window_Drop(const Control&, const DEArgs& e){
         co_return;
     }
 
-    m_prj.clearTimeline();
+    m_session.project().clearTimeline();
     clearUndoRedoHistory();
 
     co_await loadVideoFileAsync(file);
 }
 
 AAction MainWindow::loadVideoFileAsync(const SFile& file){
+    m_session.invalidateActivities();
     setOperationInProgress(true, true);
 
     MediaInspectionResult inspected{};
@@ -4595,25 +4554,15 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     }else{
         inspected.sourceModified = L"-";
     }
-    m_mediaInfo = inspected;
-    m_media = createVideoSource(filePath.c_str());
-    m_cachedRapSourcePath.clear();
-    m_cachedRapTimes100ns.clear();
-    m_cachedRapLookupTargetTimes100ns.clear();
-    m_cachedRapLookupAttempted = false;
-    m_cachedRapLookupSucceeded = false;
-    m_cachedRapTimesPartial = false;
-    m_lastReevaluatedEditorSnapshot.reset();
-    m_lastReevaluatedRapSourcePath.clear();
-    m_cachedEffectiveExportPlanSnapshot.reset();
-    m_cachedEffectiveExportPlanSourcePath.clear();
-    m_cachedEffectiveExportPlan.reset();
-    m_isRapLookupInProgress = false;
-    m_hasTimelineRenderCompleted = false;
-    m_pendingReevaluateAfterRapLookup = false;
-    m_pendingReevaluateWithoutUndoAfterRapLookup = false;
-    m_pendingAutoEvaluateMarkerTimes100ns.clear();
-    m_pendingNudgeDirectionAfterRapLookup = 0;
+    m_session.media().load(file.Path().c_str(), createVideoSource(filePath.c_str()), std::move(inspected));
+    m_session.media().rapLookup().lastReevaluatedSnapshot.reset();
+    m_session.media().rapLookup().lastReevaluatedSourcePath.clear();
+    m_session.exporter().clearCachedPlan();
+    m_session.timeline().invalidateRender();
+    m_session.media().rapLookup().pendingReevaluate = false;
+    m_session.media().rapLookup().pendingReevaluateWithoutUndo = false;
+    m_session.media().rapLookup().pendingAutoEvaluateMarkerTimes100ns.clear();
+    m_session.media().rapLookup().pendingNudgeDirection = 0;
     m_timelineInteraction.pendingScrollbarAnchor.reset();
     m_timelineInteraction.pendingWheelZoomAnchor.reset();
     m_projectPath.clear();
@@ -4625,7 +4574,7 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
     m_player.Source(source);
     updatePreviewPlaceholderVisibility();
     m_player.IsMuted(false);
-    m_prj.videoFilePath(file.Path());
+    m_session.project().videoFilePath(file.Path());
     refreshVideoDetailsPanel();
     addRecentVideo(file.Path());
 
@@ -4645,12 +4594,12 @@ AAction MainWindow::loadVideoFileAsync(const SFile& file){
 }
 
 bool MainWindow::sourceHasAudio() const{
-    return m_mediaInfo.isValid && m_mediaInfo.audioCodec != L"none";
+    return m_session.media().inspection().isValid && m_session.media().inspection().audioCodec != L"none";
 }
 
 void MainWindow::syncAudioCrossfadeComboSelection(){
-    const auto previousGuard{m_editorHistory.isApplying};
-    m_editorHistory.isApplying = true;
+    const auto previousGuard{m_session.editorHistory().isApplying};
+    m_session.editorHistory().isApplying = true;
 
     const auto combo{AudioCrossfadeComboBox()};
     const auto items{combo.Items()};
@@ -4666,9 +4615,9 @@ void MainWindow::syncAudioCrossfadeComboSelection(){
 
         try{
             const auto tag{unbox_value<hstring>(item.Tag())};
-            if(stoi(wstring(tag.c_str())) == m_prj.audioXfadeMs()){
+            if(stoi(wstring(tag.c_str())) == m_session.project().audioXfadeMs()){
                 combo.SelectedIndex(static_cast<int32_t>(i));
-                m_editorHistory.isApplying = previousGuard;
+                m_session.editorHistory().isApplying = previousGuard;
                 return;
             }
         }catch(...){ }
@@ -4679,14 +4628,14 @@ void MainWindow::syncAudioCrossfadeComboSelection(){
         if(firstItem.Tag()){
             try{
                 const auto tag{unbox_value<hstring>(firstItem.Tag())};
-                m_prj.audioXfadeMs(stoi(wstring(tag.c_str())));
+                m_session.project().audioXfadeMs(stoi(wstring(tag.c_str())));
             }catch(...){
-                m_prj.audioXfadeMs(0);
+                m_session.project().audioXfadeMs(0);
             }
         }
     }
 
-    m_editorHistory.isApplying = previousGuard;
+    m_session.editorHistory().isApplying = previousGuard;
 }
 
 void MainWindow::applyAudioSettingsToPlayer(){
@@ -4694,11 +4643,11 @@ void MainWindow::applyAudioSettingsToPlayer(){
         return;
     }
 
-    const auto allowAudio{sourceHasAudio() && m_prj.keepAudio()};
+    const auto allowAudio{sourceHasAudio() && m_session.project().keepAudio()};
     m_player.IsMuted(!allowAudio);
     // WinRT MediaPlayer preview volume is 0..1, so preview boost is capped at 100%.
     // Export path still applies full configured gain above 100%.
-    m_player.Volume(allowAudio ? clamp(m_prj.audioVolumePct() / 100.0, 0.0, 1.0) : 0.0);
+    m_player.Volume(allowAudio ? clamp(m_session.project().audioVolumePct() / 100.0, 0.0, 1.0) : 0.0);
 }
 
 void MainWindow::playPreviewFromCurrentPosition(){
@@ -4713,11 +4662,25 @@ void MainWindow::playPreviewFromCurrentPosition(){
         session.Position(TimeSpan{0});
         updateTimelineCursorFromPosition(0);
     }
+    const auto position100ns{max<int64_t>(0, session.Position().count())};
+    const auto sourceFrameCount{m_session.media().sourceFrameCount()};
+    if(sourceFrameCount > 0){
+        const auto targetFrame{m_session.preview().playbackTargetForFrame(
+            m_session.media().frameIndexForTime100ns(position100ns),
+            m_session.project().cutPlanner(),
+            sourceFrameCount)};
+        if(targetFrame){
+            const auto target100ns{m_session.media().time100nsForFrame(*targetFrame)};
+            session.Position(TimeSpan{target100ns});
+            updateTimelineCursorFromPosition(target100ns);
+        }
+    }
+    m_session.preview().play();
     m_player.Play();
 }
 
 void MainWindow::updateAudioUiAndPlaybackState(){
-    if(!m_prj.hasVideoFile() || m_prj.videoFilePath().empty()){
+    if(!m_session.project().hasVideoFile() || m_session.project().videoFilePath().empty()){
         if(AudioWaveformCanvas()){
             AudioWaveformCanvas().Visibility(Visibility::Collapsed);
             AudioWaveformCanvas().Children().Clear();
@@ -4731,37 +4694,31 @@ void MainWindow::updateAudioUiAndPlaybackState(){
         if(AudioWaveformThresholdValueText()){
             AudioWaveformThresholdValueText().Visibility(Visibility::Collapsed);
         }
-        m_audioWaveformAnalysisQueued = false;
+        m_session.timeline().waveforms().analysisQueued(false);
         return;
     }
     const auto hasAudio{sourceHasAudio()};
-    const auto audioHardDisabled{m_mediaInfo.audioDisabledForThisSource};
-    if(!hasAudio){
-        m_prj.keepAudio(false);
-    }
-    if(audioHardDisabled){
-        m_prj.keepAudio(false);
-    }
+    const auto audioHardDisabled{m_session.media().inspection().audioDisabledForThisSource};
 
-    const auto previousGuard{m_editorHistory.isApplying};
-    m_editorHistory.isApplying = true;
+    const auto previousGuard{m_session.editorHistory().isApplying};
+    m_session.editorHistory().isApplying = true;
     KeepAudioCheckBox().IsEnabled(hasAudio && !audioHardDisabled);
-    KeepAudioCheckBox().IsChecked(box_value(hasAudio && !audioHardDisabled && m_prj.keepAudio()).as<IReference<bool>>());
-    AudioCrossfadeComboBox().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
-    AudioVolumeSlider().IsEnabled(hasAudio && !audioHardDisabled && m_prj.keepAudio());
-    AudioVolumeSlider().Value(static_cast<double>(m_prj.audioVolumePct()));
-    AudioVolumeIconText().Text(audioVolumeGlyph(hasAudio && !audioHardDisabled && m_prj.keepAudio(), m_prj.audioVolumePct()));
+    KeepAudioCheckBox().IsChecked(box_value(hasAudio && !audioHardDisabled && m_session.project().keepAudio()).as<IReference<bool>>());
+    AudioCrossfadeComboBox().IsEnabled(hasAudio && !audioHardDisabled && m_session.project().keepAudio());
+    AudioVolumeSlider().IsEnabled(hasAudio && !audioHardDisabled && m_session.project().keepAudio());
+    AudioVolumeSlider().Value(static_cast<double>(m_session.project().audioVolumePct()));
+    AudioVolumeIconText().Text(audioVolumeGlyph(hasAudio && !audioHardDisabled && m_session.project().keepAudio(), m_session.project().audioVolumePct()));
 
-    const auto showPreviewBoostHint{hasAudio && !audioHardDisabled && m_prj.keepAudio() && m_prj.audioVolumePct() > 100};
+    const auto showPreviewBoostHint{hasAudio && !audioHardDisabled && m_session.project().keepAudio() && m_session.project().audioVolumePct() > 100};
     AudioPreviewBoostHintText().Visibility(showPreviewBoostHint ? Visibility::Visible : Visibility::Collapsed);
 
-    m_editorHistory.isApplying = previousGuard;
+    m_session.editorHistory().isApplying = previousGuard;
     applyAudioSettingsToPlayer();
     updateAudioWaveformUi();
 }
 
 void MainWindow::updateAudioWaveformUi(){
-    const auto hasAudio{m_prj.hasVideoFile() && sourceHasAudio()};
+    const auto hasAudio{m_session.project().hasVideoFile() && sourceHasAudio()};
     const auto visibility{hasAudio ? Visibility::Visible : Visibility::Collapsed};
     if(!AudioWaveformCanvas() || !AudioWaveformThresholdLabel() || !AudioWaveformThresholdSlider() || !AudioWaveformThresholdValueText()){
         return;
@@ -4774,7 +4731,7 @@ void MainWindow::updateAudioWaveformUi(){
     AudioWaveformThresholdValueText().Text(formatWaveformThresholdDb(m_audioWaveformThresholdDb));
     if(!hasAudio){
         AudioWaveformCanvas().Children().Clear();
-        m_audioWaveformAnalysisQueued = false;
+        m_session.timeline().waveforms().analysisQueued(false);
         return;
     }
     renderAudioWaveform();
@@ -4787,7 +4744,7 @@ void MainWindow::renderAudioWaveform(){
     }
     canvas.Children().Clear();
 
-    if(canvas.Visibility() != Visibility::Visible || !m_prj.hasVideoFile() || !sourceHasAudio()){
+    if(canvas.Visibility() != Visibility::Visible || !m_session.project().hasVideoFile() || !sourceHasAudio()){
         return;
     }
 
@@ -4798,18 +4755,10 @@ void MainWindow::renderAudioWaveform(){
         return;
     }
 
-    const auto sourcePath{std::wstring{m_prj.videoFilePath().c_str()}};
-    const auto entry{getOrCreateAudioWaveformEntry(sourcePath)};
-    vector<float> peaks;
-    vector<bool> chunksBuilt;
-    {
-        std::scoped_lock lock{g_audioWaveformCacheMutex};
-        if(entry){
-            peaks = entry->peaks;
-            chunksBuilt = entry->chunksBuilt;
-        }
-    }
-    if(!entry || peaks.empty() || chunksBuilt.empty() || std::none_of(chunksBuilt.begin(), chunksBuilt.end(), [](bool built){ return built; })){
+    const auto waveform{m_session.timeline().waveforms().analysisView()};
+    const auto& peaks{waveform.peaks};
+    const auto& chunksBuilt{waveform.chunksBuilt};
+    if(peaks.empty() || chunksBuilt.empty() || std::none_of(chunksBuilt.begin(), chunksBuilt.end(), [](bool built){ return built; })){
         return;
     }
 
@@ -4876,51 +4825,59 @@ void MainWindow::renderAudioWaveform(){
 
 winrt::fire_and_forget MainWindow::ensureAudioWaveformAsync(){
     const auto lifetime{get_strong()};
-    if(m_isClosing || !m_prj.hasVideoFile() || !sourceHasAudio() || m_prj.timelineDuration100ns() <= 0){
+    if(m_isClosing || !m_session.project().hasVideoFile() || !sourceHasAudio() || m_session.project().timelineDuration100ns() <= 0){
+        m_session.timeline().waveforms().analysisQueued(false);
         co_return;
     }
+    auto activity{m_session.timeline().beginActivity()};
 
-    const auto sourcePath{std::wstring{m_prj.videoFilePath().c_str()}};
-    const auto duration100ns{m_prj.timelineDuration100ns()};
-    const auto entry{getOrCreateAudioWaveformEntry(sourcePath)};
-    if(!entry || entry->ready || entry->failed){
+    const auto sourcePath{std::wstring{m_session.project().videoFilePath().c_str()}};
+    const auto duration100ns{m_session.project().timelineDuration100ns()};
+    auto& waveforms{m_session.timeline().waveforms()};
+    waveforms.setupAnalysis(sourcePath, kAudioWaveformBucketCount, kAudioWaveformChunkCount);
+    auto waveform{waveforms.analysisView()};
+    if(waveform.ready || waveform.failed){
+        m_session.timeline().waveforms().analysisQueued(false);
         renderAudioWaveform();
         co_return;
     }
-    if(entry->inProgress){
+    if(waveform.inProgress){
+        m_session.timeline().waveforms().analysisQueued(false);
         co_return;
     }
 
     const apartment_context uiThread{};
     co_await resume_after(std::chrono::milliseconds{750});
     co_await uiThread;
-    if(m_isClosing || std::wstring{m_prj.videoFilePath().c_str()} != sourcePath || !sourceHasAudio()){
+    if(activity.canceled() || m_isClosing || std::wstring{m_session.project().videoFilePath().c_str()} != sourcePath || !sourceHasAudio()){
+        m_session.timeline().waveforms().analysisQueued(false);
         co_return;
     }
-    if(entry->ready || entry->failed){
+    waveform = waveforms.analysisView();
+    if(waveform.ready || waveform.failed){
+        m_session.timeline().waveforms().analysisQueued(false);
         renderAudioWaveform();
         co_return;
     }
-    if(entry->inProgress){
+    if(waveform.inProgress){
+        m_session.timeline().waveforms().analysisQueued(false);
         co_return;
     }
 
-    entry->inProgress = true;
+    if(!waveforms.beginAnalysis()){
+        m_session.timeline().waveforms().analysisQueued(false);
+        co_return;
+    }
     while(true){
         co_await uiThread;
-        if(m_isClosing || std::wstring{m_prj.videoFilePath().c_str()} != sourcePath || !sourceHasAudio()){
+        if(activity.canceled() || m_isClosing || std::wstring{m_session.project().videoFilePath().c_str()} != sourcePath || !sourceHasAudio()){
             break;
         }
 
-        vector<bool> chunksBuilt;
-        {
-            std::scoped_lock lock{g_audioWaveformCacheMutex};
-            chunksBuilt = entry->chunksBuilt;
-        }
+        waveform = waveforms.analysisView();
+        const auto& chunksBuilt{waveform.chunksBuilt};
 
         if(chunksBuilt.empty() || std::all_of(chunksBuilt.begin(), chunksBuilt.end(), [](bool built){ return built; })){
-            std::scoped_lock lock{g_audioWaveformCacheMutex};
-            entry->ready = true;
             break;
         }
 
@@ -4934,71 +4891,55 @@ winrt::fire_and_forget MainWindow::ensureAudioWaveformAsync(){
             static_cast<int>(chunksBuilt.size()))};
         const auto nextChunk{chooseNextAudioWaveformChunkIndex(chunksBuilt, visibleRange, true)};
         if(nextChunk < 0){
-            std::scoped_lock lock{g_audioWaveformCacheMutex};
-            entry->ready = true;
             break;
         }
 
         co_await resume_background();
         const auto chunkPeaks{analyzeAudioWaveformChunkPeaks(sourcePath, duration100ns, kAudioWaveformBucketCount, static_cast<size_t>(nextChunk), chunksBuilt.size(), [weak = get_weak(), sourcePath](){
             if(const auto self{weak.get()}){
-                return self->m_isClosing || std::wstring{self->m_prj.videoFilePath().c_str()} != sourcePath;
+                return self->m_session.timeline().activityCanceled() || self->m_isClosing || std::wstring{self->m_session.project().videoFilePath().c_str()} != sourcePath;
             }
             return true;
         })};
 
-        {
-            std::scoped_lock lock{g_audioWaveformCacheMutex};
-            if(chunkPeaks.empty()){
-                entry->failed = true;
-                break;
-            }
-
-            const auto bucketStart{audioWaveformChunkBucketStart(static_cast<size_t>(nextChunk), chunksBuilt.size(), entry->peaks.size())};
-            const auto bucketEnd{std::min(entry->peaks.size(), bucketStart + chunkPeaks.size())};
-            for(size_t bucket{bucketStart}; bucket < bucketEnd; ++bucket){
-                entry->peaks[bucket] = chunkPeaks[bucket - bucketStart];
-            }
-            if(static_cast<size_t>(nextChunk) < entry->chunksBuilt.size()){
-                entry->chunksBuilt[static_cast<size_t>(nextChunk)] = true;
-            }
+        if(chunkPeaks.empty()){
+            waveforms.failAnalysis();
+            break;
         }
+        waveforms.completeAnalysisChunk(static_cast<size_t>(nextChunk), chunkPeaks);
 
         co_await uiThread;
-        if(m_isClosing || std::wstring{m_prj.videoFilePath().c_str()} != sourcePath){
+        if(activity.canceled() || m_isClosing || std::wstring{m_session.project().videoFilePath().c_str()} != sourcePath){
             break;
         }
         renderAudioWaveform();
     }
 
     co_await uiThread;
-    {
-        std::scoped_lock lock{g_audioWaveformCacheMutex};
-        entry->inProgress = false;
-        entry->ready = entry->ready || (!entry->chunksBuilt.empty() && std::all_of(entry->chunksBuilt.begin(), entry->chunksBuilt.end(), [](bool built){ return built; }));
-    }
-    m_audioWaveformAnalysisQueued = false;
-    if(m_isClosing || std::wstring{m_prj.videoFilePath().c_str()} != sourcePath){
+    waveforms.endAnalysis();
+    m_session.timeline().waveforms().analysisQueued(false);
+    if(activity.canceled() || m_isClosing || std::wstring{m_session.project().videoFilePath().c_str()} != sourcePath){
         co_return;
     }
     renderAudioWaveform();
 }
 
 void MainWindow::queueTimelineViewportRender(){
-    if(m_isClosing || m_isExportInProgress || !m_prj.hasVideoFile()){
+    if(m_isClosing || m_session.exporter().isExportInProgress() || !m_session.project().hasVideoFile()){
         return;
     }
 
-    ++m_timelineRenderVersion;
-    renderTimelineViewportAfterDelayAsync(++m_timelineViewportRenderRequestVersion);
+    m_session.timeline().invalidateRender();
+    renderTimelineViewportAfterDelayAsync(m_session.timeline().requestViewportRender());
 }
 
 winrt::fire_and_forget MainWindow::renderTimelineViewportAfterDelayAsync(uint64_t requestVersion){
     const auto lifetime{get_strong()};
+    auto activity{m_session.timeline().beginActivity()};
     const apartment_context uiThread{};
     co_await resume_after(std::chrono::milliseconds{120});
     co_await uiThread;
-    if(m_isClosing || requestVersion != m_timelineViewportRenderRequestVersion){
+    if(activity.canceled() || m_isClosing || !m_session.timeline().isCurrentViewportRequest(requestVersion)){
         co_return;
     }
 
@@ -5009,8 +4950,8 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
     const auto lifetime{get_strong()};
     uint64_t renderVersion{};
 
-    if(m_isClosing || !m_prj.hasVideoFile() || m_timelineDurationSeconds <= 0){
-        if(!m_isExportInProgress){
+    if(m_isClosing || !m_session.project().hasVideoFile() || m_timelineDurationSeconds <= 0){
+        if(!m_session.exporter().isExportInProgress()){
             setOperationInProgress(false);
         }
         co_return;
@@ -5026,37 +4967,55 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
         co_return;
     }
 
+    auto activity{m_session.timeline().beginActivity()};
     try{
-        const auto renderDuringExport{m_isExportInProgress};
+        if(activity.canceled()){
+            co_return;
+        }
+        // A delayed viewport refresh must not replace the initial whole-strip pass.
+        // Doing so leaves the slots before the current viewport permanently unrendered.
+        if(viewportOnly && !m_session.timeline().renderCompleted()){
+            co_return;
+        }
+        const auto renderDuringExport{m_session.exporter().isExportInProgress()};
         if(!renderDuringExport && !viewportOnly){
-            m_hasTimelineRenderCompleted = false;
             setOperationInProgress(true, true);
         }
-        const auto completesTimelineRender{!renderDuringExport && (!viewportOnly || !m_hasTimelineRenderCompleted)};
+        const auto completesTimelineRender{!renderDuringExport && (!viewportOnly || !m_session.timeline().renderCompleted())};
 
-        renderVersion = ++m_timelineRenderVersion;
-        const auto stripPlan{m_tl.buildThumbnailStripPlan(m_timelineDurationSeconds, timelineZoomValueFromIndex(TimelineZoomSlider().Value()))};
+        renderVersion = m_session.timeline().beginRender(completesTimelineRender);
+        const auto stripPlan{m_session.timeline().buildThumbnailStripPlan(m_timelineDurationSeconds, timelineZoomValueFromIndex(TimelineZoomSlider().Value()))};
         constexpr auto thumbnailImageHeight{86.0};
         const auto totalWidth{stripPlan.totalWidth};
         const auto thumbnailCount{stripPlan.thumbnailCount};
         const auto thumbnailWidth{stripPlan.thumbnailWidth};
-        const auto sourcePath{m_prj.videoFilePath()};
+        const auto sourcePath{m_session.project().videoFilePath()};
+        auto& thumbnailState{m_session.timeline().thumbnailRenderState()};
         const auto thumbnailPlanChanged{
-            m_thumbnailPlanSourcePath != sourcePath
-            || m_thumbnailPlanCount != thumbnailCount
-            || fabs(m_thumbnailPlanTotalWidth - totalWidth) > 0.5
-            || fabs(m_thumbnailPlanWidth - thumbnailWidth) > 0.5};
+            thumbnailState.sourcePath != sourcePath.c_str()
+            || thumbnailState.thumbnailCount != thumbnailCount
+            || fabs(thumbnailState.totalWidth - totalWidth) > 0.5
+            || fabs(thumbnailState.thumbnailWidth - thumbnailWidth) > 0.5};
 
         TimelineCanvas().Width(totalWidth);
         AudioWaveformCanvas().Width(totalWidth);
         CutOverlayLayer().Width(totalWidth);
         if(thumbnailPlanChanged){
             ThumbnailLayer().Children().Clear();
-            m_thumbnailBuilt.assign(static_cast<size_t>(thumbnailCount), false);
-            m_thumbnailPlanSourcePath = sourcePath;
-            m_thumbnailPlanCount = thumbnailCount;
-            m_thumbnailPlanTotalWidth = totalWidth;
-            m_thumbnailPlanWidth = thumbnailWidth;
+            thumbnailState.built.assign(static_cast<size_t>(thumbnailCount), false);
+            thumbnailState.sourcePath = sourcePath.c_str();
+            thumbnailState.thumbnailCount = thumbnailCount;
+            thumbnailState.totalWidth = totalWidth;
+            thumbnailState.thumbnailWidth = thumbnailWidth;
+            const auto sourceFrameCount{m_session.media().sourceFrameCount()};
+            const auto framesBetweenThumbnails{max<::llvc::FrameIndex>(1, sourceFrameCount / static_cast<::llvc::FrameIndex>(max(1, thumbnailCount)))};
+            m_session.timeline().thumbnails().setup({
+                .sourceFrameCount = sourceFrameCount,
+                .sourceFrameRate = {.num = m_session.media().inspection().frameRate.num, .den = m_session.media().inspection().frameRate.den},
+                .zoomLevels = {static_cast<::llvc::ZoomLevel>(min<::llvc::FrameIndex>(framesBetweenThumbnails, numeric_limits<::llvc::ZoomLevel>::max()))},
+                .thumbnailHeight = static_cast<uint32_t>(thumbnailImageHeight),
+                .sourceAspectRatio = {.width = static_cast<uint32_t>(max(1.0, thumbnailWidth)), .height = static_cast<uint32_t>(thumbnailImageHeight)},
+            });
         }
         if(thumbnailPlanChanged || !viewportOnly){
             renderTimelineTicks();
@@ -5065,8 +5024,8 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             renderCutOverlays();
         }
         syncTimelineHorizontalScrollBar();
-        if(sourceHasAudio() && !m_audioWaveformAnalysisQueued){
-            m_audioWaveformAnalysisQueued = true;
+        if(sourceHasAudio() && !m_session.timeline().waveforms().analysisQueued()){
+            m_session.timeline().waveforms().analysisQueued(true);
             ensureAudioWaveformAsync();
         }
 
@@ -5074,7 +5033,7 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             const auto scrollViewer{TimelineScrollViewer()};
             const auto viewportWidth{max(1.0, scrollViewer.ViewportWidth())};
             const auto targetOffsetValue{
-                m_timelineInteraction.pendingWheelZoomAnchor->restoreOffset(m_tl, m_prj.timelineDuration100ns(), totalWidth, viewportWidth)};
+                m_timelineInteraction.pendingWheelZoomAnchor->restoreOffset(m_session.timeline(), m_session.project().timelineDuration100ns(), totalWidth, viewportWidth)};
             const auto targetOffset{box_value(targetOffsetValue).as<IReference<double>>()};
             scrollViewer.ChangeView(targetOffset, nullptr, nullptr, true);
             syncTimelineHorizontalScrollBar();
@@ -5091,27 +5050,27 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
         }
 
         const auto scrollViewer{TimelineScrollViewer()};
-        const auto visibleRange{m_tl.visibleThumbnailRange(
+        const auto visibleRange{m_session.timeline().visibleThumbnailRange(
             scrollViewer.HorizontalOffset(),
             max(0.0, scrollViewer.ViewportWidth()),
             thumbnailWidth,
             thumbnailCount)};
         const auto visibleThumbnailCount{max(1, visibleRange.last - visibleRange.first + 1)};
-        const auto bufferedRange{m_tl.expandThumbnailRange(visibleRange, visibleThumbnailCount, thumbnailCount)};
+        const auto bufferedRange{m_session.timeline().expandThumbnailRange(visibleRange, visibleThumbnailCount, thumbnailCount)};
         const auto chooseNextThumbnailIndex = [&](){
-            const auto visibleIndex{m_tl.chooseNextThumbnailIndex(m_thumbnailBuilt, visibleRange, false)};
+            const auto visibleIndex{m_session.timeline().chooseNextThumbnailIndex(thumbnailState.built, visibleRange, false)};
             return visibleIndex >= 0
                 ? visibleIndex
-                : m_tl.chooseNextThumbnailIndex(m_thumbnailBuilt, bufferedRange, false);
+                : m_session.timeline().chooseNextThumbnailIndex(thumbnailState.built, bufferedRange, false);
         };
         auto nextIndex{chooseNextThumbnailIndex()};
 
-        if(renderVersion != m_timelineRenderVersion){
+        if(activity.canceled() || !m_session.timeline().isCurrentRender(renderVersion)){
             co_return;
         }
 
         while(nextIndex >= 0){
-            if(renderVersion != m_timelineRenderVersion || m_isClosing){
+            if(activity.canceled() || !m_session.timeline().isCurrentRender(renderVersion) || m_isClosing){
                 if(m_isClosing){
                     setOperationInProgress(false);
                 }
@@ -5119,25 +5078,27 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             }
 
             const auto t{(nextIndex + 0.5) / thumbnailCount};
+            const auto thumbnailFrame{m_session.media().frameIndexForTime100ns(static_cast<int64_t>(max(0.0, t * m_timelineDurationSeconds) * Timeline::HnsPerSecond))};
             Controls::Image image{};
             image.Width(thumbnailWidth);
             image.Height(thumbnailImageHeight);
             image.Stretch(Media::Stretch::UniformToFill);
 
             const auto decodeThumbnailWithSourceReader = [&]() -> winrt::Windows::Foundation::IAsyncOperation<bool>{
-                const wstring sourceFilePath{m_prj.videoFilePath().c_str()};
+                const wstring sourceFilePath{m_session.project().videoFilePath().c_str()};
                 const auto thumbnailTime100ns{static_cast<int64_t>(max(0.0, t * m_timelineDurationSeconds) * Timeline::HnsPerSecond)};
                 const apartment_context uiThread{};
                 co_await resume_background();
                 const auto decodedThumbnail{tryDecodeThumbnailWithSourceReader(sourceFilePath, thumbnailTime100ns, 180, 96)};
                 co_await uiThread;
-                if(renderVersion != m_timelineRenderVersion || m_isClosing){
+                if(activity.canceled() || !m_session.timeline().isCurrentRender(renderVersion) || m_isClosing){
                     if(m_isClosing){
                         setOperationInProgress(false);
                     }
                     co_return false;
                 }
                 if(decodedThumbnail){
+                    m_session.timeline().thumbnails().putReadyFrame(thumbnailFrame, static_cast<uint32_t>(decodedThumbnail->width), static_cast<uint32_t>(decodedThumbnail->height), decodedThumbnail->bgraPixels);
                     image.Source(createWriteableBitmapFromDecodedThumbnail(*decodedThumbnail));
                     co_return true;
                 }
@@ -5146,14 +5107,14 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
 
             const auto thumbnailCreated{co_await decodeThumbnailWithSourceReader()};
 
-            if(renderVersion != m_timelineRenderVersion || m_isClosing){
+            if(activity.canceled() || !m_session.timeline().isCurrentRender(renderVersion) || m_isClosing){
                 if(m_isClosing){
                     setOperationInProgress(false);
                 }
                 co_return;
             }
 
-            m_thumbnailBuilt[static_cast<size_t>(nextIndex)] = true;
+            thumbnailState.built[static_cast<size_t>(nextIndex)] = true;
             if(thumbnailCreated){
                 Controls::Canvas::SetLeft(image, nextIndex * thumbnailWidth);
                 ThumbnailLayer().Children().Append(image);
@@ -5168,13 +5129,12 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
         syncTimelineHorizontalScrollBar();
 
         if(completesTimelineRender){
-            m_hasTimelineRenderCompleted = true;
-            m_audioWaveformAnalysisQueued = false;
-            const auto postActions{m_tl.buildRenderPostActions(
-                m_prj.videoFileName().c_str(),
-                ::llvc::projectHasRequestedCuts(m_prj),
-                m_cachedRapLookupAttempted,
-                m_isRapLookupInProgress)};
+            m_session.timeline().completeRender(renderVersion);
+            const auto postActions{m_session.timeline().buildRenderPostActions(
+                m_session.project().videoFileName().c_str(),
+                ::llvc::projectHasRequestedCuts(m_session.project()),
+                m_session.media().rapLookup().attempted,
+                m_session.media().rapLookup().inProgress)};
             setStatusMessage(postActions.readyStatus);
             refreshStatusInfoSection();
             setOperationInProgress(false);
@@ -5183,12 +5143,11 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
             }
         }
     }catch(const winrt::hresult_error& ex){
-        if(renderVersion != m_timelineRenderVersion || m_isClosing){
+        if(activity.canceled() || !m_session.timeline().isCurrentRender(renderVersion) || m_isClosing){
             co_return;
         }
-        if(!m_isExportInProgress && (!viewportOnly || !m_hasTimelineRenderCompleted)){
-            m_hasTimelineRenderCompleted = false;
-            m_audioWaveformAnalysisQueued = false;
+        if(!m_session.exporter().isExportInProgress() && (!viewportOnly || !m_session.timeline().renderCompleted())){
+            m_session.timeline().invalidateRender();
             wstring status{L"Failed to render story line: "};
             status += ex.message().c_str();
             setStatusMessage(status);
@@ -5198,24 +5157,18 @@ winrt::fire_and_forget MainWindow::renderTimelineAsync(bool viewportOnly){
     }
 }
 AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
-    if(!m_prj.hasVideoFile()){
+    if(!m_session.project().hasVideoFile()){
         co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export video", L"Load a video before exporting.");
         co_return;
     }
 
-    const wstring sourcePath{m_prj.videoFilePath().c_str()};
-    const auto preflight{::llvc::buildExportPreflightState(
-        m_prj,
-        m_media != nullptr,
-        m_mediaInfo.losslessExportSupport == CapabilityState::Supported,
-        !m_mediaInfo.supportedExportExtensions.empty(),
-        sourceHasAudio(),
-        m_mediaInfo.audioExportSupport == CapabilityState::Supported)};
+    const wstring sourcePath{m_session.project().videoFilePath().c_str()};
+    const auto preflight{m_session.exporter().preflight(m_session.project(), m_session.media(), sourceHasAudio())};
     if(!preflight.canExport){
         co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export video", hstring{preflight.blockMessage});
         co_return;
     }
-    const auto sourceDuration100ns{m_prj.timelineDuration100ns()};
+    const auto sourceDuration100ns{m_session.project().timelineDuration100ns()};
     const filesystem::path sourceFsPath{sourcePath};
     std::error_code sourceSizeEc;
     const auto sourceSizeBytes{filesystem::file_size(sourceFsPath, sourceSizeEc)};
@@ -5241,8 +5194,8 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     const auto outputPath{
         pickExportOutputPath(
             sourceFsPath,
-            m_mediaInfo.supportedExportExtensions,
-            m_mediaInfo.defaultExportExtension.c_str(),
+            m_session.media().inspection().supportedExportExtensions,
+            m_session.media().inspection().defaultExportExtension.c_str(),
             requestedOutputDuration100ns,
             getWindowHandle())};
     if(outputPath.empty()){
@@ -5261,13 +5214,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         co_return;
     }
 
-    m_isExportInProgress = true;
-    m_cancelExportRequested = false;
     m_currentExportStartedAt = chrono::steady_clock::now();
     m_lastExportEtaRefreshAt = {};
     m_lastExportEtaProgress.reset();
     m_exportEtaText = L"Estimating remaining time...";
-    ++m_timelineRenderVersion;
+    m_session.timeline().invalidateRender();
 
     configureExportOverlay(
         outputPath,
@@ -5288,85 +5239,11 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     setExportOverlayStageState(ExportOverlayStage::Rap, L"In progress", 0.0, true);
     const auto exportOverallStartedAt{chrono::steady_clock::now()};
 
-    if(needsRapReevaluation){
-        const auto rapReady{co_await ensureRapMarkersAvailableAsync(
-            L"Reevaluating cut plan to RAP frames...",
-            [weak = get_weak()](double pct){
-                if(const auto strong = weak.get()){
-                    strong->DispatcherQueue().TryEnqueue([uiWeak = strong->get_weak(), pct](){
-                        if(const auto ui = uiWeak.get()){
-                            const auto overallPct{(pct * 5.0) / 100.0};
-                            ui->setExportOverlayStageState(ExportOverlayStage::Rap, L"In progress", pct, true);
-                            ui->OperationProgressBar().IsIndeterminate(false);
-                            ui->OperationProgressBar().Value(overallPct);
-                            ui->ExportOverlayProgressBar().IsIndeterminate(false);
-                            ui->ExportOverlayProgressBar().Value(overallPct);
-                            ui->updateExportOverlayStatus();
-                        }
-                    });
-                }
-            })};
-        if(!rapReady){
-            if(m_cancelExportRequested){
-                m_isExportInProgress = false;
-                m_lastExportSucceeded = false;
-                m_exportOverlayHasFinalState = true;
-                setExportOverlayStageState(ExportOverlayStage::Rap, L"Canceled", 0.0, false);
-                setStatusMessage(L"Export canceled");
-                clearErrorMessage();
-                setOperationInProgress(false);
-                updateExportOverlayActionButtons();
-                co_return;
-            }
-            m_isExportInProgress = false;
-            setExportOverlayStageState(ExportOverlayStage::Rap, L"Failed", 0.0, false);
-            setOperationInProgress(false);
-            setStatusMessage(L"Could not build a RAP-aligned cut plan for the current source");
-            refreshStatusInfoSection();
-            refreshVideoDetailsPanel();
-            co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export blocked", L"Could not build a RAP-aligned cut plan for the current source.");
-            co_return;
-        }
-    }
-
-    const auto effectivePlanOpt{tryBuildEffectiveExportPlan()};
-    if(!effectivePlanOpt){
-        m_isExportInProgress = false;
-        setExportOverlayStageState(ExportOverlayStage::Rap, L"Failed", 0.0, false);
-        setOperationInProgress(false);
-        co_await ::llvc::showInfoDialogAsync(Content().XamlRoot(), L"Export blocked", L"The export plan is not ready yet. Wait for the RAP analysis to finish and try again.");
-        co_return;
-    }
-    const auto effectivePlan{*effectivePlanOpt};
-    if(effectivePlan.emptyAfterAlignment){
-        m_isExportInProgress = false;
-        setExportOverlayStageState(ExportOverlayStage::Rap, L"No safe range", 0.0, false);
-        setOperationInProgress(false);
-        setStatusMessage(L"Export blocked: no safe RAP-aligned cut range");
-        refreshStatusInfoSection();
-        refreshVideoDetailsPanel();
-        co_await ::llvc::showInfoDialogAsync(
-            Content().XamlRoot(),
-            L"Export blocked",
-            L"The current cut selection does not contain a safe RAP-aligned cut range. Adjust markers or reevaluate clear cut markers first.");
-        co_return;
-    }
-    const auto outputDuration100ns{effectivePlan.effectiveOutputDuration100ns};
-    const auto effectiveCutRanges100ns{effectivePlan.effectiveCutRanges100ns};
-    configureExportOverlay(
-        outputPath,
-        sourceDuration100ns,
-        outputDuration100ns,
-        sourceSizeEc ? 0 : sourceSizeBytes,
-        effectivePlan.materiallyDifferent,
-        effectiveCutRanges100ns.size(),
-        &effectivePlan);
-
     ::llvc::ExportCoordinatorResult exportResult{};
-    co_await ::llvc::runExportAsync(::llvc::ExportCoordinatorRequest{
-        .project = &m_prj,
-        .media = m_media.get(),
-        .mediaInfo = &m_mediaInfo,
+    co_await m_session.exporter().run(::llvc::ExportCoordinatorRequest{
+        .project = &m_session.project(),
+        .media = m_session.media().source(),
+        .mediaInfo = &m_session.media().inspection(),
         .sourcePath = sourcePath,
         .outputPath = outputPath,
         .temporaryOutputPath = temporaryOutputPath,
@@ -5375,14 +5252,27 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         .sourceSizeBytes = sourceSizeEc ? 0 : sourceSizeBytes,
         .sourceHasAudio = sourceHasAudio(),
         .needsRapReevaluation = needsRapReevaluation,
-        .ensureRapMarkersAvailableAsync = [this](const wstring& statusMessage, const function<void(double)>& progressCallback) -> winrt::Windows::Foundation::IAsyncOperation<bool>{
-            co_return co_await ensureRapMarkersAvailableAsync(statusMessage, progressCallback);
-        },
-        .reevaluateCutMarkers = [this](bool pushUndoState){
-            return reevaluateClearCutMarkers(pushUndoState);
+        .ensureRapMarkersAvailableAsync = [this](const wstring& statusMessage, const vector<int64_t>& requiredTargets100ns, const function<void(double)>& progressCallback) -> winrt::Windows::Foundation::IAsyncOperation<bool>{
+            co_return co_await ensureRapMarkersAvailableAsync(statusMessage, requiredTargets100ns, progressCallback);
         },
         .buildEffectiveExportPlan = [this](const function<void(double)>& progressCallback) -> std::optional<::llvc::EffectiveExportPlan>{
             return tryBuildEffectiveExportPlan(progressCallback);
+        },
+        .onPlanReady = [weak = get_weak(), outputPath, sourceDuration100ns, sourceSizeBytes](const ::llvc::EffectiveExportPlan& plan){
+            if(const auto ui = weak.get()){
+                ui->DispatcherQueue().TryEnqueue([uiWeak = weak, outputPath, sourceDuration100ns, sourceSizeBytes, plan]{
+                    if(const auto strong = uiWeak.get()){
+                        strong->configureExportOverlay(
+                            outputPath,
+                            sourceDuration100ns,
+                            plan.effectiveOutputDuration100ns,
+                            sourceSizeBytes,
+                            plan.materiallyDifferent,
+                            plan.effectiveCutRanges100ns.size(),
+                            &plan);
+                    }
+                });
+            }
         },
         .onStatus = [weak = get_weak()](const wstring& message){
             if(const auto ui = weak.get()){
@@ -5447,12 +5337,15 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         },
         .shouldCancel = [weak = get_weak()](){
             if(const auto ui = weak.get()){
-                return ui->m_cancelExportRequested.load();
+                return ui->m_session.exporter().cancelRequested();
             }
             return false;
         },
     }, exportResult);
 
+    const auto& effectivePlan{exportResult.effectivePlan};
+    const auto outputDuration100ns{effectivePlan.effectiveOutputDuration100ns};
+    const auto& effectiveCutRanges100ns{effectivePlan.effectiveCutRanges100ns};
     winrt::hstring exportErrorMessage{exportResult.errorMessage};
     const auto exportSucceeded{exportResult.succeeded};
     const auto exportCanceled{exportResult.canceled};
@@ -5465,7 +5358,6 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
         setOperationProgress(100);
     }
 
-    m_isExportInProgress = false;
     m_lastExportSucceeded = exportSucceeded;
     m_exportOverlayHasFinalState = true;
     setOperationInProgress(false);
@@ -5475,7 +5367,7 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
     if(exportSucceeded){
         setExportOverlayStageComplete(ExportOverlayStage::Rap, effectivePlan.materiallyDifferent ? L"Adjusted" : L"Done");
         setExportOverlayStageComplete(ExportOverlayStage::Video);
-        if(m_prj.keepAudio() && sourceHasAudio()){
+        if(m_session.project().keepAudio() && sourceHasAudio()){
             setExportOverlayStageComplete(ExportOverlayStage::Audio);
         }
         setExportOverlayStageComplete(ExportOverlayStage::Finalize);
@@ -5545,9 +5437,9 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             sourcePath,
             outputPath,
             m_projectPath.empty() ? L"(unsaved project)" : wstring(m_projectPath.c_str()),
-            m_mediaInfo.container,
-            m_mediaInfo.videoCodec,
-            m_mediaInfo.audioCodec,
+            m_session.media().inspection().container,
+            m_session.media().inspection().videoCodec,
+            m_session.media().inspection().audioCodec,
             sourceSizeEc ? 0ull : sourceSizeBytes,
             formatTimelineDurationText(sourceDuration100ns),
             formatTimelineDurationText(outputDuration100ns),
@@ -5555,10 +5447,10 @@ AAction MainWindow::exportVideoMenuItem_Click(const Control&, const REArgs&){
             effectiveCutRanges100ns.size(),
             effectivePlan.materiallyDifferent ? L"yes" : L"no",
             effectivePlan.emptyAfterAlignment ? L"yes" : L"no",
-            m_prj.keepAudio() ? L"yes" : L"no",
-            capabilityStateToText(m_mediaInfo.audioExportSupport),
-            m_prj.audioXfadeMs(),
-            m_prj.audioVolumePct(),
+            m_session.project().keepAudio() ? L"yes" : L"no",
+            capabilityStateToText(m_session.media().inspection().audioExportSupport),
+            m_session.project().audioXfadeMs(),
+            m_session.project().audioVolumePct(),
             formatMs(rapStageDurationMs),
             formatMs(videoStageDurationMs),
             formatMs(audioStageDurationMs),

@@ -11,11 +11,13 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AudioWaveform.ixx" />
+    <ClCompile Include="CutPlanner.ixx" />
     <ClCompile Include="EditorController.ixx" />
     <ClCompile Include="EditorCommands.ixx" />
     <ClCompile Include="ExportCoordinator.ixx" />
     <ClCompile Include="Dialogs.ixx" />
     <ClCompile Include="Project.ixx" />
+    <ClCompile Include="Session.ixx" />
     <ClCompile Include="Timeline.ixx" />
     <ClCompile Include="TimelineRenderer.ixx" />
     <ClCompile Include="Utils.ixx" />

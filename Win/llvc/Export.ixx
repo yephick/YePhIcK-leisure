@@ -38,6 +38,8 @@ using namespace ::winrt;
 
 struct MFLifetime{
     MFLifetime();
+    MFLifetime(const MFLifetime&) = delete;
+    MFLifetime& operator=(const MFLifetime&) = delete;
     ~MFLifetime();
 };
 
@@ -71,12 +73,29 @@ namespace llvc{
 using namespace ::std;
 using namespace ::winrt;
 
+namespace{
+
+mutex g_mediaFoundationLifetimeMutex;
+uint32_t g_mediaFoundationLifetimeCount{};
+
+}
+
 MFLifetime::MFLifetime(){
-    check_hresult(MFStartup(MF_VERSION, MFSTARTUP_FULL));
+    lock_guard lock{g_mediaFoundationLifetimeMutex};
+    if(g_mediaFoundationLifetimeCount == 0){
+        check_hresult(MFStartup(MF_VERSION, MFSTARTUP_FULL));
+    }
+    ++g_mediaFoundationLifetimeCount;
 }
 
 MFLifetime::~MFLifetime(){
-    MFShutdown();
+    lock_guard lock{g_mediaFoundationLifetimeMutex};
+    if(g_mediaFoundationLifetimeCount == 0){
+        return;
+    }
+    if(--g_mediaFoundationLifetimeCount == 0){
+        MFShutdown();
+    }
 }
 
 bool hasDecoderForSubtype(const GUID& subtype){

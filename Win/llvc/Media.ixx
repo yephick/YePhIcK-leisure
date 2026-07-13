@@ -24,6 +24,7 @@ export module llvc.Media;
 
 import std;
 import llvc.Export;
+import llvc.CutPlanner;
 import llvc.Utils;
 import llvc.VideoContainer;
 import llvc.VideoStream;
@@ -82,6 +83,8 @@ public:
         wstring temporaryOutputPath{};
         int64_t sourceDuration100ns{};
         int64_t outputDuration100ns{};
+        FrameIndex sourceFrameCount{};
+        vector<ExportFrameRange> effectiveCutRanges{};
         vector<pair<int64_t, int64_t>> effectiveCutRanges100ns{};
         bool keepAudio{};
         int32_t audioCrossfadeMs{};
@@ -1026,6 +1029,19 @@ void ProfileMedia::exportLossless(const ExportRequest& request) const{
         }
     }()};
 
+    auto effectiveCutRanges100ns{request.effectiveCutRanges100ns};
+    if(request.sourceFrameCount > 0 && !request.effectiveCutRanges.empty()){
+        effectiveCutRanges100ns.clear();
+        effectiveCutRanges100ns.reserve(request.effectiveCutRanges.size());
+        for(const auto& range: request.effectiveCutRanges){
+            const auto start{static_cast<int64_t>((static_cast<long double>(range.firstFrame) * request.sourceDuration100ns) / request.sourceFrameCount)};
+            const auto end{static_cast<int64_t>((static_cast<long double>(range.endFrameExclusive) * request.sourceDuration100ns) / request.sourceFrameCount)};
+            if(end > start){
+                effectiveCutRanges100ns.emplace_back(start, end);
+            }
+        }
+    }
+
     writeVideoContainerForExport(
         exportKind,
         reader,
@@ -1036,7 +1052,7 @@ void ProfileMedia::exportLossless(const ExportRequest& request) const{
         VideoContainerExportRequest{
             .sourcePath = m_sourcePath,
             .temporaryOutputPath = request.temporaryOutputPath,
-            .effectiveCutRanges100ns = request.effectiveCutRanges100ns,
+            .effectiveCutRanges100ns = move(effectiveCutRanges100ns),
             .sourceDuration100ns = request.sourceDuration100ns,
             .outputDuration100ns = request.outputDuration100ns,
             .keepAudio = request.keepAudio,
