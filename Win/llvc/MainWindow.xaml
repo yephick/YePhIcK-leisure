@@ -69,7 +69,7 @@
 
         <Grid Grid.Row="1">
             <Border BorderBrush="{ThemeResource ToolPanelBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="8">
-                <controls:MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False"/>
+                <controls:MediaPlayerElement x:Name="PreviewPlayer" AreTransportControlsEnabled="False" PreviewKeyDown="previewPlayer_PreviewKeyDown"/>
             </Border>
 
             <Button x:Name="VideoDetailsOpenMarker" Width="26" Height="64" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="4,0,0,0" Padding="0"
@@ -160,8 +160,8 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <Button x:Name="ReevaluateClearCutMarkersButton" Content="⟳" Width="34" IsTabStop="False" Click="reevaluateClearCutMarkersButton_Click" ToolTipService.ToolTip="Reevaluate clear cut markers"/>
                     <TextBlock x:Name="AudioWaveformThresholdLabel" Text="Loudness ref" VerticalAlignment="Center" Visibility="Collapsed"/>
-                    <Slider x:Name="AudioWaveformThresholdSlider" Width="150" IsTabStop="False" Minimum="-60" Maximum="-3" Value="-18" SmallChange="1" LargeChange="6" StepFrequency="1" ValueChanged="audioWaveformThresholdSlider_ValueChanged" Visibility="Collapsed"/>
-                    <TextBlock x:Name="AudioWaveformThresholdValueText" Text="-18 dB" MinWidth="48" VerticalAlignment="Center" Visibility="Collapsed"/>
+                    <Slider x:Name="AudioWaveformThresholdSlider" Width="150" IsTabStop="False" Minimum="-60" Maximum="-3" Value="-9" SmallChange="1" LargeChange="6" StepFrequency="1" ValueChanged="audioWaveformThresholdSlider_ValueChanged" Visibility="Collapsed"/>
+                    <TextBlock x:Name="AudioWaveformThresholdValueText" Text="-9 dB" MinWidth="48" VerticalAlignment="Center" Visibility="Collapsed"/>
                     <TextBlock Text="Zoom" VerticalAlignment="Center"/>
                     <Slider x:Name="TimelineZoomSlider" Width="240" IsTabStop="False" Minimum="1" Maximum="24" Value="4" SmallChange="1" LargeChange="4" ValueChanged="timelineZoomSlider_ValueChanged" PointerWheelChanged="timelineZoomSlider_PointerWheelChanged"/>
                 </StackPanel>

@@ -82,6 +82,7 @@ struct MainWindow: MainWindowT<MainWindow>{
     void timelineTickCanvas_PointerReleased(const Control& sender, const PREArgs& args);
     void window_PreviewKeyDown(const Control& sender, const KRArgs& args);
     void window_KeyDown(const Control& sender, const KRArgs& args);
+    void previewPlayer_PreviewKeyDown(const Control& sender, const KRArgs& args);
     void rootGrid_PointerReleased(const Control& sender, const PREArgs& args);
     void videoDetailsOpenMarker_Click(const Control& sender, const REArgs& args);
     void videoDetailsCollapseMarker_Click(const Control& sender, const REArgs& args);
@@ -173,7 +174,7 @@ private:
     std::chrono::steady_clock::time_point m_lastExportEtaRefreshAt{};
     std::optional<double> m_lastExportEtaProgress{};
     std::wstring m_exportEtaText{};
-    double m_audioWaveformThresholdDb{-18.0};
+    double m_audioWaveformThresholdDb{-9.0};
     TimelineInteractionState m_timelineInteraction{};
     winrt::Microsoft::UI::Xaml::Window::Activated_revoker m_mainWindowActivatedRevoker{};
     SeparatePreviewState m_separatePreview{};

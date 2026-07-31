@@ -2285,9 +2285,15 @@ void MainWindow::stepByFrame(int delta){
 
     const auto current{currentNavigationTime100ns()};
     const auto sourceFrameCount{m_session.media().sourceFrameCount()};
-    const auto target{sourceFrameCount > 0
+    const auto& frameRate{m_session.media().inspection().frameRate};
+    const auto hasFrameRate{frameRate.num != 0 && frameRate.den != 0};
+    const auto target{sourceFrameCount > 0 && hasFrameRate
         ? [&]{
-            m_session.preview().seekTarget(m_session.media().frameIndexForTime100ns(current), sourceFrameCount);
+            // The controller owns the exact frame position.  Re-deriving it
+            // from the rendered cursor can round a just-set MediaPlayer
+            // position back to the previous frame, which makes forward and
+            // backward keyboard stepping asymmetric.
+            m_session.preview().seekTarget(m_session.preview().currentFrame(), sourceFrameCount);
             return m_session.media().time100nsForFrame(m_session.preview().stepTarget(delta, sourceFrameCount));
         }()
         : m_session.timeline().applyFrameStep(
@@ -2838,6 +2844,13 @@ void MainWindow::window_PreviewKeyDown(const Control&, const KRArgs& args){
 
 void MainWindow::window_KeyDown(const Control&, const KRArgs&){
     // Keyboard shortcuts are dispatched from PreviewKeyDown to avoid duplicate handling.
+}
+
+void MainWindow::previewPlayer_PreviewKeyDown(const Control&, const KRArgs& args){
+    if(args.Handled()){
+        return;
+    }
+    (void)handleStorylineKeyDown(args);
 }
 
 void MainWindow::separatePreviewWindowMenuItem_Click(const Control&, const REArgs&){
@@ -3639,7 +3652,7 @@ wstring MainWindow::buildSourcePropertiesTextImpl() const{
     content += L"Audio codec: "; content += m_session.media().inspection().audioCodec; content += L"\n";
     content += L"Audio bitrate: "; content += m_session.media().inspection().audioBitrate;
     if(m_session.media().inspection().audioDisabledForThisSource && !m_session.media().inspection().audioDisabledReason.empty()){
-        content += L"\nAudio note: "; content += m_session.media().inspection().audioDisabledReason;
+        content += L"\nAudio export disabled: "; content += m_session.media().inspection().audioDisabledReason;
     }
     content += L"\nRequested output: ";
     if(sourceDuration100ns > 0){

@@ -38,6 +38,11 @@ struct RapLookupState final{
     bool forceFullScan{};
     vector<int64_t> pendingAutoEvaluateMarkerTimes100ns{};
     int pendingNudgeDirection{};
+    vector<int64_t> queuedTargetTimes100ns{};
+    uint32_t retryCount{};
+    bool canceled{};
+    wstring lastError{};
+    uint64_t completionId{};
 
     void reset(){ *this = {}; }
 };
@@ -95,7 +100,13 @@ public:
         if(m_inspection.frameRate.num == 0 || m_inspection.frameRate.den == 0){
             return 0;
         }
-        return static_cast<int64_t>((static_cast<long double>(frameIndex) * m_inspection.frameRate.den * 10'000'000.0L) / m_inspection.frameRate.num);
+        // Ceil instead of truncating.  At rates such as 30000/1001,
+        // truncation can produce a timestamp just before the frame start,
+        // which frameIndexForTime100ns then maps back to the previous frame.
+        const auto exactTime100ns{
+            (static_cast<long double>(frameIndex) * m_inspection.frameRate.den * 10'000'000.0L)
+            / m_inspection.frameRate.num};
+        return static_cast<int64_t>(ceil(exactTime100ns));
     }
 
     RapLookupState& rapLookup(){ return m_rapLookup; }
@@ -163,7 +174,37 @@ public:
         }
         m_rapCancelRequested.store(false, memory_order_release);
         m_rapLookup.inProgress = true;
+        m_rapLookup.canceled = false;
+        m_rapLookup.lastError.clear();
         return true;
+    }
+
+    // UI requests are coalesced while a scan is active.  The worker that owns
+    // the current scan remains the only caller touching VideoSource.
+    bool queueRapLookup(vector<int64_t> targetTimes100ns, bool forceFullScan = false){
+        sort(targetTimes100ns.begin(), targetTimes100ns.end());
+        targetTimes100ns.erase(unique(targetTimes100ns.begin(), targetTimes100ns.end()), targetTimes100ns.end());
+        m_rapLookup.forceFullScan = m_rapLookup.forceFullScan || forceFullScan;
+        m_rapLookup.queuedTargetTimes100ns.insert(m_rapLookup.queuedTargetTimes100ns.end(), targetTimes100ns.begin(), targetTimes100ns.end());
+        sort(m_rapLookup.queuedTargetTimes100ns.begin(), m_rapLookup.queuedTargetTimes100ns.end());
+        m_rapLookup.queuedTargetTimes100ns.erase(unique(m_rapLookup.queuedTargetTimes100ns.begin(), m_rapLookup.queuedTargetTimes100ns.end()), m_rapLookup.queuedTargetTimes100ns.end());
+        return !m_rapLookup.queuedTargetTimes100ns.empty() || m_rapLookup.forceFullScan;
+    }
+
+    bool hasQueuedRapLookup() const{ return m_rapLookup.forceFullScan || !m_rapLookup.queuedTargetTimes100ns.empty(); }
+
+    vector<int64_t> takeQueuedRapLookupTargets(){
+        auto targets{move(m_rapLookup.queuedTargetTimes100ns)};
+        m_rapLookup.queuedTargetTimes100ns.clear();
+        return targets;
+    }
+
+    void requestRapRetry(){
+        ++m_rapLookup.retryCount;
+        m_rapLookup.attempted = false;
+        m_rapLookup.succeeded = false;
+        m_rapLookup.canceled = false;
+        m_rapLookup.lastError.clear();
     }
 
     RapLookupResult scanRapMarkers(
@@ -213,6 +254,7 @@ public:
         function<void(double)> progressCallback = {},
         function<bool()> externalCancelRequested = {}){
         if(!beginRapLookup()){
+            queueRapLookup(move(targetTimes100ns));
             co_return false;
         }
 
@@ -245,9 +287,16 @@ public:
         m_rapLookup.partial = succeeded && partial;
         m_rapLookup.forceFullScan = false;
         m_rapLookup.inProgress = false;
+        m_rapLookup.canceled = false;
+        m_rapLookup.lastError = succeeded ? wstring{} : L"The RAP scan did not return any random-access points.";
+        ++m_rapLookup.completionId;
     }
 
-    void abandonRapLookup(){ m_rapLookup.inProgress = false; }
+    void abandonRapLookup(){
+        m_rapLookup.inProgress = false;
+        m_rapLookup.canceled = true;
+        m_rapLookup.lastError = L"The RAP scan was canceled.";
+    }
 
 private:
     wstring m_sourcePath;

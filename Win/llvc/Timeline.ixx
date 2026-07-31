@@ -175,6 +175,14 @@ public:
     FrameIndex framesBetweenThumbnails(ZoomLevel zoom) const;
 
     void requestBuild(ZoomLevel zoom, FrameIndex firstFrame, FrameIndex endFrameExclusive);
+    uint64_t buildGeneration() const{ return m_buildGeneration; }
+    bool hasPendingBuild() const{ return m_buildPending; }
+    bool initialFullPassPending() const{ return m_initialFullPassPending; }
+    void completeBuildPass(bool fullPass){
+        if(fullPass){ m_initialFullPassPending = false; }
+        m_buildPending = false;
+    }
+    void cancelBuilds(){ ++m_buildGeneration; m_buildPending = false; m_initialFullPassPending = false; }
     optional<ThumbnailFrameView> tryGet(ZoomLevel zoom, FrameIndex frameIndex) const;
     void putReadyFrame(FrameIndex frameIndex, uint32_t width, uint32_t height, vector<uint8_t> bgraPixels);
     span<const ThumbnailFrame> readyFrames() const{ return m_masterFrames; }
@@ -193,6 +201,9 @@ private:
     vector<ThumbnailFrame> m_masterFrames{};
     unordered_map<FrameIndex, ThumbnailId> m_thumbnailByFrame{};
     vector<ThumbnailZoomTrack> m_zoomTracks{};
+    uint64_t m_buildGeneration{1};
+    bool m_buildPending{};
+    bool m_initialFullPassPending{};
 };
 
 struct AudioWaveformSample final{
@@ -230,6 +241,7 @@ public:
 
     void reset(){
         lock_guard lock{m_analysisMutex};
+        ++m_analysisGeneration;
         m_sourceFrameCount = 0;
         m_sourceFrameRate = {};
         m_zoomLevels.clear();
@@ -250,6 +262,17 @@ public:
     span<const AudioWaveformSample> samples() const{ return m_samples; }
     bool analysisQueued() const{ return m_analysisQueued; }
     void analysisQueued(bool value){ m_analysisQueued = value; }
+    uint64_t analysisGeneration() const{ return m_analysisGeneration; }
+    void cancelAnalysis(){
+        lock_guard lock{m_analysisMutex};
+        ++m_analysisGeneration;
+        m_analysisQueued = false;
+        m_inProgress = false;
+    }
+    bool hasPendingAnalysis() const{
+        lock_guard lock{m_analysisMutex};
+        return m_analysisQueued || m_inProgress;
+    }
 
     void setupAnalysis(wstring sourcePath, size_t bucketCount, size_t chunkCount){
         lock_guard lock{m_analysisMutex};
@@ -298,6 +321,7 @@ private:
     bool m_ready{};
     bool m_failed{};
     bool m_inProgress{};
+    uint64_t m_analysisGeneration{1};
 };
 
 struct TimelineThumbnailRenderState final{
@@ -442,6 +466,9 @@ void ThumbnailPreviewStore::setup(const ThumbnailPreviewSetup& setup){
 }
 
 void ThumbnailPreviewStore::reset(){
+    ++m_buildGeneration;
+    m_buildPending = false;
+    m_initialFullPassPending = false;
     m_sourceReader = nullptr;
     m_sourceFrameCount = 0;
     m_sourceFrameRate = {};
@@ -466,6 +493,13 @@ void ThumbnailPreviewStore::requestBuild(ZoomLevel zoom, FrameIndex firstFrame, 
     auto track{findTrack(zoom)};
     if(!track || endFrameExclusive <= firstFrame){
         return;
+    }
+
+    m_buildPending = true;
+    // The first request is always the whole-strip pass.  Viewport requests
+    // may add queued slots, but cannot replace that pass before it completes.
+    if(firstFrame == 0 && endFrameExclusive >= m_sourceFrameCount){
+        m_initialFullPassPending = true;
     }
 
     for(auto& slot: track->slots){
@@ -565,6 +599,8 @@ void Timeline::reset(){
 void Timeline::cancelOutstandingWork(){
     m_activityGeneration.fetch_add(1, memory_order_acq_rel);
     m_activityCanceled.store(true, memory_order_release);
+    m_thumbnails.cancelBuilds();
+    m_waveforms.cancelAnalysis();
 }
 
 void Timeline::waitForIdle(){

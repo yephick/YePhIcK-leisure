@@ -530,6 +530,34 @@ void testTimelineOwnsNeutralPreviewStores(){
     expect(!timeline.renderScheduling().renderCompleted, "Timeline reset should clear render completion state");
 }
 
+void testTimelineSchedulingKeepsInitialPassAndCancelsByGeneration(){
+    llvc::Timeline timeline{};
+    timeline.thumbnails().setup({
+        .sourceFrameCount = 100,
+        .zoomLevels = {1},
+        .thumbnailHeight = 10,
+        .sourceAspectRatio = {.width = 16, .height = 9},
+    });
+
+    const auto initialGeneration{timeline.thumbnails().buildGeneration()};
+    timeline.thumbnails().requestBuild(1, 0, 100);
+    timeline.thumbnails().requestBuild(1, 40, 60);
+    expect(timeline.thumbnails().hasPendingBuild(), "thumbnail scheduling should retain pending work");
+    expect(timeline.thumbnails().initialFullPassPending(), "a delayed viewport request must not replace the initial full thumbnail pass");
+    timeline.thumbnails().completeBuildPass(true);
+    expect(!timeline.thumbnails().initialFullPassPending(), "completed full thumbnail pass should clear its pending state");
+    timeline.thumbnails().cancelBuilds();
+    expect(timeline.thumbnails().buildGeneration() > initialGeneration, "thumbnail cancellation should advance its generation");
+
+    timeline.waveforms().setupAnalysis(L"sample.mp4", 8, 2);
+    timeline.waveforms().analysisQueued(true);
+    const auto waveformGeneration{timeline.waveforms().analysisGeneration()};
+    expect(timeline.waveforms().hasPendingAnalysis(), "waveform scheduling should expose queued work");
+    timeline.waveforms().cancelAnalysis();
+    expect(!timeline.waveforms().hasPendingAnalysis(), "waveform cancellation should drain queued work");
+    expect(timeline.waveforms().analysisGeneration() > waveformGeneration, "waveform cancellation should advance its generation");
+}
+
 void testTimelineFrameConversion(){
     llvc::Timeline timeline{};
     expectEqual(timeline.pointToFrame(0.0, 200.0, 100), llvc::FrameIndex{0}, "pointToFrame should map the left edge to frame zero");
@@ -1572,6 +1600,8 @@ void testPreviewControllerOwnsNavigationTargets(){
     llvc::PreviewController preview{};
     expectEqual(preview.seekTarget(150, 100), llvc::FrameIndex{99}, "Preview seek target should clamp to source bounds");
     expectEqual(preview.stepTarget(-200, 100), llvc::FrameIndex{0}, "Preview step target should clamp at the source start");
+    expectEqual(preview.stepTarget(1, 100), llvc::FrameIndex{1}, "Preview step target should advance one frame after a backward clamp");
+    expectEqual(preview.stepTarget(1, 100), llvc::FrameIndex{2}, "Preview step target should continue advancing frame by frame");
     expectEqual(preview.percentTarget(50, 101), llvc::FrameIndex{50}, "Preview percentage target should be frame based");
 }
 
@@ -1582,6 +1612,15 @@ void testMediaSessionOwnsRapLookupTargets(){
     project.cutScenes({1});
     llvc::MediaSession media{};
     expectEqual(media.rapLookupTargets(project, 1'000), vector<int64_t>{200, 600}, "MediaSession should provide the RAP lookup targets for the current project");
+}
+
+void testMediaSessionFrameTimeRoundTripsAtFractionalRate(){
+    llvc::MediaSession media{};
+    media.inspection().frameRate = {.num = 30'000, .den = 1'001};
+    media.sourceFrameCount(100);
+    const auto frameOneTime{media.time100nsForFrame(1)};
+    expectEqual(media.frameIndexForTime100ns(frameOneTime), llvc::FrameIndex{1}, "fractional-rate frame timestamps should round-trip to the same frame");
+    expectEqual(media.frameIndexForTime100ns(media.time100nsForFrame(2)), llvc::FrameIndex{2}, "fractional-rate stepping should not collapse the second frame onto the first");
 }
 
 void testMediaSessionOwnsCanonicalRapScanCommit(){
@@ -1597,6 +1636,19 @@ void testMediaSessionOwnsCanonicalRapScanCommit(){
     expectEqual(media.markerTimesForRapScan(project), vector<int64_t>{100, 500}, "MediaSession should derive RAP scan targets from canonical planner markers");
     media.commitRapLookup(project, true, true, {100, 500}, {100, 500});
     expectEqual(vector<llvc::FrameIndex>{project.cutPlanner().rapFrames().frames().begin(), project.cutPlanner().rapFrames().frames().end()}, vector<llvc::FrameIndex>{100, 500}, "MediaSession should commit scanned RAPs to the planner frame set");
+}
+
+void testMediaSessionQueuesRepeatedRapRequestsAndTracksRetry(){
+    llvc::MediaSession media{};
+    media.load(L"sample.mp4", make_unique<FakeRapMediaSource>(L"sample.mp4"), {});
+    expect(media.queueRapLookup({500, 200, 500}), "MediaSession should accept a queued RAP request");
+    expect(media.hasQueuedRapLookup(), "MediaSession should expose queued RAP work");
+    expectEqual(media.takeQueuedRapLookupTargets(), vector<int64_t>{200, 500}, "MediaSession should coalesce duplicate queued RAP targets");
+    expect(!media.hasQueuedRapLookup(), "taking queued RAP work should drain the request");
+    media.requestRapRetry();
+    expectEqual(media.rapLookup().retryCount, uint32_t{1}, "MediaSession should count explicit RAP retries");
+    media.abandonRapLookup();
+    expect(media.rapLookup().canceled, "abandoned RAP work should retain a canceled result state");
 }
 
 void testCanonicalFrameExportPlanAndMediaRapActivity(){
@@ -1917,6 +1969,7 @@ int wmain(int argc, wchar_t* argv[]){
         {"AudioWaveformChunkPlanning", &testAudioWaveformChunkPlanning},
         {"TimelinePlanningEdgeCases", &testTimelinePlanningEdgeCases},
         {"TimelineOwnsNeutralPreviewStores", &testTimelineOwnsNeutralPreviewStores},
+        {"TimelineSchedulingKeepsInitialPassAndCancelsByGeneration", &testTimelineSchedulingKeepsInitialPassAndCancelsByGeneration},
         {"TimelineFrameConversion", &testTimelineFrameConversion},
         {"SessionBuildsNeutralTimelineRenderModel", &testSessionBuildsNeutralTimelineRenderModel},
         {"ProjectCutRangesAndBoundaries", &testProjectCutRangesAndBoundaries},
@@ -1944,7 +1997,9 @@ int wmain(int argc, wchar_t* argv[]){
         {"TimelineActivityLifecycleAndRenderModelPayload", &testTimelineActivityLifecycleAndRenderModelPayload},
         {"PreviewControllerOwnsNavigationTargets", &testPreviewControllerOwnsNavigationTargets},
         {"MediaSessionOwnsRapLookupTargets", &testMediaSessionOwnsRapLookupTargets},
+        {"MediaSessionFrameTimeRoundTripsAtFractionalRate", &testMediaSessionFrameTimeRoundTripsAtFractionalRate},
         {"MediaSessionOwnsCanonicalRapScanCommit", &testMediaSessionOwnsCanonicalRapScanCommit},
+        {"MediaSessionQueuesRepeatedRapRequestsAndTracksRetry", &testMediaSessionQueuesRepeatedRapRequestsAndTracksRetry},
         {"SessionInvalidatesActivityGeneration", &testSessionInvalidatesActivityGeneration},
         {"PreviewSkipsPlannerCutAtPlaybackStart", &testPreviewSkipsPlannerCutAtPlaybackStart},
         {"PreviewSkipsContiguousPlannerCutScenesInOneSeek", &testPreviewSkipsContiguousPlannerCutScenesInOneSeek},
